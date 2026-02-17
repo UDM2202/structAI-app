@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Light theme - Your original */
+:root {
+  --bg-primary: #f3f4f6;
+  --bg-card: #ffffff;
+  --text-primary: #02090d;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
+  --border-color: #e5e7eb;
+  --primary: #0A2F44;        /* Your navy - buttons, links */
+  --primary-light: #e6f0f5;
+  --primary-dark: #082636;
+  --accent: #0A2F44;          /* Same navy for consistency */
+}
+
+/* Dark theme - Navy family only */
+.dark {
+  --bg-primary: #0A2F44;      /* Your navy - full background */
+  --bg-card: #1e3a4a;         /* Navy +20% - cards */
+  --text-primary: #ffffff;     /* Pure white */
+  --text-secondary: #cce1eb;   /* Light navy blue */
+  --text-muted: #99b8cc;       /* Muted navy */
+  --border-color: #2a4a5a;     /* Navy +30% - borders */
+  --primary: #ffffff;          /* White becomes primary button */
+  --primary-light: #e6f0f5;
+  --primary-dark: #cce1eb;
+  --accent: #cce1eb;           /* Light navy for accents */
+}
