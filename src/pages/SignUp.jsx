@@ -62,7 +62,7 @@ const SignUp = () => {
       {/* Dark mode toggle */}
       <button
         onClick={toggleDarkMode}
-        className="absolute top-4 right-4 p-3 rounded-lg shadow-lg hover:shadow-xl transition-all z-10"
+        className="absolute top-4 right-4 p-3 rounded-lg shadow-lg hover:shadow-xl transition-all z-10 cursor-pointer"
         style={{ 
           backgroundColor: 'var(--bg-card)',
           color: 'var(--text-primary)',

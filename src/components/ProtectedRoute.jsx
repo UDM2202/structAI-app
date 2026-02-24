@@ -4,8 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  const token = localStorage.getItem('token');
 
+  // Show loading state
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -19,7 +19,8 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
-  if (!token || !user) {
+  // With mock data, user is always logged in, but keep this for when backend is ready
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
 

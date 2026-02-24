@@ -1,140 +1,97 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { authAPI, profileAPI } from '../services/api'; // Fixed path
+
+// TEMPORARY MOCK DATA - REMOVE WHEN BACKEND IS READY
+const MOCK_USER = {
+  id: "mock-user-1",
+  name: "John Engineer",
+  email: "john@example.com",
+  profession: "structural_engineer",
+  avatar: null
+};
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // CHANGE THIS LINE: Start with null instead of MOCK_USER
+  const [user, setUser] = useState(null); // UPDATED: Start logged out
+  const [profile, setProfile] = useState(null); // UPDATED: Start logged out
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   // Check if user is already logged in on mount
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      fetchProfile();
-    } else {
-      setLoading(false);
-    }
+    // In mock mode, we don't auto-login
+    console.log('Auth initialized - starting logged out');
   }, []);
 
   const fetchProfile = async () => {
-    try {
-      setLoading(true);
-      const response = await profileAPI.getProfile();
-      setUser(response.data.user);
-      setProfile(response.data.profile);
-    } catch (err) {
-      console.error('Failed to fetch profile:', err);
-      // If token is invalid, clear it
-      localStorage.removeItem('token');
-      localStorage.removeItem('refreshToken');
-    } finally {
-      setLoading(false);
-    }
+    return MOCK_USER;
   };
 
   const login = async (credentials, rememberMe) => {
-    try {
-      setError(null);
-      const response = await authAPI.login(credentials);
-      const { token, refreshToken, user: userData } = response.data;
-      
-      // Store tokens
-      localStorage.setItem('token', token);
-      localStorage.setItem('refreshToken', refreshToken);
-      
-      // If remember me is checked, we could extend expiry, but JWT handles this
-      if (rememberMe) {
-        // Optionally set a flag for "remember me" functionality
-        localStorage.setItem('rememberMe', 'true');
-      }
-      
-      setUser(userData);
-      await fetchProfile(); // Fetch full profile
-      
-      return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.message || 'Login failed. Please try again.';
-      setError(message);
-      return { success: false, error: message };
-    }
+    console.log('Mock login:', credentials);
+    setLoading(true);
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    setUser(MOCK_USER);
+    setProfile(MOCK_USER);
+    setLoading(false);
+    return { success: true };
   };
 
   const register = async (userData) => {
-    try {
-      setError(null);
-      const response = await authAPI.register(userData);
-      const { token, refreshToken, user } = response.data;
-      
-      localStorage.setItem('token', token);
-      localStorage.setItem('refreshToken', refreshToken);
-      
-      setUser(user);
-      await fetchProfile();
-      
-      return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.message || 'Registration failed. Please try again.';
-      setError(message);
-      return { success: false, error: message };
-    }
+    console.log('Mock register:', userData);
+    setLoading(true);
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    setUser(MOCK_USER);
+    setProfile(MOCK_USER);
+    setLoading(false);
+    return { success: true };
   };
 
   const logout = async () => {
-    try {
-      const refreshToken = localStorage.getItem('refreshToken');
-      if (refreshToken) {
-        await authAPI.logout(refreshToken);
-      }
-    } catch (err) {
-      console.error('Logout error:', err);
-    } finally {
-      // Clear storage regardless
-      localStorage.removeItem('token');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('rememberMe');
-      setUser(null);
-      setProfile(null);
-    }
+    console.log('Mock logout');
+    setLoading(true);
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    setUser(null);
+    setProfile(null);
+    setLoading(false);
   };
 
   const forgotPassword = async (email) => {
-    try {
-      setError(null);
-      await authAPI.forgotPassword(email);
-      return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.message || 'Failed to send reset email. Please try again.';
-      setError(message);
-      return { success: false, error: message };
-    }
+    console.log('Mock forgot password:', email);
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return { success: true };
   };
 
   const resetPassword = async (token, newPassword) => {
-    try {
-      setError(null);
-      await authAPI.resetPassword(token, newPassword);
-      return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.message || 'Failed to reset password. Please try again.';
-      setError(message);
-      return { success: false, error: message };
-    }
+    console.log('Mock reset password');
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return { success: true };
   };
 
   const updateProfile = async (profileData) => {
-    try {
-      setError(null);
-      const response = await profileAPI.updateProfile(profileData);
-      setProfile(response.data.profile);
-      return { success: true };
-    } catch (err) {
-      const message = err.response?.data?.message || 'Failed to update profile.';
-      setError(message);
-      return { success: false, error: message };
-    }
+    console.log('Mock update profile:', profileData);
+    setLoading(true);
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    const updatedProfile = { ...MOCK_USER, ...profileData };
+    setProfile(updatedProfile);
+    setUser(updatedProfile);
+    setLoading(false);
+    return { success: true };
   };
 
   const value = {
@@ -148,6 +105,7 @@ export const AuthProvider = ({ children }) => {
     forgotPassword,
     resetPassword,
     updateProfile,
+    fetchProfile,
   };
 
   return (
