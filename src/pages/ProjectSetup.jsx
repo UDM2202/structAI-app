@@ -108,7 +108,7 @@ const ProjectSetup = () => {
       const result = await createProject(workspaceId, projectData);
       
       if (result.success) {
-        navigate(`/workspace/${workspaceId}/projects/${result.project.id}/structural-input`);
+navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
       } else {
         console.error('Failed to create project:', result.error);
         setIsSubmitting(false);

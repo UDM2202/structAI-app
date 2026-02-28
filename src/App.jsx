@@ -75,21 +75,23 @@ function App() {
                       <WorkspaceSettings />
                     </ProtectedRoute>
                   } />
-      <Route 
-  path="/workspace/:workspaceId/projects/:projectId/structural-input" 
-  element={
-    <ProtectedRoute>
-      <StructuralInput />
-    </ProtectedRoute>
-  } 
-/>
-                 <Route 
-  path="/workspace/:workspaceId/projects/new" 
-  element={
-    <ProtectedRoute>
-      <ProjectSetup />
-    </ProtectedRoute>
-  } 
+                 
+                    <Route 
+                      path="/workspace/:workspaceId/projects/:projectId/slab-input" 
+                      element={
+                        <ProtectedRoute>
+                          <StructuralInput />    
+                        </ProtectedRoute>
+                      } 
+                    />
+                  
+                                  <Route 
+                    path="/workspace/:workspaceId/projects/new" 
+                    element={
+                      <ProtectedRoute>
+                        <ProjectSetup />
+                      </ProtectedRoute>
+                    } 
 /> 
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
@@ -97,7 +99,7 @@ function App() {
             </BrowserRouter>
           </WorkspaceProvider>
         </LoadingProvider>
-      </AuthProvider>
+      </AuthProvider>  
     </ThemeProvider>
   );
 }
