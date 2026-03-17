@@ -4,54 +4,33 @@ import {
   FiArrowLeft, FiSun, FiMoon, FiMenu, FiGrid, FiBarChart2, 
   FiColumns, FiLayers, FiTriangle, FiSquare, FiCircle,
   FiDroplet, FiWind, FiPercent, FiClock, FiInfo, FiAlertTriangle,
-  FiChevronDown, FiSearch, FiCheck,
-  FiHome, FiBriefcase, FiUsers, FiDollarSign, FiTrendingUp,
-  FiX, FiPlus, FiRefreshCw, FiHelpCircle
+  FiChevronDown, FiSearch, FiCheck, FiHome, FiBriefcase, FiUsers,
+  FiDownload, FiPrinter, FiEye
 } from 'react-icons/fi';
 import { useTheme } from '../contexts/ThemeContext';
+import SlabResultsComparison from '../components/SlabResultsComparison';
+import SlabDetailedReport from '../components/SlabDetailedReport';
+import AIRecommendation from '../components/AIRecommendation';
+import TradeoffAnalysis from '../components/TradeoffAnalysis';
 
 const StructuralInput = () => {
   const { workspaceId, projectId } = useParams();
   const navigate = useNavigate();
   const { isDarkMode, toggleDarkMode } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isCostPanelOpen, setIsCostPanelOpen] = useState(false);
   const [activeComponent, setActiveComponent] = useState('slab');
   const [isValidating, setIsValidating] = useState(false);
   const [isOptimising, setIsOptimising] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [showAIRecommendation, setShowAIRecommendation] = useState(false);
+  const [showTradeoff, setShowTradeoff] = useState(false);
+  const [selectedOptionId, setSelectedOptionId] = useState(null);
+  const [compareOptions, setCompareOptions] = useState([]);
   
   // Warning state for overridden fields
   const [overriddenFields, setOverriddenFields] = useState({});
   const [showWarning, setShowWarning] = useState(null);
-  
-  // Cost settings state
-  const [costSource, setCostSource] = useState('default');
-  const [costRates, setCostRates] = useState([
-    { id: 1, item: 'Concrete C30/37 (Supply & Place)', unit: 'm³', rate: 170.00, source: 'Default', lastUpdated: 'Jan 2026' },
-    { id: 2, item: 'Rebar B500 (Supply & Fix)', unit: 'tonne', rate: 1300.00, source: 'Default', lastUpdated: 'Jan 2026' },
-    { id: 3, item: 'Formwork (Flat Slab)', unit: 'm²', rate: 50.00, source: 'Default', lastUpdated: 'Jan 2026' },
-    { id: 4, item: 'Labour - Reinforcement Fixing', unit: 'hour', rate: 38.00, source: 'Default', lastUpdated: 'Jan 2026' },
-    { id: 5, item: 'Labour - Formwork', unit: 'hour', rate: 32.50, source: 'Default', lastUpdated: 'Jan 2026' },
-    { id: 6, item: 'Concrete Pumping', unit: 'm³', rate: 18.00, source: 'Optional', lastUpdated: 'Jan 2026' },
-    { id: 7, item: 'Rebar Wastage Allowance', unit: '%', rate: 5, source: 'Default', lastUpdated: 'Jan 2026' },
-  ]);
-  const [originalRates, setOriginalRates] = useState(costRates);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [isLoadingRates, setIsLoadingRates] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-  const [editingCell, setEditingCell] = useState(null);
-  const [activeCostSet, setActiveCostSet] = useState('UK_NATIONAL_2026_Q1');
-
-  // Cost calculation states
-  const [totalMaterialCost, setTotalMaterialCost] = useState(84.23);
-  const [concreteCost, setConcreteCost] = useState(28.90);
-  const [rebarCost, setRebarCost] = useState(5.33);
-  const [formworkCost, setFormworkCost] = useState(50.00);
-  const [baselineCost, setBaselineCost] = useState(87.00);
-  const [optimisedCost, setOptimisedCost] = useState(83.55);
-  const [potentialSaving, setPotentialSaving] = useState(3.45);
-  const [savingPercentage, setSavingPercentage] = useState(4.10);
   
   // Dropdown open states
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -86,12 +65,24 @@ const StructuralInput = () => {
     deadLoad: '2.5',
     liveLoad: '3.0',
     finishes: '1.0',
+    serviceAllowance: '1.2',
     partition: '1.0',
     partitionMode: 'permanent',
     
+    // Additional permanent loads
+    permanentLoads: [
+      { name: 'Equipment', value: '2.0' }
+    ],
+    
+    // Variable loads
+    leadingLoad: { key: 'qk', value: '2.0' },
+    accompanyingLoads: [
+      { key: 'wk', value: '1.3' }
+    ],
+    
     // Materials
     concreteGrade: 'C30/37',
-    steelGrade: 'B500A',
+    steelGrade: 'B500',
     exposureClass: 'XC3',
     
     // Design Constraints
@@ -103,13 +94,34 @@ const StructuralInput = () => {
     costWeight: '15',
     carbonWeight: '30',
     materialWeight: '20',
+    numThicknesses: '2',
+    thickness1: '160',
+    thickness2: '175',
+    barDiameter1: '10',
+    barDiameter2: '12',
     
     // Bar selection
     mainBarDiameter: '12',
     candidateDiameters: ['8', '10', '12', '16'],
     minSpacing: '100',
     maxSpacing: '300',
+    
+    // Cost details
+    useAIDatabase: true,
+    region: 'uk',
+    concreteRate: '170',
+    steelRate: '1300',
+    formworkRate: '50',
+    useAIRecommendation: 'y'
   });
+
+  // Variable action keys with descriptions
+  const variableActionKeys = [
+    { value: 'qk', label: 'qk - Imposed load', description: 'Imposed load' },
+    { value: 'wk', label: 'wk - Wind load', description: 'Wind load' },
+    { value: 'sk', label: 'sk - Snow load', description: 'Snow load' },
+    { value: 'tk', label: 'tk - Traffic load', description: 'Traffic load' },
+  ];
 
   // Beam form state (mock for now)
   const [beamData, setBeamData] = useState({
@@ -219,6 +231,44 @@ const StructuralInput = () => {
     }));
   };
 
+  // Handle permanent load changes
+  const handlePermanentLoadChange = (index, field, value) => {
+    const updatedLoads = [...formData.permanentLoads];
+    updatedLoads[index][field] = value;
+    setFormData(prev => ({ ...prev, permanentLoads: updatedLoads }));
+  };
+
+  const addPermanentLoad = () => {
+    setFormData(prev => ({
+      ...prev,
+      permanentLoads: [...prev.permanentLoads, { name: '', value: '' }]
+    }));
+  };
+
+  const removePermanentLoad = (index) => {
+    const updatedLoads = formData.permanentLoads.filter((_, i) => i !== index);
+    setFormData(prev => ({ ...prev, permanentLoads: updatedLoads }));
+  };
+
+  // Handle accompanying load changes
+  const handleAccompanyingLoadChange = (index, field, value) => {
+    const updatedLoads = [...formData.accompanyingLoads];
+    updatedLoads[index][field] = value;
+    setFormData(prev => ({ ...prev, accompanyingLoads: updatedLoads }));
+  };
+
+  const addAccompanyingLoad = () => {
+    setFormData(prev => ({
+      ...prev,
+      accompanyingLoads: [...prev.accompanyingLoads, { key: 'wk', value: '' }]
+    }));
+  };
+
+  const removeAccompanyingLoad = (index) => {
+    const updatedLoads = formData.accompanyingLoads.filter((_, i) => i !== index);
+    setFormData(prev => ({ ...prev, accompanyingLoads: updatedLoads }));
+  };
+
   // Handle override confirmation
   const confirmOverride = () => {
     if (showWarning) {
@@ -258,96 +308,6 @@ const StructuralInput = () => {
     }
   };
 
-  // Cost settings functions
-  const updateRateField = (id, field, value) => {
-    setCostRates(prev => prev.map(item => 
-      item.id === id ? { ...item, [field]: value } : item
-    ));
-    setHasUnsavedChanges(true);
-    recalculateCosts();
-  };
-
-  const addCustomItem = () => {
-    const newItem = {
-      id: Date.now(),
-      item: 'New Material',
-      unit: 'm³',
-      rate: 0,
-      source: 'Custom',
-      lastUpdated: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-    };
-    setCostRates([...costRates, newItem]);
-    setHasUnsavedChanges(true);
-  };
-
-  const removeCustomItem = (id) => {
-    setCostRates(prev => prev.filter(item => item.id !== id));
-    setHasUnsavedChanges(true);
-    recalculateCosts();
-  };
-
-  const resetToDefault = async () => {
-    setIsResetting(true);
-    // Simulate API call
-    setTimeout(() => {
-      setCostRates(originalRates);
-      setHasUnsavedChanges(false);
-      setIsResetting(false);
-      setActiveCostSet('UK_NATIONAL_2026_Q1');
-    }, 1000);
-  };
-
-  const saveRates = async () => {
-    setIsSaving(true);
-    // Simulate API call
-    setTimeout(() => {
-      setOriginalRates(costRates);
-      setHasUnsavedChanges(false);
-      setIsSaving(false);
-      setActiveCostSet('CUSTOM_' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', quarter: true }).toUpperCase().replace(' ', '_'));
-      alert('Rates saved successfully!');
-    }, 1500);
-  };
-
-  const validateRates = () => {
-    const invalid = costRates.filter(r => r.rate <= 0);
-    if (invalid.length > 0) {
-      alert(`Please fix rates for: ${invalid.map(i => i.item).join(', ')}`);
-    } else {
-      alert('All rates are valid!');
-    }
-  };
-
-  const recalculateCosts = () => {
-    // This would normally use actual slab quantities
-    // For demo, we'll just adjust based on rate changes
-    const concreteRate = costRates.find(r => r.item.includes('Concrete'))?.rate || 170;
-    const rebarRate = costRates.find(r => r.item.includes('Rebar'))?.rate || 1300;
-    const formworkRate = costRates.find(r => r.item.includes('Formwork'))?.rate || 50;
-    
-    // Mock calculations
-    const mockConcreteQty = 0.17; // m³ per m²
-    const mockRebarQty = 0.0041; // tonnes per m²
-    const mockFormworkQty = 1; // m² per m²
-    
-    const newConcreteCost = concreteRate * mockConcreteQty;
-    const newRebarCost = rebarRate * mockRebarQty;
-    const newFormworkCost = formworkRate * mockFormworkQty;
-    const newTotal = newConcreteCost + newRebarCost + newFormworkCost;
-    const newBaseline = 87.00; // Keep baseline fixed for demo
-    const newOptimised = newTotal;
-    const newSaving = newBaseline - newOptimised;
-    const newPercentage = (newSaving / newBaseline) * 100;
-    
-    setConcreteCost(newConcreteCost);
-    setRebarCost(newRebarCost);
-    setFormworkCost(newFormworkCost);
-    setTotalMaterialCost(newTotal);
-    setOptimisedCost(newOptimised);
-    setPotentialSaving(newSaving);
-    setSavingPercentage(newPercentage);
-  };
-
   // Custom Dropdown Component
   const CustomDropdown = ({ 
     label, 
@@ -357,7 +317,7 @@ const StructuralInput = () => {
     onChange,
     icon: Icon,
     searchable = false,
-    groupBy = null
+    customClass = ''
   }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -365,20 +325,18 @@ const StructuralInput = () => {
     const filteredOptions = searchable && search
       ? options.filter(opt => 
           opt.label.toLowerCase().includes(search.toLowerCase()) ||
-          (opt.category && opt.category.toLowerCase().includes(search.toLowerCase()))
+          (opt.description && opt.description.toLowerCase().includes(search.toLowerCase()))
         )
       : options;
 
     return (
       <div className="relative">
-        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-          {label}
-        </label>
+        {label && <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">{label}</label>}
         <div className="relative">
           <button
             type="button"
             onClick={() => setIsOpen(!isOpen)}
-            className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+            className={`w-full px-4 py-3 rounded-lg border ${customClass || 'border-[#e5e7eb] dark:border-[#374151]'} bg-white dark:bg-[#374151] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors focus:outline-none focus:ring-2 focus:ring-[#0A2F44]`}
           >
             <div className="flex items-center space-x-3">
               {Icon && <Icon className="text-[#0A2F44]" />}
@@ -471,34 +429,6 @@ const StructuralInput = () => {
     { value: 'C60/75', label: 'C60/75', description: 'fck = 60 MPa' },
   ];
 
-  // Reinforcement grades
-  const reinforcementGrades = [
-    { value: 'B500A', label: 'B500A', description: 'fyk = 500 MPa, ductility class A' },
-    { value: 'B500B', label: 'B500B', description: 'fyk = 500 MPa, ductility class B' },
-    { value: 'B500C', label: 'B500C', description: 'fyk = 500 MPa, ductility class C' },
-    { value: 'B400', label: 'B400', description: 'fyk = 400 MPa (legacy)' },
-    { value: 'B600', label: 'B600', description: 'fyk = 600 MPa (high strength)' },
-  ];
-
-  // Deflection limits
-  const deflectionLimits = [
-    { value: '250', label: 'L/250', description: 'Standard for most floors' },
-    { value: '300', label: 'L/300', description: 'Stricter control for sensitive finishes' },
-    { value: '350', label: 'L/350', description: 'High precision requirements' },
-    { value: '400', label: 'L/400', description: 'Very strict deflection control' },
-    { value: '500', label: 'L/500', description: 'Extreme precision (laboratories)' },
-  ];
-
-  // Fire ratings
-  const fireRatings = [
-    { value: '30', label: '30 min', description: 'R30 - Low fire risk' },
-    { value: '60', label: '60 min', description: 'R60 - Standard requirement' },
-    { value: '90', label: '90 min', description: 'R90 - Enhanced protection' },
-    { value: '120', label: '120 min', description: 'R120 - High fire risk' },
-    { value: '180', label: '180 min', description: 'R180 - Industrial' },
-    { value: '240', label: '240 min', description: 'R240 - Special structures' },
-  ];
-
   // Exposure classes
   const exposureClasses = [
     { value: 'XC1', label: 'XC1', description: 'Dry or permanently wet' },
@@ -525,9 +455,111 @@ const StructuralInput = () => {
     setIsOptimising(true);
     setTimeout(() => {
       setIsOptimising(false);
-      alert(`✅ ${activeComponent} optimisation complete! (Mock)`);
+      setShowResults(true);
+      setShowReport(false);
+      setShowAIRecommendation(false);
+      setShowTradeoff(false);
     }, 2000);
   };
+
+  const handleViewReport = (optionId) => {
+    setSelectedOptionId(optionId);
+    setShowReport(true);
+    setShowResults(false);
+    setShowAIRecommendation(false);
+    setShowTradeoff(false);
+  };
+
+  const handleBackFromReport = () => {
+    setShowReport(false);
+    setShowResults(true);
+  };
+
+  const handleViewAIRecommendation = () => {
+    setShowAIRecommendation(true);
+    setShowResults(false);
+    setShowReport(false);
+    setShowTradeoff(false);
+  };
+
+  const handleViewTradeoff = (optionIds) => {
+    setCompareOptions(optionIds);
+    setShowTradeoff(true);
+    setShowResults(false);
+    setShowReport(false);
+    setShowAIRecommendation(false);
+  };
+
+  const handleBackToResults = () => {
+    setShowResults(true);
+    setShowReport(false);
+    setShowAIRecommendation(false);
+    setShowTradeoff(false);
+  };
+
+  // Mock options data for demonstration
+  const mockOptions = [
+    {
+      id: 1,
+      rank: 1,
+      thickness: 175,
+      barDiameter: 10,
+      spacing: 100,
+      asProv: 785,
+      asReq: 575,
+      cost: 1240,
+      carbon: 53.8,
+      utilisation: 0.73,
+      deflection: 'L/384',
+      status: 'optimal',
+      recommended: true
+    },
+    {
+      id: 2,
+      rank: 2,
+      thickness: 175,
+      barDiameter: 10,
+      spacing: 125,
+      asProv: 628,
+      asReq: 575,
+      cost: 1180,
+      carbon: 51.2,
+      utilisation: 0.86,
+      deflection: 'L/320',
+      status: 'pass',
+      recommended: false
+    },
+    {
+      id: 3,
+      rank: 3,
+      thickness: 160,
+      barDiameter: 10,
+      spacing: 100,
+      asProv: 785,
+      asReq: 607,
+      cost: 1150,
+      carbon: 49.2,
+      utilisation: 0.84,
+      deflection: 'L/210',
+      status: 'warning',
+      recommended: false
+    },
+    {
+      id: 4,
+      rank: 4,
+      thickness: 160,
+      barDiameter: 12,
+      spacing: 125,
+      asProv: 905,
+      asReq: 607,
+      cost: 1320,
+      carbon: 58.5,
+      utilisation: 0.62,
+      deflection: 'L/450',
+      status: 'overdesigned',
+      recommended: false
+    }
+  ];
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] dark:bg-[#111827] flex transition-colors duration-300">
@@ -564,368 +596,6 @@ const StructuralInput = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Cost Settings Panel */}
-      {isCostPanelOpen && (
-        <>
-          <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
-            onClick={() => {
-              if (hasUnsavedChanges) {
-                if (confirm('You have unsaved changes. Are you sure you want to close?')) {
-                  setIsCostPanelOpen(false);
-                  setHasUnsavedChanges(false);
-                }
-              } else {
-                setIsCostPanelOpen(false);
-              }
-            }}
-          />
-          <div className="fixed right-0 top-0 h-full w-full max-w-4xl bg-white dark:bg-[#1f2937] z-50 shadow-2xl animate-slide-left overflow-y-auto">
-            
-            {/* Sticky Header with Close Button */}
-            <div className="sticky top-0 bg-white dark:bg-[#1f2937] border-b border-[#e5e7eb] dark:border-[#374151] p-6 flex items-center justify-between z-10">
-              <h2 className="text-xl font-bold text-[#02090d] dark:text-white flex items-center">
-                <FiDollarSign className="mr-2 text-[#0A2F44]" />
-                Cost Source Settings
-              </h2>
-              <div className="flex items-center space-x-2">
-                {hasUnsavedChanges && (
-                  <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
-                    Unsaved Changes
-                  </span>
-                )}
-                <button
-                  onClick={() => {
-                    if (hasUnsavedChanges) {
-                      if (confirm('You have unsaved changes. Are you sure you want to close?')) {
-                        setIsCostPanelOpen(false);
-                        setHasUnsavedChanges(false);
-                      }
-                    } else {
-                      setIsCostPanelOpen(false);
-                    }
-                  }}
-                  className="p-2 hover:bg-[#f3f4f6] dark:hover:bg-[#374151] rounded-lg transition-colors group"
-                  title="Close"
-                >
-                  <FiX className="text-xl text-[#6b7280] group-hover:text-[#0A2F44] dark:group-hover:text-white transition-colors" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6">
-              {/* Loading State */}
-              {isLoadingRates ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="w-12 h-12 border-4 border-[#e5e7eb] border-t-[#0A2F44] rounded-full animate-spin"></div>
-                </div>
-              ) : (
-                <>
-                  {/* Cost Source Options */}
-                  <div className="mb-8">
-                    <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">
-                      Select cost database and material rates for optimisation
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <button
-                        onClick={() => {
-                          setCostSource('default');
-                          setHasUnsavedChanges(true);
-                        }}
-                        className={`p-4 rounded-lg border-2 text-left transition-all ${
-                          costSource === 'default'
-                            ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-                            : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-semibold text-[#02090d] dark:text-white">UK National Average</h4>
-                          <span className="text-xs bg-[#0A2F44] text-white px-2 py-1 rounded-full">Default</span>
-                        </div>
-                        <p className="text-sm text-[#6b7280] mb-2">Industry Benchmark Rates</p>
-                        <p className="text-xs text-[#0A2F44]">Auto-Updated Quarterly</p>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setCostSource('custom');
-                          setHasUnsavedChanges(true);
-                        }}
-                        className={`p-4 rounded-lg border-2 text-left transition-all ${
-                          costSource === 'custom'
-                            ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-                            : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-                        }`}
-                      >
-                        <h4 className="font-semibold text-[#02090d] dark:text-white mb-2">Upload Company Rates</h4>
-                        <p className="text-sm text-[#6b7280] mb-2">Custom Price Database</p>
-                        <p className="text-xs text-[#0A2F44]">Priority over Default</p>
-                      </button>
-
-                      <button
-                        onClick={() => setCostSource('bcis')}
-                        className={`p-4 rounded-lg border-2 text-left transition-all opacity-60 cursor-not-allowed ${
-                          costSource === 'bcis'
-                            ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-                            : 'border-[#e5e7eb] dark:border-[#374151]'
-                        }`}
-                        disabled
-                      >
-                        <h4 className="font-semibold text-[#02090d] dark:text-white mb-2">BCIS API</h4>
-                        <p className="text-sm text-[#6b7280] mb-2">Live Market Data</p>
-                        <p className="text-xs text-[#9ca3af]">Coming Soon</p>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Cost Rate Table */}
-                  <div className="mb-8">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-[#02090d] dark:text-white">
-                        Cost Rate Table
-                      </h3>
-                      <p className="text-sm text-[#6b7280]">Material Unit Rates (GBP) — UK 2026 Q1</p>
-                    </div>
-
-                    <div className="overflow-x-auto border border-[#e5e7eb] dark:border-[#374151] rounded-lg">
-                      <table className="w-full">
-                        <thead className="bg-[#f3f4f6] dark:bg-[#374151]">
-                          <tr>
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Material Item</th>
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Unit</th>
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Rate (£)</th>
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Source</th>
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Last Updated</th>
-                            <th className="text-center px-4 py-3 text-xs font-semibold text-[#6b7280] uppercase">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#e5e7eb] dark:divide-[#374151]">
-                          {costRates.map((item) => (
-                            <tr key={item.id} className="hover:bg-[#f9fafb] dark:hover:bg-[#374151] group">
-                              <td className="px-4 py-3 text-sm text-[#02090d] dark:text-white">
-                                {editingCell?.id === item.id && editingCell?.field === 'item' ? (
-                                  <input
-                                    type="text"
-                                    value={item.item}
-                                    onChange={(e) => updateRateField(item.id, 'item', e.target.value)}
-                                    onBlur={() => setEditingCell(null)}
-                                    onKeyPress={(e) => e.key === 'Enter' && setEditingCell(null)}
-                                    className="w-full px-2 py-1 rounded border border-[#0A2F44] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                                    autoFocus
-                                  />
-                                ) : (
-                                  <span 
-                                    className="cursor-pointer hover:text-[#0A2F44]"
-                                    onClick={() => setEditingCell({ id: item.id, field: 'item' })}
-                                  >
-                                    {item.item}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-[#6b7280]">
-                                {editingCell?.id === item.id && editingCell?.field === 'unit' ? (
-                                  <input
-                                    type="text"
-                                    value={item.unit}
-                                    onChange={(e) => updateRateField(item.id, 'unit', e.target.value)}
-                                    onBlur={() => setEditingCell(null)}
-                                    onKeyPress={(e) => e.key === 'Enter' && setEditingCell(null)}
-                                    className="w-20 px-2 py-1 rounded border border-[#0A2F44] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                                    autoFocus
-                                  />
-                                ) : (
-                                  <span 
-                                    className="cursor-pointer hover:text-[#0A2F44]"
-                                    onClick={() => setEditingCell({ id: item.id, field: 'unit' })}
-                                  >
-                                    {item.unit}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-sm font-medium text-[#02090d] dark:text-white">
-                                {editingCell?.id === item.id && editingCell?.field === 'rate' ? (
-                                  <input
-                                    type="number"
-                                    value={item.rate}
-                                    onChange={(e) => updateRateField(item.id, 'rate', parseFloat(e.target.value) || 0)}
-                                    onBlur={() => setEditingCell(null)}
-                                    onKeyPress={(e) => e.key === 'Enter' && setEditingCell(null)}
-                                    step="0.01"
-                                    min="0"
-                                    className="w-24 px-2 py-1 rounded border border-[#0A2F44] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                                    autoFocus
-                                  />
-                                ) : (
-                                  <span 
-                                    className="cursor-pointer hover:text-[#0A2F44]"
-                                    onClick={() => setEditingCell({ id: item.id, field: 'rate' })}
-                                  >
-                                    £{item.rate.toFixed(2)}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-[#6b7280]">{item.source}</td>
-                              <td className="px-4 py-3 text-sm text-[#6b7280]">{item.lastUpdated}</td>
-                              <td className="px-4 py-3 text-center">
-                                {item.source === 'Custom' && (
-                                  <button
-                                    onClick={() => removeCustomItem(item.id)}
-                                    className="text-red-500 hover:text-red-700 transition-colors opacity-0 group-hover:opacity-100"
-                                    title="Remove item"
-                                  >
-                                    <FiX className="text-lg" />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <button
-                      onClick={addCustomItem}
-                      className="mt-4 flex items-center space-x-2 text-[#0A2F44] hover:text-[#082636] transition-colors"
-                    >
-                      <FiPlus />
-                      <span className="text-sm font-medium">Add Custom Item</span>
-                    </button>
-                  </div>
-
-                  {/* Cost Summary and Graph */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="md:col-span-2 bg-[#f9fafb] dark:bg-[#374151] rounded-lg p-6">
-                      <h3 className="text-sm font-medium text-[#6b7280] mb-4">Cost Summary</h3>
-                      <p className="text-xs text-[#6b7280] mb-2">Currency: GBP (£)</p>
-                      
-                      <div className="mb-6">
-                        <p className="text-2xl font-bold text-[#02090d] dark:text-white">
-                          £{totalMaterialCost.toFixed(2)} / m²
-                        </p>
-                        <p className="text-xs text-[#6b7280] mt-1">Total Material Cost</p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#6b7280]">Concrete:</span>
-                          <span className="font-medium text-[#02090d] dark:text-white">£{concreteCost.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#6b7280]">Rebar:</span>
-                          <span className="font-medium text-[#02090d] dark:text-white">£{rebarCost.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#6b7280]">Formwork:</span>
-                          <span className="font-medium text-[#02090d] dark:text-white">£{formworkCost.toFixed(2)}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-6 pt-4 border-t border-[#e5e7eb] dark:border-[#4b5563]">
-                        <h4 className="text-sm font-medium text-[#6b7280] mb-2">Cost Comparison</h4>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#6b7280]">Baseline:</span>
-                          <span className="font-medium text-[#02090d] dark:text-white">£{baselineCost.toFixed(2)} / m²</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-[#6b7280]">Optimised:</span>
-                          <span className="font-medium text-[#02090d] dark:text-white">£{optimisedCost.toFixed(2)} / m²</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-[#f9fafb] dark:bg-[#374151] rounded-lg p-6">
-                      <h3 className="text-sm font-medium text-[#6b7280] mb-4">Potential Saving</h3>
-                      <div className="text-center">
-                        <p className="text-3xl font-bold text-[#2E7D32]">£{potentialSaving.toFixed(2)}</p>
-                        <p className="text-sm text-[#2E7D32]">/ m²</p>
-                        <div className="mt-4 inline-block bg-[#e8f5e9] dark:bg-[#1e3a4a] px-4 py-2 rounded-full">
-                          <span className="text-lg font-bold text-[#2E7D32]">{savingPercentage.toFixed(2)}%</span>
-                          <span className="text-sm text-[#2E7D32] ml-1">Reduction</span>
-                        </div>
-                      </div>
-
-                      {/* Dynamic bar chart visualization */}
-                      <div className="mt-6">
-                        <div className="flex items-end justify-between h-24">
-                          <div className="w-1/3 text-center">
-                            <div 
-                              className="bg-[#9ca3af] rounded-t-lg mx-2 transition-all duration-300"
-                              style={{ height: `${(baselineCost / 100) * 100}px` }}
-                            ></div>
-                            <p className="text-xs mt-2 text-[#6b7280]">Baseline</p>
-                          </div>
-                          <div className="w-1/3 text-center">
-                            <div 
-                              className="bg-[#0A2F44] rounded-t-lg mx-2 transition-all duration-300"
-                              style={{ height: `${(optimisedCost / 100) * 100}px` }}
-                            ></div>
-                            <p className="text-xs mt-2 text-[#6b7280]">Current</p>
-                          </div>
-                          <div className="w-1/3 text-center">
-                            <div 
-                              className="bg-[#2E7D32] rounded-t-lg mx-2 transition-all duration-300"
-                              style={{ height: `${((baselineCost - potentialSaving) / 100) * 100}px` }}
-                            ></div>
-                            <p className="text-xs mt-2 text-[#6b7280]">Optimised</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex items-center justify-between pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
-                    <div className="flex items-center space-x-4">
-                      <button className="flex items-center space-x-2 text-[#6b7280] hover:text-[#0A2F44] transition-colors">
-                        <FiHelpCircle />
-                        <span className="text-sm">Help & Support</span>
-                      </button>
-                      <span className="text-sm text-[#6b7280]">
-                        Active Cost Set: <span className="font-medium text-[#0A2F44]">{activeCostSet}</span>
-                      </span>
-                    </div>
-                    <div className="flex space-x-3">
-                      <button
-                        onClick={resetToDefault}
-                        className="px-4 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-sm text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors flex items-center space-x-2"
-                      >
-                        <FiRefreshCw className={isResetting ? 'animate-spin' : ''} />
-                        <span>Reset to Default</span>
-                      </button>
-                      <button
-                        onClick={validateRates}
-                        className="px-4 py-2 bg-[#0A2F44] text-white rounded-lg text-sm hover:bg-[#082636] transition-colors"
-                      >
-                        Validate Rates
-                      </button>
-                      <button
-                        onClick={saveRates}
-                        disabled={!hasUnsavedChanges || isSaving}
-                        className={`px-4 py-2 bg-[#2E7D32] text-white rounded-lg text-sm hover:bg-[#1c4b1e] transition-colors flex items-center space-x-2 ${
-                          !hasUnsavedChanges || isSaving ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
-                      >
-                        {isSaving ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            <span>Saving...</span>
-                          </>
-                        ) : (
-                          <>
-                            <FiTrendingUp />
-                            <span>Save Changes</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </>
       )}
 
       {/* Mobile Menu Overlay */}
@@ -988,26 +658,12 @@ const StructuralInput = () => {
               </button>
             </div>
             <div className="flex items-center space-x-3">
-              {/* Cost Settings Button */}
-              <button
-                onClick={() => setIsCostPanelOpen(true)}
-                className="p-2 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer relative group"
-                title="Cost Settings"
-              >
-                <FiDollarSign className={`text-xl ${
-                  isDarkMode ? 'text-[#cce1eb]' : 'text-[#0A2F44]'
-                } group-hover:text-[#0A2F44] dark:group-hover:text-white transition-colors`} />
-              </button>
-              
-              {/* Theme Toggle */}
               <button
                 onClick={toggleDarkMode}
                 className="p-2 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
               >
                 {isDarkMode ? <FiSun className="text-xl text-yellow-500" /> : <FiMoon className="text-xl text-[#0A2F44]" />}
               </button>
-              
-              {/* User Avatar */}
               <div className="w-8 h-8 bg-[#0A2F44] rounded-full flex items-center justify-center text-white text-sm font-medium">
                 {getUserInitials()}
               </div>
@@ -1035,641 +691,1035 @@ const StructuralInput = () => {
 
         {/* Main Content Area */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Title */}
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-[#02090d] dark:text-white capitalize">
-              {activeComponent} Input
-            </h1>
-            <p className="text-sm text-[#6b7280] dark:text-[#9ca3af] mt-1">
-              Enter {activeComponent} parameters for structural analysis and optimisation
-            </p>
-          </div>
+          {/* Show Results Comparison */}
+          {showResults && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold text-[#02090d] dark:text-white">
+                  Optimisation Results
+                </h1>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={handleViewAIRecommendation}
+                    className="px-4 py-2 bg-[#0A2F44] dark:bg-[#2E7D32] text-white rounded-lg hover:bg-[#082636] dark:hover:bg-[#1c4b1e] transition-colors shadow-md"
+                  >
+                    AI Recommendation
+                  </button>
+                  <button
+                    onClick={() => setShowResults(false)}
+                    className="px-4 py-2 border border-[#e5e7eb] dark:border-[#4b5563] text-[#374151] dark:text-[#d1d5db] rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors"
+                  >
+                    Back to Input
+                  </button>
+                </div>
+              </div>
+              
+              <SlabResultsComparison
+                options={mockOptions}
+                onViewReport={handleViewReport}
+                onCompare={handleViewTradeoff}
+                onExport={(format) => console.log(`Export as ${format}`)}
+              />
+            </div>
+          )}
 
-          {/* Slab Input Form */}
-          {activeComponent === 'slab' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Left Column */}
-              <div className="space-y-6">
-                {/* Slab Geometry Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiGrid className="mr-2 text-[#0A2F44]" />
-                    Slab Geometry
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    {/* Slab Type */}
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Slab Type
-                      </label>
-                      <div className="flex space-x-4">
-                        <label className="flex items-center cursor-pointer">
-                          <input
-                            type="radio"
-                            name="slabType"
-                            value="one-way"
-                            checked={formData.slabType === 'one-way'}
-                            onChange={handleChange}
-                            className="w-4 h-4 text-[#0A2F44] cursor-pointer"
-                          />
-                          <span className="ml-2 text-sm text-[#02090d] dark:text-white">One-way</span>
-                        </label>
-                        <label className="flex items-center cursor-pointer">
-                          <input
-                            type="radio"
-                            name="slabType"
-                            value="two-way"
-                            checked={formData.slabType === 'two-way'}
-                            onChange={handleChange}
-                            className="w-4 h-4 text-[#0A2F44] cursor-pointer"
-                          />
-                          <span className="ml-2 text-sm text-[#02090d] dark:text-white">Two-way</span>
-                        </label>
-                      </div>
-                    </div>
+          {/* Show Detailed Report */}
+          {showReport && (
+            <div className="space-y-6">
+              <SlabDetailedReport
+                option={mockOptions.find(opt => opt.id === selectedOptionId)}
+                onBack={handleBackFromReport}
+                onExport={(format) => console.log(`Export as ${format}`)}
+              />
+            </div>
+          )}
 
-                    {/* Support Condition */}
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Support Condition
-                      </label>
-                      <div className="flex space-x-4">
-                        <label className="flex items-center cursor-pointer">
-                          <input
-                            type="radio"
-                            name="supportCondition"
-                            value="ss"
-                            checked={formData.supportCondition === 'ss'}
-                            onChange={handleChange}
-                            className="w-4 h-4 text-[#0A2F44] cursor-pointer"
-                          />
-                          <span className="ml-2 text-sm text-[#02090d] dark:text-white">Simply Supported</span>
-                        </label>
-                        <label className="flex items-center cursor-pointer">
-                          <input
-                            type="radio"
-                            name="supportCondition"
-                            value="continuous"
-                            checked={formData.supportCondition === 'continuous'}
-                            onChange={handleChange}
-                            className="w-4 h-4 text-[#0A2F44] cursor-pointer"
-                          />
-                          <span className="ml-2 text-sm text-[#02090d] dark:text-white">Continuous</span>
-                        </label>
-                      </div>
-                    </div>
+          {/* Show AI Recommendation */}
+          {showAIRecommendation && (
+            <div className="space-y-6">
+              <AIRecommendation
+                options={mockOptions}
+                onBack={handleBackToResults}
+                onAccept={(optionId) => {
+                  setSelectedOptionId(optionId);
+                  setShowReport(true);
+                  setShowAIRecommendation(false);
+                }}
+              />
+            </div>
+          )}
 
-                    {/* Continuous Spans (conditionally shown) */}
-                    {formData.supportCondition === 'continuous' && (
-                      <div className="animate-fade-in space-y-4 border-l-4 border-[#0A2F44] pl-4">
+          {/* Show Trade-off Analysis */}
+          {showTradeoff && (
+            <div className="space-y-6">
+              <TradeoffAnalysis
+                options={mockOptions.filter(opt => compareOptions.includes(opt.id))}
+                onBack={handleBackToResults}
+                onSelectOption={(optionId) => {
+                  setSelectedOptionId(optionId);
+                  setShowReport(true);
+                  setShowTradeoff(false);
+                }}
+              />
+            </div>
+          )}
+
+          {/* Show Input Form (default) */}
+          {!showResults && !showReport && !showAIRecommendation && !showTradeoff && (
+            <>
+              {/* Title */}
+              <div className="mb-8">
+                <h1 className="text-2xl font-bold text-[#02090d] dark:text-white capitalize">
+                  {activeComponent} Input
+                </h1>
+                <p className="text-sm text-[#6b7280] dark:text-[#9ca3af] mt-1">
+                  Enter {activeComponent} parameters for structural analysis and optimisation
+                </p>
+              </div>
+
+              {/* Slab Input Form */}
+              {activeComponent === 'slab' && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Left Column */}
+                  <div className="space-y-6">
+                    {/* Slab Geometry Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiGrid className="mr-2 text-[#0A2F44]" />
+                        Slab Geometry
+                      </h2>
+                      
+                      <div className="space-y-4">
+                        {/* Slab Type */}
                         <div>
                           <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                            Number of Spans
+                            Slab Type
                           </label>
-                          <select
-                            value={formData.continuousSpans.length}
-                            onChange={(e) => {
-                              const num = parseInt(e.target.value);
-                              setFormData(prev => ({
-                                ...prev,
-                                continuousSpans: Array(num).fill('5.0')
-                              }));
-                            }}
-                            className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                          >
-                            <option value="2">2 spans</option>
-                            <option value="3">3 spans</option>
-                            <option value="4">4 spans</option>
-                            <option value="5">5 spans</option>
-                          </select>
+                          <div className="flex space-x-4">
+                            <label className="flex items-center cursor-pointer">
+                              <input
+                                type="radio"
+                                name="slabType"
+                                value="one-way"
+                                checked={formData.slabType === 'one-way'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] cursor-pointer"
+                              />
+                              <span className="ml-2 text-sm text-[#02090d] dark:text-white">One-way</span>
+                            </label>
+                            <label className="flex items-center cursor-pointer">
+                              <input
+                                type="radio"
+                                name="slabType"
+                                value="two-way"
+                                checked={formData.slabType === 'two-way'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] cursor-pointer"
+                              />
+                              <span className="ml-2 text-sm text-[#02090d] dark:text-white">Two-way</span>
+                            </label>
+                          </div>
                         </div>
 
-                        {formData.continuousSpans.map((span, index) => (
-                          <div key={index}>
+                        {/* Support Condition */}
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Support Condition
+                          </label>
+                          <div className="flex space-x-4">
+                            <label className="flex items-center cursor-pointer">
+                              <input
+                                type="radio"
+                                name="supportCondition"
+                                value="ss"
+                                checked={formData.supportCondition === 'ss'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] cursor-pointer"
+                              />
+                              <span className="ml-2 text-sm text-[#02090d] dark:text-white">Simply Supported</span>
+                            </label>
+                            <label className="flex items-center cursor-pointer">
+                              <input
+                                type="radio"
+                                name="supportCondition"
+                                value="continuous"
+                                checked={formData.supportCondition === 'continuous'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] cursor-pointer"
+                              />
+                              <span className="ml-2 text-sm text-[#02090d] dark:text-white">Continuous</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Continuous Spans (conditionally shown) */}
+                        {formData.supportCondition === 'continuous' && (
+                          <div className="animate-fade-in space-y-4 border-l-4 border-[#0A2F44] pl-4">
+                            <div>
+                              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                Number of Spans
+                              </label>
+                              <CustomDropdown
+                                label=""
+                                name="numSpans"
+                                value={formData.continuousSpans.length.toString()}
+                                options={[
+                                  { value: '2', label: '2 spans' },
+                                  { value: '3', label: '3 spans' },
+                                  { value: '4', label: '4 spans' },
+                                  { value: '5', label: '5 spans' },
+                                ]}
+                                onChange={(e) => {
+                                  const num = parseInt(e.target.value);
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    continuousSpans: Array(num).fill('5.0')
+                                  }));
+                                }}
+                              />
+                            </div>
+
+                            {formData.continuousSpans.map((span, index) => (
+                              <div key={index}>
+                                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                  Span {index + 1} (m)
+                                </label>
+                                <input
+                                  type="number"
+                                  value={span}
+                                  onChange={(e) => {
+                                    const newSpans = [...formData.continuousSpans];
+                                    newSpans[index] = e.target.value;
+                                    setFormData(prev => ({ ...prev, continuousSpans: newSpans }));
+                                  }}
+                                  step="0.1"
+                                  min="0"
+                                  className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                                />
+                              </div>
+                            ))}
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                  Left End
+                                </label>
+                                <CustomDropdown
+                                  label=""
+                                  name="endFixityLeft"
+                                  value={formData.endFixityLeft}
+                                  options={[
+                                    { value: 'pinned', label: 'Pinned' },
+                                    { value: 'fixed', label: 'Fixed' },
+                                  ]}
+                                  onChange={handleChange}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                  Right End
+                                </label>
+                                <CustomDropdown
+                                  label=""
+                                  name="endFixityRight"
+                                  value={formData.endFixityRight}
+                                  options={[
+                                    { value: 'pinned', label: 'Pinned' },
+                                    { value: 'fixed', label: 'Fixed' },
+                                  ]}
+                                  onChange={handleChange}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Span X */}
+                        <div className="relative">
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Span X (m) <span className="text-xs text-[#6b7280] ml-1">(primary span)</span>
+                          </label>
+                          <input
+                            type="number"
+                            name="spanX"
+                            value={formData.spanX}
+                            onChange={handleChange}
+                            step="0.1"
+                            className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                          />
+                        </div>
+
+                        {/* Span Y - Only for two-way */}
+                        {formData.slabType === 'two-way' && (
+                          <div className="animate-fade-in">
                             <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                              Span {index + 1} (m)
+                              Span Y (m) <span className="text-xs text-[#6b7280] ml-1">(secondary span)</span>
                             </label>
                             <input
                               type="number"
-                              value={span}
-                              onChange={(e) => {
-                                const newSpans = [...formData.continuousSpans];
-                                newSpans[index] = e.target.value;
-                                setFormData(prev => ({ ...prev, continuousSpans: newSpans }));
-                              }}
+                              name="spanY"
+                              value={formData.spanY}
+                              onChange={handleChange}
                               step="0.1"
-                              min="0"
-                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
                             />
                           </div>
+                        )}
+
+                        {/* Thickness with warning indicator */}
+                        <div className="relative">
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Thickness (mm)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              name="thickness"
+                              value={formData.thickness}
+                              onChange={handleChange}
+                              step="5"
+                              className={`w-full px-4 py-2 rounded-lg border ${
+                                isOverridden('thickness')
+                                  ? 'border-yellow-500 dark:border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'
+                                  : 'border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151]'
+                              } text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all`}
+                            />
+                            {isOverridden('thickness') && (
+                              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                                <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
+                              </div>
+                            )}
+                          </div>
+                          {!isOverridden('thickness') && (
+                            <p className="text-xs text-[#0A2F44] mt-1">
+                              Recommended: {autoValues.recommendedThickness}mm
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Cover with warning indicator */}
+                        <div className="relative">
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Cover (mm)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              name="cover"
+                              value={formData.cover}
+                              onChange={handleChange}
+                              step="5"
+                              className={`w-full px-4 py-2 rounded-lg border ${
+                                isOverridden('cover')
+                                  ? 'border-yellow-500 dark:border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'
+                                  : 'border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151]'
+                              } text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all`}
+                            />
+                            {isOverridden('cover') && (
+                              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                                <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
+                              </div>
+                            )}
+                          </div>
+                          {!isOverridden('cover') && (
+                            <p className="text-xs text-[#0A2F44] mt-1">
+                              Recommended: {autoValues.recommendedCover}mm
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Loads Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiWind className="mr-2 text-[#0A2F44]" />
+                        Loads (kN/m²)
+                      </h2>
+                      
+                      {/* Permanent Actions */}
+                      <div className="mb-6">
+                        <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Permanent Actions</h3>
+                        
+                        <div className="grid grid-cols-2 gap-4 mb-3">
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">Finishes (kN/m²)</label>
+                            <input
+                              type="number"
+                              name="finishes"
+                              value={formData.finishes}
+                              onChange={handleChange}
+                              step="0.1"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">Service allowance (kN/m²)</label>
+                            <input
+                              type="number"
+                              name="serviceAllowance"
+                              value={formData.serviceAllowance}
+                              onChange={handleChange}
+                              step="0.1"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mb-3">
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">Partition load (kN/m²)</label>
+                            <input
+                              type="number"
+                              name="partition"
+                              value={formData.partition}
+                              onChange={handleChange}
+                              step="0.1"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">Partition mode</label>
+                            <div className="flex space-x-4 mt-1">
+                              <label className="flex items-center">
+                                <input
+                                  type="radio"
+                                  name="partitionMode"
+                                  value="permanent"
+                                  checked={formData.partitionMode === 'permanent'}
+                                  onChange={handleChange}
+                                  className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                                />
+                                <span className="ml-2 text-sm text-[#02090d] dark:text-white">Permanent (Gk)</span>
+                              </label>
+                              <label className="flex items-center">
+                                <input
+                                  type="radio"
+                                  name="partitionMode"
+                                  value="variable"
+                                  checked={formData.partitionMode === 'variable'}
+                                  onChange={handleChange}
+                                  className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                                />
+                                <span className="ml-2 text-sm text-[#02090d] dark:text-white">Variable (Qk)</span>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Additional Permanent Loads */}
+                        {formData.permanentLoads.map((load, index) => (
+                          <div key={index} className="grid grid-cols-5 gap-2 mb-2">
+                            <div className="col-span-2">
+                              <input
+                                type="text"
+                                placeholder="Load name"
+                                value={load.name}
+                                onChange={(e) => handlePermanentLoadChange(index, 'name', e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-sm focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                placeholder="Value (kN/m²)"
+                                value={load.value}
+                                onChange={(e) => handlePermanentLoadChange(index, 'value', e.target.value)}
+                                step="0.1"
+                                className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-sm focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                              />
+                            </div>
+                            <div className="col-span-1">
+                              <button
+                                onClick={() => removePermanentLoad(index)}
+                                className="w-full h-full flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                title="Remove load"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
                         ))}
+
+                        <button
+                          onClick={addPermanentLoad}
+                          className="mt-2 text-sm text-[#0A2F44] hover:underline flex items-center"
+                        >
+                          <span className="text-lg mr-1">+</span> Add other permanent load
+                        </button>
+                      </div>
+
+                      {/* Variable Actions */}
+                      <div className="mb-4">
+                        <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Variable Actions</h3>
+                        
+                        {/* Leading Load */}
+                        <div className="mb-4 p-4 bg-[#f9fafb] dark:bg-[#374151] rounded-lg">
+                          <p className="text-xs font-medium mb-3 text-[#0A2F44]">Leading Variable Load</p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <CustomDropdown
+                              label=""
+                              name="leadingLoadKey"
+                              value={formData.leadingLoad.key}
+                              options={variableActionKeys.map(key => ({
+                                value: key.value,
+                                label: key.label,
+                                description: key.description
+                              }))}
+                              onChange={(e) => setFormData(prev => ({
+                                ...prev,
+                                leadingLoad: { ...prev.leadingLoad, key: e.target.value }
+                              }))}
+                            />
+                            <div>
+                              <input
+                                type="number"
+                                placeholder="Value (kN/m²)"
+                                value={formData.leadingLoad.value}
+                                onChange={(e) => setFormData(prev => ({
+                                  ...prev,
+                                  leadingLoad: { ...prev.leadingLoad, value: e.target.value }
+                                }))}
+                                step="0.1"
+                                className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Accompanying Loads */}
+                        {formData.accompanyingLoads.map((load, index) => (
+                          <div key={index} className="grid grid-cols-5 gap-2 mb-2">
+                            <div className="col-span-2">
+                              <CustomDropdown
+                                label=""
+                                name={`accKey-${index}`}
+                                value={load.key}
+                                options={variableActionKeys.map(key => ({
+                                  value: key.value,
+                                  label: key.label,
+                                  description: key.description
+                                }))}
+                                onChange={(e) => handleAccompanyingLoadChange(index, 'key', e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                placeholder="Value (kN/m²)"
+                                value={load.value}
+                                onChange={(e) => handleAccompanyingLoadChange(index, 'value', e.target.value)}
+                                step="0.1"
+                                className="w-full px-3 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-sm focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                              />
+                            </div>
+                            <div className="col-span-1">
+                              <button
+                                onClick={() => removeAccompanyingLoad(index)}
+                                className="w-full h-full flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                title="Remove load"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+
+                        <button
+                          onClick={addAccompanyingLoad}
+                          className="mt-2 text-sm text-[#0A2F44] hover:underline flex items-center"
+                        >
+                          <span className="text-lg mr-1">+</span> Add accompanying variable load
+                        </button>
+                      </div>
+
+                      {/* Imposed Load Category Dropdown */}
+                      <CustomDropdown
+                        label="Imposed Load Category"
+                        name="imposedCategory"
+                        value={formData.imposedCategory}
+                        options={imposedCategories}
+                        onChange={handleChange}
+                        icon={FiHome}
+                        searchable={true}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right Column */}
+                  <div className="space-y-6">
+                    {/* Materials Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiDroplet className="mr-2 text-[#0A2F44]" />
+                        Materials
+                      </h2>
+                      
+                      <div className="space-y-4">
+                        {/* Concrete Grade Dropdown */}
+                        <CustomDropdown
+                          label="Concrete Grade"
+                          name="concreteGrade"
+                          value={formData.concreteGrade}
+                          options={concreteGrades}
+                          onChange={handleChange}
+                        />
+
+                        {/* Steel Grade - Now using CustomDropdown */}
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Reinforcement Grade
+                          </label>
+                          <CustomDropdown
+                            label=""
+                            name="steelGrade"
+                            value={formData.steelGrade}
+                            options={[
+                              { value: 'B500', label: 'B500 (fyk = 500 MPa)', description: 'High yield steel, 500 MPa' },
+                              { value: 'B500A', label: 'B500A', description: 'Class A ductility' },
+                              { value: 'B500B', label: 'B500B', description: 'Class B ductility' },
+                              { value: 'B500C', label: 'B500C', description: 'Class C ductility (seismic)' },
+                            ]}
+                            onChange={handleChange}
+                          />
+                        </div>
+
+                        {/* Exposure Class Dropdown */}
+                        <CustomDropdown
+                          label="Exposure Class"
+                          name="exposureClass"
+                          value={formData.exposureClass}
+                          options={exposureClasses}
+                          onChange={handleChange}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Optimisation Settings Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiPercent className="mr-2 text-[#0A2F44]" />
+                        Optimisation Settings
+                      </h2>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Number of thickness/bar combinations
+                          </label>
+                          <CustomDropdown
+                            label=""
+                            name="numThicknesses"
+                            value={formData.numThicknesses}
+                            options={[
+                              { value: '1', label: '1 combination' },
+                              { value: '2', label: '2 combinations' },
+                              { value: '3', label: '3 combinations' },
+                              { value: '4', label: '4 combinations' },
+                              { value: '5', label: '5 combinations' },
+                            ]}
+                            onChange={handleChange}
+                          />
+                        </div>
 
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                              Left End
+                              Thickness 1 (mm)
                             </label>
-                            <select
-                              name="endFixityLeft"
-                              value={formData.endFixityLeft}
+                            <input
+                              type="number"
+                              name="thickness1"
+                              value={formData.thickness1}
                               onChange={handleChange}
-                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                            >
-                              <option value="pinned">Pinned</option>
-                              <option value="fixed">Fixed</option>
-                            </select>
+                              step="5"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                              Right End
+                              Bar dia 1 (mm)
                             </label>
-                            <select
-                              name="endFixityRight"
-                              value={formData.endFixityRight}
+                            <input
+                              type="number"
+                              name="barDiameter1"
+                              value={formData.barDiameter1}
                               onChange={handleChange}
-                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                            >
-                              <option value="pinned">Pinned</option>
-                              <option value="fixed">Fixed</option>
-                            </select>
+                              step="2"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                              Thickness 2 (mm)
+                            </label>
+                            <input
+                              type="number"
+                              name="thickness2"
+                              value={formData.thickness2}
+                              onChange={handleChange}
+                              step="5"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                              Bar dia 2 (mm)
+                            </label>
+                            <input
+                              type="number"
+                              name="barDiameter2"
+                              value={formData.barDiameter2}
+                              onChange={handleChange}
+                              step="2"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
+                          <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Optimisation Weights</h3>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs text-[#6b7280] mb-1">Cost Weight (%)</label>
+                              <input
+                                type="range"
+                                name="costWeight"
+                                value={formData.costWeight}
+                                onChange={handleChange}
+                                min="0"
+                                max="100"
+                                className="w-full accent-[#0A2F44]"
+                              />
+                              <div className="text-xs text-right">{formData.costWeight}%</div>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-[#6b7280] mb-1">Carbon Weight (%)</label>
+                              <input
+                                type="range"
+                                name="carbonWeight"
+                                value={formData.carbonWeight}
+                                onChange={handleChange}
+                                min="0"
+                                max="100"
+                                className="w-full accent-[#0A2F44]"
+                              />
+                              <div className="text-xs text-right">{formData.carbonWeight}%</div>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-[#6b7280] mb-1">Material Weight (%)</label>
+                              <input
+                                type="range"
+                                name="materialWeight"
+                                value={formData.materialWeight}
+                                onChange={handleChange}
+                                min="0"
+                                max="100"
+                                className="w-full accent-[#0A2F44]"
+                              />
+                              <div className="text-xs text-right">{formData.materialWeight}%</div>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    )}
-
-                    {/* Span X */}
-                    <div className="relative">
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Span X (m) <span className="text-xs text-[#6b7280] ml-1">(primary span)</span>
-                      </label>
-                      <input
-                        type="number"
-                        name="spanX"
-                        value={formData.spanX}
-                        onChange={handleChange}
-                        step="0.1"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                      />
                     </div>
 
-                    {/* Span Y - Only for two-way */}
-                    {formData.slabType === 'two-way' && (
-                      <div className="animate-fade-in">
-                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                          Span Y (m) <span className="text-xs text-[#6b7280] ml-1">(secondary span)</span>
-                        </label>
-                        <input
-                          type="number"
-                          name="spanY"
-                          value={formData.spanY}
-                          onChange={handleChange}
-                          step="0.1"
-                          className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                        />
-                      </div>
-                    )}
+                    {/* Design Constraints Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiClock className="mr-2 text-[#0A2F44]" />
+                        Design Constraints
+                      </h2>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Deflection Limit
+                          </label>
+                          <CustomDropdown
+                            label=""
+                            name="deflectionLimit"
+                            value={formData.deflectionLimit}
+                            options={[
+                              { value: '250', label: 'L/250', description: 'Standard limit for floors' },
+                              { value: '300', label: 'L/300', description: 'Stricter limit for sensitive areas' },
+                              { value: '350', label: 'L/350', description: 'High performance' },
+                              { value: '400', label: 'L/400', description: 'Very strict (brittle finishes)' },
+                            ]}
+                            onChange={handleChange}
+                          />
+                        </div>
 
-                    {/* Thickness with warning indicator */}
-                    <div className="relative">
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Thickness (mm)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          name="thickness"
-                          value={formData.thickness}
-                          onChange={handleChange}
-                          step="5"
-                          className={`w-full px-4 py-2 rounded-lg border ${
-                            isOverridden('thickness')
-                              ? 'border-yellow-500 dark:border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'
-                              : 'border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151]'
-                          } text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]`}
-                        />
-                        {isOverridden('thickness') && (
-                          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                            <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
-                          </div>
-                        )}
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Crack Width (mm)
+                          </label>
+                          <input
+                            type="number"
+                            name="crackWidthLimit"
+                            value={formData.crackWidthLimit}
+                            onChange={handleChange}
+                            step="0.1"
+                            min="0.1"
+                            max="0.4"
+                            className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Fire Rating (min)
+                          </label>
+                          <CustomDropdown
+                            label=""
+                            name="fireRating"
+                            value={formData.fireRating}
+                            options={[
+                              { value: '30', label: '30 min', description: 'Minimal protection' },
+                              { value: '60', label: '60 min', description: 'Standard for most buildings' },
+                              { value: '90', label: '90 min', description: 'Increased protection' },
+                              { value: '120', label: '120 min', description: 'High-rise buildings' },
+                              { value: '180', label: '180 min', description: 'Special structures' },
+                              { value: '240', label: '240 min', description: 'Maximum protection' },
+                            ]}
+                            onChange={handleChange}
+                          />
+                        </div>
                       </div>
-                      {!isOverridden('thickness') && (
-                        <p className="text-xs text-[#0A2F44] mt-1">
-                          Recommended: {autoValues.recommendedThickness}mm
-                        </p>
-                      )}
                     </div>
 
-                    {/* Cover with warning indicator */}
-                    <div className="relative">
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Cover (mm)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          name="cover"
-                          value={formData.cover}
-                          onChange={handleChange}
-                          step="5"
-                          className={`w-full px-4 py-2 rounded-lg border ${
-                            isOverridden('cover')
-                              ? 'border-yellow-500 dark:border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'
-                              : 'border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151]'
-                          } text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]`}
-                        />
-                        {isOverridden('cover') && (
-                          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                            <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
+                    {/* Cost Details Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiCircle className="mr-2 text-[#0A2F44]" />
+                        Cost Details
+                      </h2>
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={formData.useAIDatabase}
+                            onChange={(e) => setFormData(prev => ({ ...prev, useAIDatabase: e.target.checked }))}
+                            className="w-4 h-4 text-[#0A2F44] mr-2"
+                          />
+                          <span className="text-sm">Use StructAI Database rates</span>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-1">
+                            Region (e.g. UK)
+                          </label>
+                          <input
+                            type="text"
+                            name="region"
+                            value={formData.region}
+                            onChange={handleChange}
+                            placeholder="uk"
+                            className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">
+                              Concrete rate (GBP) [170]
+                            </label>
+                            <input
+                              type="number"
+                              name="concreteRate"
+                              value={formData.concreteRate}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
                           </div>
-                        )}
+                          <div>
+                            <label className="block text-xs text-[#6b7280] mb-1">
+                              Steel rate (GBP) [1300]
+                            </label>
+                            <input
+                              type="number"
+                              name="steelRate"
+                              value={formData.steelRate}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs text-[#6b7280] mb-1">
+                            Formwork rate (GBP) [50]
+                          </label>
+                          <input
+                            type="number"
+                            name="formworkRate"
+                            value={formData.formworkRate}
+                            onChange={handleChange}
+                            className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                          />
+                        </div>
+
+                        <div className="flex items-center space-x-2 mt-2">
+                          <span className="text-sm">Use AI recommendation?</span>
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="useAIRecommendation"
+                              value="y"
+                              checked={formData.useAIRecommendation === 'y'}
+                              onChange={handleChange}
+                              className="w-4 h-4 text-[#0A2F44]"
+                            />
+                            <span className="text-sm">Yes</span>
+                          </label>
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="useAIRecommendation"
+                              value="n"
+                              checked={formData.useAIRecommendation === 'n'}
+                              onChange={handleChange}
+                              className="w-4 h-4 text-[#0A2F44]"
+                            />
+                            <span className="text-sm">No</span>
+                          </label>
+                        </div>
                       </div>
-                      {!isOverridden('cover') && (
-                        <p className="text-xs text-[#0A2F44] mt-1">
-                          Recommended: {autoValues.recommendedCover}mm
-                        </p>
-                      )}
+                    </div>
+
+                    {/* Bar Selection Card */}
+                    <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+                      <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+                        <FiCircle className="mr-2 text-[#0A2F44]" />
+                        Bar Selection
+                      </h2>
+                      
+                      <div className="space-y-4">
+                        {/* Main Bar Diameter with warning */}
+                        <div className="relative">
+                          <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                            Main Bar Diameter (mm)
+                          </label>
+                          <div className="relative">
+                            <CustomDropdown
+                              label=""
+                              name="mainBarDiameter"
+                              value={formData.mainBarDiameter}
+                              options={formData.candidateDiameters.map(d => ({
+                                value: d,
+                                label: `${d} mm`,
+                                description: d === autoValues.recommendedBarDiameter ? 'Recommended' : ''
+                              }))}
+                              onChange={handleChange}
+                              customClass={isOverridden('mainBarDiameter') ? 'border-yellow-500' : ''}
+                            />
+                            {isOverridden('mainBarDiameter') && (
+                              <div className="absolute right-8 top-1/2 transform -translate-y-1/2">
+                                <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
+                              </div>
+                            )}
+                          </div>
+                          {!isOverridden('mainBarDiameter') && (
+                            <p className="text-xs text-[#0A2F44] mt-1">
+                              Recommended: {autoValues.recommendedBarDiameter}mm
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Min/Max Spacing */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                              Min Spacing (mm)
+                            </label>
+                            <input
+                              type="number"
+                              name="minSpacing"
+                              value={formData.minSpacing}
+                              onChange={handleChange}
+                              step="10"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                              Max Spacing (mm)
+                            </label>
+                            <input
+                              type="number"
+                              name="maxSpacing"
+                              value={formData.maxSpacing}
+                              onChange={handleChange}
+                              step="10"
+                              className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Loads Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiWind className="mr-2 text-[#0A2F44]" />
-                    Loads (kN/m²)
-                  </h2>
-                  
-                  {/* Imposed Load Category Dropdown */}
-                  <CustomDropdown
-                    label="Imposed Load Category"
-                    name="imposedCategory"
-                    value={formData.imposedCategory}
-                    options={imposedCategories}
-                    onChange={handleChange}
-                    icon={FiHome}
-                    searchable={true}
-                  />
-
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Dead Load
-                      </label>
-                      <input
-                        type="number"
-                        name="deadLoad"
-                        value={formData.deadLoad}
-                        onChange={handleChange}
-                        step="0.1"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Live Load
-                      </label>
-                      <input
-                        type="number"
-                        name="liveLoad"
-                        value={formData.liveLoad}
-                        onChange={handleChange}
-                        step="0.1"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Finishes
-                      </label>
-                      <input
-                        type="number"
-                        name="finishes"
-                        value={formData.finishes}
-                        onChange={handleChange}
-                        step="0.1"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Partition
-                      </label>
-                      <input
-                        type="number"
-                        name="partition"
-                        value={formData.partition}
-                        onChange={handleChange}
-                        step="0.1"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                      Partition Mode
-                    </label>
-                    <div className="flex space-x-4">
-                      <label className="flex items-center">
-                        <input
-                          type="radio"
-                          name="partitionMode"
-                          value="permanent"
-                          checked={formData.partitionMode === 'permanent'}
-                          onChange={handleChange}
-                          className="w-4 h-4 text-[#0A2F44]"
-                        />
-                        <span className="ml-2 text-sm text-[#02090d] dark:text-white">Permanent (Gk)</span>
-                      </label>
-                      <label className="flex items-center">
-                        <input
-                          type="radio"
-                          name="partitionMode"
-                          value="variable"
-                          checked={formData.partitionMode === 'variable'}
-                          onChange={handleChange}
-                          className="w-4 h-4 text-[#0A2F44]"
-                        />
-                        <span className="ml-2 text-sm text-[#02090d] dark:text-white">Variable (Qk)</span>
-                      </label>
-                    </div>
-                  </div>
+              {/* Beam Input Form (Placeholder) */}
+              {activeComponent === 'beam' && (
+                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
+                  <FiBarChart2 className="text-5xl text-[#0A2F44] mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Beam Input Form</h3>
+                  <p className="text-[#6b7280]">Coming soon in Phase 3</p>
                 </div>
+              )}
+
+              {/* Column Input Form (Placeholder) */}
+              {activeComponent === 'column' && (
+                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
+                  <FiColumns className="text-5xl text-[#0A2F44] mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Column Input Form</h3>
+                  <p className="text-[#6b7280]">Coming soon in Phase 3</p>
+                </div>
+              )}
+
+              {/* Foundation Input Form (Placeholder) */}
+              {activeComponent === 'foundation' && (
+                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
+                  <FiSquare className="text-5xl text-[#0A2F44] mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Foundation Input Form</h3>
+                  <p className="text-[#6b7280]">Coming soon in Phase 3</p>
+                </div>
+              )}
+
+              {/* Staircase Input Form (Placeholder) */}
+              {activeComponent === 'staircase' && (
+                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
+                  <FiTriangle className="text-5xl text-[#0A2F44] mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Staircase Input Form</h3>
+                  <p className="text-[#6b7280]">Coming soon in Phase 3</p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="mt-8 flex justify-end space-x-4">
+                <button
+                  onClick={handleValidate}
+                  disabled={isValidating}
+                  className="px-6 py-3 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {isValidating ? 'Validating...' : 'Validate'}
+                </button>
+                <button
+                  onClick={handleOptimise}
+                  disabled={isOptimising}
+                  className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {isOptimising ? 'Optimising...' : 'Run Optimisation'}
+                </button>
               </div>
-
-              {/* Right Column */}
-              <div className="space-y-6">
-                {/* Materials Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiDroplet className="mr-2 text-[#0A2F44]" />
-                    Materials
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    {/* Concrete Grade Dropdown */}
-                    <CustomDropdown
-                      label="Concrete Grade"
-                      name="concreteGrade"
-                      value={formData.concreteGrade}
-                      options={concreteGrades}
-                      onChange={handleChange}
-                    />
-
-                    {/* Reinforcement Grade Dropdown */}
-                    <CustomDropdown
-                      label="Reinforcement Grade"
-                      name="steelGrade"
-                      value={formData.steelGrade}
-                      options={reinforcementGrades}
-                      onChange={handleChange}
-                      icon={FiCircle}
-                      searchable={true}
-                    />
-
-                    {/* Exposure Class Dropdown */}
-                    <CustomDropdown
-                      label="Exposure Class"
-                      name="exposureClass"
-                      value={formData.exposureClass}
-                      options={exposureClasses}
-                      onChange={handleChange}
-                    />
-                  </div>
-                </div>
-
-                {/* Design Constraints Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiClock className="mr-2 text-[#0A2F44]" />
-                    Design Constraints
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    {/* Deflection Limit */}
-                    <CustomDropdown
-                      label="Deflection Limit"
-                      name="deflectionLimit"
-                      value={formData.deflectionLimit}
-                      options={deflectionLimits}
-                      onChange={handleChange}
-                      icon={FiClock}
-                    />
-
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Crack Width (mm)
-                      </label>
-                      <input
-                        type="number"
-                        name="crackWidthLimit"
-                        value={formData.crackWidthLimit}
-                        onChange={handleChange}
-                        step="0.1"
-                        min="0.1"
-                        max="0.4"
-                        className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                      />
-                    </div>
-
-                    {/* Fire Rating */}
-                    <CustomDropdown
-                      label="Fire Rating (min)"
-                      name="fireRating"
-                      value={formData.fireRating}
-                      options={fireRatings}
-                      onChange={handleChange}
-                      icon={FiClock}
-                    />
-                  </div>
-                </div>
-
-                {/* Optimisation Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiPercent className="mr-2 text-[#0A2F44]" />
-                    Optimisation Weights
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Cost Weight (%)
-                      </label>
-                      <input
-                        type="range"
-                        name="costWeight"
-                        value={formData.costWeight}
-                        onChange={handleChange}
-                        min="0"
-                        max="100"
-                        className="w-full accent-[#0A2F44]"
-                      />
-                      <div className="text-xs text-right text-[#6b7280] mt-1">{formData.costWeight}%</div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Carbon Weight (%)
-                      </label>
-                      <input
-                        type="range"
-                        name="carbonWeight"
-                        value={formData.carbonWeight}
-                        onChange={handleChange}
-                        min="0"
-                        max="100"
-                        className="w-full accent-[#0A2F44]"
-                      />
-                      <div className="text-xs text-right text-[#6b7280] mt-1">{formData.carbonWeight}%</div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Material Weight (%)
-                      </label>
-                      <input
-                        type="range"
-                        name="materialWeight"
-                        value={formData.materialWeight}
-                        onChange={handleChange}
-                        min="0"
-                        max="100"
-                        className="w-full accent-[#0A2F44]"
-                      />
-                      <div className="text-xs text-right text-[#6b7280] mt-1">{formData.materialWeight}%</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bar Selection Card */}
-                <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                    <FiCircle className="mr-2 text-[#0A2F44]" />
-                    Bar Selection
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    {/* Main Bar Diameter with warning */}
-                    <div className="relative">
-                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                        Main Bar Diameter (mm)
-                      </label>
-                      <div className="relative">
-                        <CustomDropdown
-                          label="Main Bar Diameter"
-                          name="mainBarDiameter"
-                          value={formData.mainBarDiameter}
-                          options={formData.candidateDiameters.map(d => ({
-                            value: d,
-                            label: `${d} mm`,
-                            description: d === autoValues.recommendedBarDiameter ? 'Recommended' : 
-                                         (parseInt(d) < parseInt(autoValues.recommendedBarDiameter) ? 'Smaller than recommended' : 
-                                          'Larger than recommended')
-                          }))}
-                          onChange={handleChange}
-                          icon={FiCircle}
-                        />
-                        {isOverridden('mainBarDiameter') && (
-                          <div className="absolute right-8 top-1/2 transform -translate-y-1/2">
-                            <FiAlertTriangle className="text-yellow-500" title="Overridden value" />
-                          </div>
-                        )}
-                      </div>
-                      {!isOverridden('mainBarDiameter') && (
-                        <p className="text-xs text-[#0A2F44] mt-1">
-                          Recommended: {autoValues.recommendedBarDiameter}mm
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                          Min Spacing (mm)
-                        </label>
-                        <input
-                          type="number"
-                          name="minSpacing"
-                          value={formData.minSpacing}
-                          onChange={handleChange}
-                          step="10"
-                          className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                          Max Spacing (mm)
-                        </label>
-                        <input
-                          type="number"
-                          name="maxSpacing"
-                          value={formData.maxSpacing}
-                          onChange={handleChange}
-                          step="10"
-                          className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            </>
           )}
-
-          {/* Beam Input Form (Placeholder) */}
-          {activeComponent === 'beam' && (
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
-              <FiBarChart2 className="text-5xl text-[#0A2F44] mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Beam Input Form</h3>
-              <p className="text-[#6b7280]">Coming soon in Phase 3</p>
-            </div>
-          )}
-
-          {/* Column Input Form (Placeholder) */}
-          {activeComponent === 'column' && (
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
-              <FiColumns className="text-5xl text-[#0A2F44] mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Column Input Form</h3>
-              <p className="text-[#6b7280]">Coming soon in Phase 3</p>
-            </div>
-          )}
-
-          {/* Foundation Input Form (Placeholder) */}
-          {activeComponent === 'foundation' && (
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
-              <FiSquare className="text-5xl text-[#0A2F44] mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Foundation Input Form</h3>
-              <p className="text-[#6b7280]">Coming soon in Phase 3</p>
-            </div>
-          )}
-
-          {/* Staircase Input Form (Placeholder) */}
-          {activeComponent === 'staircase' && (
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-8 text-center">
-              <FiTriangle className="text-5xl text-[#0A2F44] mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Staircase Input Form</h3>
-              <p className="text-[#6b7280]">Coming soon in Phase 3</p>
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="mt-8 flex justify-end space-x-4">
-            <button
-              onClick={handleValidate}
-              disabled={isValidating}
-              className="px-6 py-3 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {isValidating ? 'Validating...' : 'Validate'}
-            </button>
-            <button
-              onClick={handleOptimise}
-              disabled={isOptimising}
-              className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {isOptimising ? 'Optimising...' : 'Run Optimisation'}
-            </button>
-          </div>
         </div>
       </div>
     </div>
