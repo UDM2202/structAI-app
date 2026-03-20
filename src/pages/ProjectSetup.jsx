@@ -23,14 +23,13 @@ const ProjectSetup = () => {
     projectName: 'UDM Project',
     buildingType: 'commercial',
     location: 'London, UK',
-    numberOfFloors: '3',
     
-    // Step 2: Building Dimensions
+    // Building Dimensions (for summary)
     length: '25',
     width: '15',
     height: '18',
     
-    // Step 3: Design Criteria
+    // Design Criteria
     designStandard: 'Eurocode',
   });
 
@@ -43,7 +42,7 @@ const ProjectSetup = () => {
             clearInterval(interval);
             return 100;
           }
-          return prev + 10; // 10% every second = 10 seconds total
+          return prev + 10;
         });
       }, 1000);
 
@@ -51,14 +50,13 @@ const ProjectSetup = () => {
     }
   }, [showLoading]);
 
-  // Auto-hide loading after 10 seconds and move to step 3
+  // Auto-hide loading after 10 seconds and create project
   useEffect(() => {
     if (loadingProgress >= 100) {
       setTimeout(() => {
         setShowLoading(false);
-        setStep(3);
-        setLoadingProgress(0);
-      }, 500); // Small delay after reaching 100%
+        handleCreateProject();
+      }, 500);
     }
   }, [loadingProgress]);
 
@@ -71,11 +69,12 @@ const ProjectSetup = () => {
   };
 
   const handleNext = () => {
-    if (step === 2) {
-      // Show loading screen when moving from step 2 to step 3
+    if (step === 1) {
+      // Go to Step 2 (Summary)
+      setStep(2);
+    } else if (step === 2) {
+      // After summary, show loading screen
       setShowLoading(true);
-    } else {
-      setStep(step + 1);
     }
   };
 
@@ -83,8 +82,7 @@ const ProjectSetup = () => {
     setStep(step - 1);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleCreateProject = async () => {
     setIsSubmitting(true);
     
     // Create project with the collected data
@@ -92,9 +90,8 @@ const ProjectSetup = () => {
       name: formData.projectName,
       project_type: formData.buildingType,
       location: formData.location,
-      description: `${formData.numberOfFloors}-storey ${formData.buildingType} building`,
+      description: `${formData.buildingType} building`,
       settings: {
-        numberOfFloors: formData.numberOfFloors,
         dimensions: {
           length: formData.length,
           width: formData.width,
@@ -108,7 +105,7 @@ const ProjectSetup = () => {
       const result = await createProject(workspaceId, projectData);
       
       if (result.success) {
-navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
+        navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
       } else {
         console.error('Failed to create project:', result.error);
         setIsSubmitting(false);
@@ -156,7 +153,7 @@ navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
           </p>
         </div>
 
-        {/* Progress Steps - Hide during loading */}
+        {/* Progress Steps */}
         {!showLoading && (
           <div className="flex items-center justify-center mb-8">
             <div className="flex items-center">
@@ -188,7 +185,6 @@ navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
         {/* Loading Splash Screen */}
         {showLoading && (
           <div className="py-12 flex flex-col items-center justify-center min-h-[400px]">
-            {/* Animated Logo */}
             <div className="relative mb-8">
               <div className="w-24 h-24 bg-[#0A2F44] rounded-2xl flex items-center justify-center animate-pulse">
                 <span className="text-white text-4xl font-bold">SA</span>
@@ -198,17 +194,14 @@ navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
               </div>
             </div>
 
-            {/* Loading Title */}
             <h2 className="text-2xl font-bold text-[#02090d] dark:text-white mb-4">
-              Analyzing Your Project
+              Creating Your Workspace
             </h2>
 
-            {/* Loading Message */}
             <p className="text-[#6b7280] dark:text-[#9ca3af] text-center mb-8 max-w-md">
-              We're calculating preliminary structural requirements based on your inputs...
+              Setting up your project structure...
             </p>
 
-            {/* Progress Bar */}
             <div className="w-64 h-2 bg-[#e5e7eb] dark:bg-[#374151] rounded-full overflow-hidden mb-4">
               <div 
                 className="h-full bg-[#0A2F44] transition-all duration-300 ease-out"
@@ -216,246 +209,140 @@ navigate(`/workspace/${workspaceId}/projects/${result.project.id}/slab-input`);
               />
             </div>
 
-            {/* Progress Percentage */}
             <p className="text-sm text-[#0A2F44] dark:text-[#cce1eb] font-medium">
               {loadingProgress}% Complete
             </p>
-
-            {/* Loading Tips */}
-            <div className="mt-8 text-center">
-              <p className="text-xs text-[#9ca3af] max-w-sm">
-                {loadingProgress < 30 && "✓ Checking span-to-depth ratios..."}
-                {loadingProgress >= 30 && loadingProgress < 60 && "✓ Calculating load combinations..."}
-                {loadingProgress >= 60 && loadingProgress < 90 && "✓ Optimizing material selection..."}
-                {loadingProgress >= 90 && "✓ Preparing your workspace..."}
-              </p>
-            </div>
           </div>
         )}
 
-        {/* Regular Form Content - Hide during loading */}
-        {!showLoading && (
-          <form onSubmit={step === 3 ? handleSubmit : (e) => e.preventDefault()}>
-            {/* Step 1: Basic Information */}
-            {step === 1 && (
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                    Project Name
-                  </label>
-                  <input
-                    type="text"
-                    name="projectName"
-                    value={formData.projectName}
-                    onChange={handleChange}
-                    placeholder="e.g., Acme Engineering"
-                    className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                    required
-                  />
-                </div>
+        {/* Step 1: Basic Information */}
+        {!showLoading && step === 1 && (
+          <form onSubmit={(e) => e.preventDefault()}>
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                  Project Name
+                </label>
+                <input
+                  type="text"
+                  name="projectName"
+                  value={formData.projectName}
+                  onChange={handleChange}
+                  placeholder="e.g., Acme Engineering"
+                  className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  required
+                />
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                    Building Type
-                  </label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { type: 'residential', icon: FiHome, label: 'Residential' },
-                      { type: 'commercial', icon: FiBriefcase, label: 'Commercial' },
-                      { type: 'industrial', icon: FiTool, label: 'Industrial' },
-                    ].map((option) => (
-                      <button
-                        key={option.type}
-                        type="button"
-                        onClick={() => setFormData({...formData, buildingType: option.type})}
-                        className={`p-4 rounded-lg border-2 transition-all ${
-                          formData.buildingType === option.type
-                            ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-                            : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-                        }`}
-                      >
-                        <option.icon className="mx-auto text-2xl mb-2 text-[#0A2F44]" />
-                        <span className="text-sm font-medium text-[#374151] dark:text-[#d1d5db]">
-                          {option.label}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    name="location"
-                    value={formData.location}
-                    onChange={handleChange}
-                    placeholder="e.g., London, UK"
-                    className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                    Number of Floors
-                  </label>
-                  <input
-                    type="number"
-                    name="numberOfFloors"
-                    value={formData.numberOfFloors}
-                    onChange={handleChange}
-                    placeholder="e.g., 5"
-                    min="1"
-                    className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                    required
-                  />
+              <div>
+                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                  Building Type
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { type: 'residential', icon: FiHome, label: 'Residential' },
+                    { type: 'commercial', icon: FiBriefcase, label: 'Commercial' },
+                    { type: 'industrial', icon: FiTool, label: 'Industrial' },
+                  ].map((option) => (
+                    <button
+                      key={option.type}
+                      type="button"
+                      onClick={() => setFormData({...formData, buildingType: option.type})}
+                      className={`p-4 rounded-lg border-2 transition-all ${
+                        formData.buildingType === option.type
+                          ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                          : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                      }`}
+                    >
+                      <option.icon className="mx-auto text-2xl mb-2 text-[#0A2F44]" />
+                      <span className="text-sm font-medium text-[#374151] dark:text-[#d1d5db]">
+                        {option.label}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
 
-            {/* Step 2: Building Dimensions */}
-            {step === 2 && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                      Length (m)
-                    </label>
-                    <input
-                      type="number"
-                      name="length"
-                      value={formData.length}
-                      onChange={handleChange}
-                      placeholder="e.g., 25"
-                      step="0.1"
-                      min="0"
-                      className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                      Width (m)
-                    </label>
-                    <input
-                      type="number"
-                      name="width"
-                      value={formData.width}
-                      onChange={handleChange}
-                      placeholder="e.g., 15"
-                      step="0.1"
-                      min="0"
-                      className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-                    Building Height (m)
-                  </label>
-                  <input
-                    type="number"
-                    name="height"
-                    value={formData.height}
-                    onChange={handleChange}
-                    placeholder="e.g., 18"
-                    step="0.1"
-                    min="0"
-                    className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-                    required
-                  />
-                </div>
-
-                {/* Visual hint */}
-                <div className="bg-[#f3f4f6] dark:bg-[#374151] p-4 rounded-lg flex items-start space-x-3">
-                  <FiInfo className="text-[#0A2F44] text-xl flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">
-                    These dimensions will be used for preliminary structural analysis and material quantity estimation.
-                  </p>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                  Location
+                </label>
+                <input
+                  type="text"
+                  name="location"
+                  value={formData.location}
+                  onChange={handleChange}
+                  placeholder="e.g., London, UK"
+                  className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  required
+                />
               </div>
-            )}
-
-            {/* Step 3: Review & Confirm */}
-            {step === 3 && (
-              <div className="space-y-6">
-                <div className="bg-[#f3f4f6] dark:bg-[#374151] rounded-lg p-6 space-y-4">
-                  <h3 className="font-semibold text-[#02090d] dark:text-white">Project Summary</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-[#6b7280] dark:text-[#9ca3af]">Project Name</p>
-                      <p className="font-medium text-[#02090d] dark:text-white">{formData.projectName || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[#6b7280] dark:text-[#9ca3af]">Building Type</p>
-                      <p className="font-medium text-[#02090d] dark:text-white capitalize">{formData.buildingType || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[#6b7280] dark:text-[#9ca3af]">Location</p>
-                      <p className="font-medium text-[#02090d] dark:text-white">{formData.location || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[#6b7280] dark:text-[#9ca3af]">Floors</p>
-                      <p className="font-medium text-[#02090d] dark:text-white">{formData.numberOfFloors || '—'}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-[#6b7280] dark:text-[#9ca3af]">Dimensions</p>
-                      <p className="font-medium text-[#02090d] dark:text-white">
-                        {formData.length || '—'}m × {formData.width || '—'}m × {formData.height || '—'}m
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg p-4">
-                  <p className="text-sm text-[#0A2F44] dark:text-[#cce1eb]">
-                    You can invite team members after creating your workspace. Team members can be added from the workspace settings.
-                  </p>
-                </div>
-              </div>
-            )}
+            </div>
 
             {/* Navigation Buttons */}
-            <div className="flex justify-between mt-8 pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
-              {step > 1 ? (
-                <button
-                  type="button"
-                  onClick={handleBack}
-                  className="flex items-center space-x-2 px-6 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors"
-                >
-                  <FiChevronLeft />
-                  <span>Back</span>
-                </button>
-              ) : (
-                <div></div>
-              )}
-
-              {step < 3 ? (
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  className="flex items-center space-x-2 px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors"
-                >
-                  <span>Continue</span>
-                  <FiChevronRight />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Creating...' : 'Create Project'}
-                </button>
-              )}
+            <div className="flex justify-end mt-8 pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
+              <button
+                type="button"
+                onClick={handleNext}
+                className="flex items-center space-x-2 px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors"
+              >
+                <span>Continue</span>
+                <FiChevronRight />
+              </button>
             </div>
           </form>
+        )}
+
+        {/* Step 2: Summary & Review */}
+        {!showLoading && step === 2 && (
+  <form onSubmit={(e) => e.preventDefault()}>
+    <div className="space-y-6">
+      <div className="bg-[#f3f4f6] dark:bg-[#374151] rounded-lg p-6 space-y-4">
+        <h3 className="font-semibold text-[#02090d] dark:text-white">Project Summary</h3>
+        
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-[#6b7280] dark:text-[#9ca3af]">Project Name</p>
+            <p className="font-medium text-[#02090d] dark:text-white">{formData.projectName || '—'}</p>
+          </div>
+          <div>
+            <p className="text-[#6b7280] dark:text-[#9ca3af]">Building Type</p>
+            <p className="font-medium text-[#02090d] dark:text-white capitalize">{formData.buildingType || '—'}</p>
+          </div>
+          <div className="col-span-2">
+            <p className="text-[#6b7280] dark:text-[#9ca3af]">Location</p>
+            <p className="font-medium text-[#02090d] dark:text-white">{formData.location || '—'}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg p-4">
+        <p className="text-sm text-[#0A2F44] dark:text-[#cce1eb]">
+          You can invite team members after creating your workspace. Team members can be added from the workspace settings.
+        </p>
+      </div>
+    </div>
+
+    {/* Navigation Buttons */}
+    <div className="flex justify-between mt-8 pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
+      <button
+        type="button"
+        onClick={handleBack}
+        className="flex items-center space-x-2 px-6 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors"
+      >
+        <FiChevronLeft />
+        <span>Back</span>
+      </button>
+      <button
+        type="button"
+        onClick={handleNext}
+        className="flex items-center space-x-2 px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors"
+      >
+        <span>Create Project</span>
+        <FiChevronRight />
+      </button>
+    </div>
+  </form>
         )}
       </div>
     </div>

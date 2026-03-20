@@ -87,3 +87,55 @@
 .animate-slide-left {
   animation: slideLeft 0.3s ease-out;
 }
+
+/* Force text visibility in dark mode */
+.dark .text-[#02090d] {
+  color: #ffffff !important;
+}
+
+.dark .text-[#374151] {
+  color: #e5e7eb !important;
+}
+
+.dark .text-[#6b7280] {
+  color: #9ca3af !important;
+}
+
+.dark .text-[#4b5563] {
+  color: #d1d5db !important;
+}
+
+.dark input, .dark select, .dark textarea {
+  color: #ffffff !important;
+}
+
+.dark input::placeholder, .dark textarea::placeholder {
+  color: #6b7280 !important;
+}
+
+/* Ensure icons are visible in dark mode */
+/* .dark svg {
+  color: inherit;
+}
+
+.dark .text-[#6b7280] {
+  color: #9ca3af !important;
+}
+
+.dark .text-[#0A2F44] {
+  color: #66a4c2 !important;
+} */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
