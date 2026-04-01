@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   FiArrowLeft, FiSun, FiMoon, FiMenu, FiGrid, FiBarChart2, 
   FiColumns, FiLayers, FiTriangle, FiSquare, FiCircle,
@@ -16,6 +16,7 @@ import TradeoffAnalysis from '../components/TradeoffAnalysis';
 const StructuralInput = () => {
   const { workspaceId, projectId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isDarkMode, toggleDarkMode } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeComponent, setActiveComponent] = useState('slab');
@@ -29,6 +30,7 @@ const StructuralInput = () => {
   const [compareOptions, setCompareOptions] = useState([]);
   const [generatedOptions, setGeneratedOptions] = useState([]);
   const [slabArea, setSlabArea] = useState(100);
+  const [showSpanWarning, setShowSpanWarning] = useState(false);
   
   // Store results per component
   const [storedResults, setStoredResults] = useState({
@@ -59,6 +61,8 @@ const StructuralInput = () => {
     thickness: '200',
     cover: '25',
     continuousSpans: ['5.0', '5.0', '4.0'],
+    spanCount: '3', // Added for "others" option
+    customSpanCount: '', // For custom number of spans
     endFixityLeft: 'pinned',
     endFixityRight: 'pinned',
     buildingUse: 'office',
@@ -82,67 +86,116 @@ const StructuralInput = () => {
     thickness2: '175',
     barDiameter1: '10',
     barDiameter2: '12',
-    mainBarDiameter: '12',
-    candidateDiameters: ['8', '10', '12', '16', '20', '25'],
-    minSpacing: '150',
-    maxSpacing: '300',
     useAIDatabase: true,
     region: 'uk',
     concreteRate: '170',
     steelRate: '1300',
     formworkRate: '50',
-    useAIRecommendation: 'y'
+    useAIRecommendation: 'y',
+    // New cost options
+    costSource: 'database', // 'database', 'company', 'realtime'
+    companyConcreteRate: '',
+    companySteelRate: '',
+    companyFormworkRate: '',
+    realtimeConcreteRate: '',
+    realtimeSteelRate: '',
+    realtimeFormworkRate: '',
   });
 
-  // Auto-bar selection based on building use and span (from hardcoding document)
+  // Check span and show warning for 2-way slab transition
+  useEffect(() => {
+    const span = parseFloat(formData.spanX);
+    if (span > 4.2 && formData.slabType === 'one-way') {
+      setShowSpanWarning(true);
+    } else {
+      setShowSpanWarning(false);
+    }
+  }, [formData.spanX, formData.slabType]);
+
+  // Auto-update building use live load
+  const getLiveLoadFromBuildingUse = () => {
+    const buildingUseMap = {
+      residential: 2.0,
+      hotel: 2.0,
+      office: 3.0,
+      education: 3.0,
+      healthcare: 4.0,
+      retail: 4.0,
+    };
+    return buildingUseMap[formData.buildingUse] || 2.0;
+  };
+
+  // Auto-update leading load based on building use
+  useEffect(() => {
+    const liveLoad = getLiveLoadFromBuildingUse();
+    setFormData(prev => ({
+      ...prev,
+      leadingLoad: { ...prev.leadingLoad, value: liveLoad.toString() }
+    }));
+  }, [formData.buildingUse]);
+
+  // Auto-bar selection based on building use and span
   const getAutoBarPreset = (buildingUse, spanM) => {
     const span = parseFloat(spanM);
     
-    // Residential / Hotel
     if (buildingUse === 'residential' || buildingUse === 'hotel') {
-      if (span <= 4.0) return { thickness: 125, mainBar: 10, spacing: 200, distBar: 8, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 5.0) return { thickness: 150, mainBar: 10, spacing: 175, distBar: 8, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 6.0) return { thickness: 175, mainBar: 12, spacing: 175, distBar: 10, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 7.0) return { thickness: 200, mainBar: 12, spacing: 150, distBar: 10, distSpacing: 200, note: "Borderline for solid slab" };
-      return { thickness: 0, mainBar: 0, spacing: 0, distBar: 0, distSpacing: 0, note: "Solid slab not recommended above 7.0 m" };
+      if (span <= 4.0) return { thickness: 125, mainBar: 10, spacing: 200 };
+      if (span <= 5.0) return { thickness: 150, mainBar: 10, spacing: 175 };
+      if (span <= 6.0) return { thickness: 175, mainBar: 12, spacing: 175 };
+      if (span <= 7.0) return { thickness: 200, mainBar: 12, spacing: 150 };
+      return { thickness: 0, mainBar: 0, spacing: 0 };
     }
     
-    // Office / Education
     if (buildingUse === 'office' || buildingUse === 'education') {
-      if (span <= 4.0) return { thickness: 150, mainBar: 10, spacing: 175, distBar: 8, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 5.0) return { thickness: 175, mainBar: 12, spacing: 200, distBar: 10, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 6.0) return { thickness: 200, mainBar: 12, spacing: 175, distBar: 10, distSpacing: 200, note: "Concept-stage solid slab" };
-      if (span <= 7.0) return { thickness: 225, mainBar: 12, spacing: 150, distBar: 10, distSpacing: 200, note: "Borderline for solid slab" };
-      return { thickness: 0, mainBar: 0, spacing: 0, distBar: 0, distSpacing: 0, note: "Review flat slab / beam-and-slab" };
+      if (span <= 4.0) return { thickness: 150, mainBar: 10, spacing: 175 };
+      if (span <= 5.0) return { thickness: 175, mainBar: 12, spacing: 200 };
+      if (span <= 6.0) return { thickness: 200, mainBar: 12, spacing: 175 };
+      if (span <= 7.0) return { thickness: 225, mainBar: 12, spacing: 150 };
+      return { thickness: 0, mainBar: 0, spacing: 0 };
     }
     
-    // Healthcare / Retail
     if (buildingUse === 'healthcare' || buildingUse === 'retail') {
-      if (span <= 4.0) return { thickness: 150, mainBar: 12, spacing: 200, distBar: 10, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 5.0) return { thickness: 175, mainBar: 12, spacing: 175, distBar: 10, distSpacing: 250, note: "Concept-stage solid slab" };
-      if (span <= 6.0) return { thickness: 200, mainBar: 12, spacing: 150, distBar: 10, distSpacing: 200, note: "Concept-stage solid slab" };
-      if (span <= 7.0) return { thickness: 225, mainBar: 16, spacing: 175, distBar: 10, distSpacing: 200, note: "Borderline for solid slab" };
-      return { thickness: 0, mainBar: 0, spacing: 0, distBar: 0, distSpacing: 0, note: "Solid slab likely inefficient" };
+      if (span <= 4.0) return { thickness: 150, mainBar: 12, spacing: 200 };
+      if (span <= 5.0) return { thickness: 175, mainBar: 12, spacing: 175 };
+      if (span <= 6.0) return { thickness: 200, mainBar: 12, spacing: 150 };
+      if (span <= 7.0) return { thickness: 225, mainBar: 16, spacing: 175 };
+      return { thickness: 0, mainBar: 0, spacing: 0 };
     }
     
-    return { thickness: 0, mainBar: 0, spacing: 0, distBar: 0, distSpacing: 0, note: "No preset available" };
+    return { thickness: 0, mainBar: 0, spacing: 0 };
   };
 
   // Building use options
   const buildingUseOptions = [
-    { value: 'residential', label: 'Residential', icon: FiHome, description: 'Dwellings, apartments, houses' },
-    { value: 'hotel', label: 'Hotel', icon: FiHome, description: 'Hotels, guest houses, accommodation' },
-    { value: 'office', label: 'Office', icon: FiBriefcase, description: 'Office buildings, commercial workspaces' },
-    { value: 'education', label: 'Education', icon: FiUsers, description: 'Schools, universities, classrooms' },
-    { value: 'healthcare', label: 'Healthcare', icon: FiUsers, description: 'Hospitals, clinics, medical facilities' },
-    { value: 'retail', label: 'Retail', icon: FiBriefcase, description: 'Shops, stores, shopping centres' },
+    { value: 'residential', label: 'Residential', icon: FiHome, description: 'Dwellings, apartments, houses (2.0 kN/m²)' },
+    { value: 'hotel', label: 'Hotel', icon: FiHome, description: 'Hotels, guest houses (2.0 kN/m²)' },
+    { value: 'office', label: 'Office', icon: FiBriefcase, description: 'Office buildings (3.0 kN/m²)' },
+    { value: 'education', label: 'Education', icon: FiUsers, description: 'Schools, universities (3.0 kN/m²)' },
+    { value: 'healthcare', label: 'Healthcare', icon: FiUsers, description: 'Hospitals, clinics (4.0 kN/m²)' },
+    { value: 'retail', label: 'Retail', icon: FiBriefcase, description: 'Shops, stores (4.0 kN/m²)' },
   ];
 
+  // Variable action keys - LEADING LOAD REMOVED from accompanying options
   const variableActionKeys = [
-    { value: 'qk', label: 'qk - Imposed load', description: 'Imposed load' },
     { value: 'wk', label: 'wk - Wind load', description: 'Wind load' },
     { value: 'sk', label: 'sk - Snow load', description: 'Snow load' },
     { value: 'tk', label: 'tk - Traffic load', description: 'Traffic load' },
+  ];
+
+  const allVariableActionKeys = [
+  { value: 'qk', label: 'qk - Imposed load', description: 'Imposed load' },
+  { value: 'wk', label: 'wk - Wind load', description: 'Wind load' },
+  { value: 'sk', label: 'sk - Snow load', description: 'Snow load' },
+  { value: 'tk', label: 'tk - Traffic load', description: 'Traffic load' },
+];
+
+  // Number of spans options with "Others"
+  const spanCountOptions = [
+    { value: '2', label: '2 spans' },
+    { value: '3', label: '3 spans' },
+    { value: '4', label: '4 spans' },
+    { value: '5', label: '5 spans' },
+    { value: 'others', label: 'Others (Custom)', description: 'Specify custom number of spans' },
   ];
 
   const [autoValues, setAutoValues] = useState({
@@ -204,11 +257,8 @@ const StructuralInput = () => {
       else if (thickness >= 200) recommendedBarDiameter = '12';
       else recommendedBarDiameter = '10';
       setAutoValues(prev => ({ ...prev, recommendedBarDiameter }));
-      if (!overriddenFields.mainBarDiameter) {
-        setFormData(prev => ({ ...prev, mainBarDiameter: recommendedBarDiameter }));
-      }
     }
-  }, [formData.thickness, activeComponent, overriddenFields.mainBarDiameter]);
+  }, [formData.thickness, activeComponent]);
 
   const concreteGrades = [
     { value: 'C12/15', label: 'C12/15', description: 'fck = 12 MPa, fctm = 1.6 MPa' },
@@ -228,184 +278,187 @@ const StructuralInput = () => {
   ];
 
   // Generate options based on user inputs
-const generateOptions = () => {
-  const span = parseFloat(formData.spanX);
-  if (isNaN(span) || span <= 0) return [];
-  
-  // Use the thicknesses from user input
-  const thicknesses = [160, 175, 200, 225, 250];
-  const barDiameters = [10, 12, 16, 20];
-  const spacings = [150, 175, 200, 225, 250];
-  
-  // Calculate K factor based on support condition
-  let kFactor = 1.0;
-  if (formData.supportCondition === 'continuous') {
-    kFactor = 1.3;
-  }
-  
-  // Calculate total permanent load
-  let gkTotal = 0;
-  gkTotal += parseFloat(formData.finishes) || 0;
-  gkTotal += parseFloat(formData.serviceAllowance) || 0;
-  gkTotal += parseFloat(formData.partition) || 0;
-  formData.permanentLoads.forEach(load => {
-    gkTotal += parseFloat(load.value) || 0;
-  });
-  
-  // Calculate leading and accompanying loads
-  const qkLead = parseFloat(formData.leadingLoad.value) || 0;
-  let reducedAcc = 0;
-  formData.accompanyingLoads.forEach(load => {
-    reducedAcc += 1.5 * 0.6 * (parseFloat(load.value) || 0);
-  });
-  
-  const options = [];
-  let id = 1;
-  
-  for (const thickness of thicknesses) {
-    for (const barDiameter of barDiameters) {
-      for (const spacing of spacings) {
-        // Self weight
-        const selfWeight = 25 * thickness / 1000;
-        const totalGk = selfWeight + gkTotal;
-        
-        // Design load and moment
-        const wEd = 1.35 * totalGk + 1.5 * qkLead + reducedAcc;
-        const mEd = wEd * Math.pow(span, 2) / 8;
-        
-        // Effective depth
-        const cover = parseFloat(formData.cover) || 25;
-        const d = thickness - cover - barDiameter / 2;
-        if (d <= 0) continue;
-        
-        // Lever arm (UK NA: z = 0.9d)
-        const z = 0.9 * d;
-        const fyd = 434.78;
-        
-        // Required steel
-        let asReq = mEd * 1000000 / (fyd * z);
-        if (asReq < 0) asReq = 0;
-        
-        // Minimum reinforcement
-        const fctm = 2.9;
-        const asMin = Math.max(0.26 * fctm / 500 * 1000 * d, 0.0013 * 1000 * d);
-        asReq = Math.max(asReq, asMin);
-        
-        // Provided steel
-        const barArea = Math.PI * Math.pow(barDiameter, 2) / 4;
-        const asProv = barArea * 1000 / spacing;
-        
-        // Utilisation
-        const utilisation = asReq / asProv;
-        
-        // Deflection check with F3 factor
-        const actualSlenderness = span * 1000 / d;
-        const p = asReq / (1000 * d) * 100;
-        const p0 = Math.sqrt(30) / 1000 * 100;
-        
-        let basicLimit;
-        if (p <= p0) {
-          basicLimit = kFactor * (11 + 1.5 * Math.sqrt(30) * (p0 / p));
-        } else {
-          basicLimit = kFactor * (11 + 1.5 * Math.sqrt(30));
+  const generateOptions = () => {
+    const span = parseFloat(formData.spanX);
+    if (isNaN(span) || span <= 0) return [];
+    
+    // Use the thicknesses from user input
+    const thicknesses = [parseFloat(formData.thickness1), parseFloat(formData.thickness2)];
+    const barDiameters = [parseFloat(formData.barDiameter1), parseFloat(formData.barDiameter2)];
+    const spacings = [150, 175, 200, 225, 250];
+    
+    // Calculate K factor based on support condition
+    let kFactor = 1.0;
+    if (formData.supportCondition === 'continuous') {
+      kFactor = 1.3;
+    }
+    
+    // Calculate total permanent load
+    let gkTotal = 0;
+    gkTotal += parseFloat(formData.finishes) || 0;
+    gkTotal += parseFloat(formData.serviceAllowance) || 0;
+    gkTotal += parseFloat(formData.partition) || 0;
+    formData.permanentLoads.forEach(load => {
+      gkTotal += parseFloat(load.value) || 0;
+    });
+    
+    // Calculate leading and accompanying loads
+    const qkLead = parseFloat(formData.leadingLoad.value) || 0;
+    let reducedAcc = 0;
+    formData.accompanyingLoads.forEach(load => {
+      reducedAcc += 1.5 * 0.6 * (parseFloat(load.value) || 0);
+    });
+    
+    const options = [];
+    let id = 1;
+    
+    for (const thickness of thicknesses) {
+      for (const barDiameter of barDiameters) {
+        for (const spacing of spacings) {
+          const selfWeight = 25 * thickness / 1000;
+          const totalGk = selfWeight + gkTotal;
+          
+          const wEd = 1.35 * totalGk + 1.5 * qkLead + reducedAcc;
+          const mEd = wEd * Math.pow(span, 2) / 8;
+          
+          const cover = parseFloat(formData.cover) || 25;
+          const d = thickness - cover - barDiameter / 2;
+          if (d <= 0) continue;
+          
+          const z = 0.9 * d;
+          const fyd = 434.78;
+          
+          let asReq = mEd * 1000000 / (fyd * z);
+          if (asReq < 0) asReq = 0;
+          
+          const fctm = 2.9;
+          const asMin = Math.max(0.26 * fctm / 500 * 1000 * d, 0.0013 * 1000 * d);
+          asReq = Math.max(asReq, asMin);
+          
+          const barArea = Math.PI * Math.pow(barDiameter, 2) / 4;
+          const asProv = barArea * 1000 / spacing;
+          
+          const utilisation = asReq / asProv;
+          
+          const actualSlenderness = span * 1000 / d;
+          const p = asReq / (1000 * d) * 100;
+          const p0 = Math.sqrt(30) / 1000 * 100;
+          
+          let basicLimit;
+          if (p <= p0) {
+            basicLimit = kFactor * (11 + 1.5 * Math.sqrt(30) * (p0 / p));
+          } else {
+            basicLimit = kFactor * (11 + 1.5 * Math.sqrt(30));
+          }
+          
+          const f3 = Math.min(asProv / asReq, 1.5);
+          const finalLimit = basicLimit * f3;
+          const deflectionStatus = actualSlenderness <= finalLimit;
+          
+          // Get rates based on cost source
+          let concreteRate, steelRate, formworkRate;
+          if (formData.costSource === 'company') {
+            concreteRate = parseFloat(formData.companyConcreteRate) || 170;
+            steelRate = parseFloat(formData.companySteelRate) || 1300;
+            formworkRate = parseFloat(formData.companyFormworkRate) || 50;
+          } else if (formData.costSource === 'realtime') {
+            concreteRate = parseFloat(formData.realtimeConcreteRate) || 170;
+            steelRate = parseFloat(formData.realtimeSteelRate) || 1300;
+            formworkRate = parseFloat(formData.realtimeFormworkRate) || 50;
+          } else {
+            concreteRate = parseFloat(formData.concreteRate) || 170;
+            steelRate = parseFloat(formData.steelRate) || 1300;
+            formworkRate = parseFloat(formData.formworkRate) || 50;
+          }
+          
+          const concreteVol = thickness / 1000;
+          const concreteCost = concreteVol * concreteRate;
+          const steelWeight = asProv * 1e-6 * 7850;
+          const steelCost = steelWeight * steelRate / 1000;
+          const formworkCost = formworkRate;
+          const totalCost = concreteCost + steelCost + formworkCost;
+          
+          const concreteCarbon = concreteVol * 240 * slabArea;
+          const steelCarbon = steelWeight * 1.5 * slabArea;
+          const totalCarbon = concreteCarbon + steelCarbon;
+          
+          const costW = parseFloat(formData.costWeight) / 100;
+          const carbonW = parseFloat(formData.carbonWeight) / 100;
+          const materialW = parseFloat(formData.materialWeight) / 100;
+          
+          const normCost = totalCost / 30000;
+          const normCarbon = totalCarbon / 15000;
+          const normMaterial = thickness / 300;
+          const score = (costW * normCost) + (carbonW * normCarbon) + (materialW * normMaterial);
+          
+          let status = 'pass';
+          let warningMessage = '';
+          
+          if (utilisation <= 0.7 && deflectionStatus) {
+            status = 'optimal';
+          } else if (utilisation <= 1.0 && deflectionStatus) {
+            status = 'pass';
+          } else if (utilisation <= 1.2) {
+            status = 'warning';
+            warningMessage = 'Steel area slightly below requirement';
+          } else if (utilisation <= 1.5) {
+            status = 'warning';
+            warningMessage = 'Steel area below requirement';
+          } else {
+            status = 'fail';
+            warningMessage = 'Steel area insufficient';
+          }
+          
+          if (!deflectionStatus) {
+            status = 'warning';
+            warningMessage = warningMessage ? `${warningMessage}, Deflection fails` : 'Deflection fails';
+          }
+          
+          options.push({
+            id: id++,
+            rank: 0,
+            thickness: Math.round(thickness),
+            barDiameter: Math.round(barDiameter),
+            spacing: spacing,
+            asReq: Math.round(asReq),
+            asProv: Math.round(asProv),
+            cost: Math.round(totalCost),
+            carbon: Math.round(totalCarbon),
+            utilisation: utilisation.toFixed(2),
+            deflection: actualSlenderness.toFixed(1),
+            status: status,
+            warningMessage: warningMessage,
+            recommended: false,
+            score: score
+          });
         }
-        
-        const f3 = Math.min(asProv / asReq, 1.5);
-        const finalLimit = basicLimit * f3;
-        const deflectionStatus = actualSlenderness <= finalLimit;
-        
-        // Costs
-        const concreteVol = thickness / 1000;
-        const concreteCost = concreteVol * 170 * slabArea;
-        const steelWeight = asProv / 1000 * 7850;
-        const steelCost = steelWeight * 1.3 * slabArea / 1000;
-        const formworkCost = 50 * slabArea;
-        const totalCost = concreteCost + steelCost + formworkCost;
-        
-        // Carbon
-        const concreteCarbon = concreteVol * 240 * slabArea;
-        const steelCarbon = steelWeight * 1.5 * slabArea;
-        const totalCarbon = concreteCarbon + steelCarbon;
-        
-        // Score
-        const costW = parseFloat(formData.costWeight) / 100;
-        const carbonW = parseFloat(formData.carbonWeight) / 100;
-        const materialW = parseFloat(formData.materialWeight) / 100;
-        
-        const normCost = totalCost / 30000;
-        const normCarbon = totalCarbon / 15000;
-        const normMaterial = thickness / 300;
-        const score = (costW * normCost) + (carbonW * normCarbon) + (materialW * normMaterial);
-        
-        // Status
-        let status = 'pass';
-        let warningMessage = '';
-        
-        if (utilisation <= 0.7 && deflectionStatus) {
-          status = 'optimal';
-        } else if (utilisation <= 1.0 && deflectionStatus) {
-          status = 'pass';
-        } else if (utilisation <= 1.2) {
-          status = 'warning';
-          warningMessage = 'Steel area slightly below requirement';
-        } else if (utilisation <= 1.5) {
-          status = 'warning';
-          warningMessage = 'Steel area below requirement';
-        } else {
-          status = 'fail';
-          warningMessage = 'Steel area insufficient';
-        }
-        
-        if (!deflectionStatus) {
-          status = 'warning';
-          warningMessage = warningMessage ? `${warningMessage}, Deflection fails` : 'Deflection fails';
-        }
-        
-        options.push({
-          id: id++,
-          rank: 0,
-          thickness: Math.round(thickness),
-          barDiameter: Math.round(barDiameter),
-          spacing: spacing,
-          asReq: Math.round(asReq),
-          asProv: Math.round(asProv),
-          cost: Math.round(totalCost),
-          carbon: Math.round(totalCarbon),
-          utilisation: utilisation.toFixed(2),
-          deflection: actualSlenderness.toFixed(1),
-          status: status,
-          warningMessage: warningMessage,
-          recommended: false,
-          score: score
-        });
       }
     }
-  }
-  
-  // Filter and sort
-  const validOptions = options.filter(opt => opt.status !== 'fail');
-  if (validOptions.length === 0) return [];
-  
-  validOptions.sort((a, b) => a.score - b.score);
-  validOptions.forEach((opt, idx) => {
-    opt.rank = idx + 1;
-    opt.recommended = idx === 0;
-  });
-  
-  console.log('Generated options:', validOptions.length);
-  return validOptions.slice(0, 12);
-};
+
+    const isNewDesignMode = location.pathname.includes('/new-design');
+    
+    const validOptions = options.filter(opt => opt.status !== 'fail');
+    if (validOptions.length === 0) return [];
+    
+    validOptions.sort((a, b) => a.score - b.score);
+    validOptions.forEach((opt, idx) => {
+      opt.rank = idx + 1;
+      opt.recommended = idx === 0;
+    });
+    
+    console.log('Generated options:', validOptions.length);
+    return validOptions.slice(0, 12);
+  };
 
   const isOverridden = (field) => {
     if (field === 'thickness') return formData.thickness !== autoValues.recommendedThickness;
     if (field === 'cover') return formData.cover !== autoValues.recommendedCover;
-    if (field === 'mainBarDiameter') return formData.mainBarDiameter !== autoValues.recommendedBarDiameter;
     return false;
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    if (['thickness', 'cover', 'mainBarDiameter'].includes(name)) {
+    if (['thickness', 'cover'].includes(name)) {
       const recommended = autoValues[`recommended${name.charAt(0).toUpperCase() + name.slice(1)}`];
       if (value !== recommended) {
         setShowWarning({
@@ -418,7 +471,31 @@ const generateOptions = () => {
         setOverriddenFields(prev => ({ ...prev, [name]: false }));
       }
     }
-    setFormData(prev => ({ ...prev, [name]: value }));
+    
+    // Handle span count "others" logic
+    if (name === 'spanCount') {
+      if (value === 'others') {
+        setFormData(prev => ({ ...prev, spanCount: value, continuousSpans: [] }));
+      } else {
+        const num = parseInt(value);
+        setFormData(prev => ({ 
+          ...prev, 
+          spanCount: value, 
+          continuousSpans: Array(num).fill('5.0') 
+        }));
+      }
+    } else if (name === 'customSpanCount') {
+      const num = parseInt(value);
+      if (num > 0 && num <= 20) {
+        setFormData(prev => ({ 
+          ...prev, 
+          customSpanCount: value, 
+          continuousSpans: Array(num).fill('5.0') 
+        }));
+      }
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
   };
 
   const handlePermanentLoadChange = (index, field, value) => {
@@ -474,8 +551,6 @@ const generateOptions = () => {
         return `Recommended thickness for span ${formData.spanX}m is ${recommended}mm. Using ${newValue}mm may affect deflection.`;
       case 'cover':
         return `Recommended cover for ${formData.exposureClass} with ${formData.fireRating}min fire rating is ${recommended}mm. Using ${newValue}mm may compromise durability.`;
-      case 'mainBarDiameter':
-        return `Recommended bar diameter for ${formData.thickness}mm slab is ${recommended}mm. Using ${newValue}mm bars may affect bar spacing.`;
       default:
         return `The recommended value is ${recommended}. Are you sure you want to use ${newValue}?`;
     }
@@ -548,31 +623,35 @@ const generateOptions = () => {
 
   const getUserInitials = () => 'JE';
 
-  const handleValidate = () => {
-    setIsValidating(true);
-    setTimeout(() => {
-      setIsValidating(false);
-      alert(`✅ ${activeComponent} validation passed!`);
-    }, 1500);
+  const handleBack = () => {
+    if (isNewDesignMode) {
+      navigate('/new-design');
+    } else {
+      navigate(-1);
+    }
   };
 
-  const handleOptimise = () => {
-    setIsOptimising(true);
-    setTimeout(() => {
-      const options = generateOptions();
-      setGeneratedOptions(options);
-      // Store results for current component
-      setStoredResults(prev => ({
-        ...prev,
-        [activeComponent]: options
-      }));
-      setIsOptimising(false);
-      setShowResults(true);
-      setShowReport(false);
-      setShowAIRecommendation(false);
-      setShowTradeoff(false);
-    }, 2000);
-  };
+ 
+
+const handleOptimise = () => {
+  const isValid = handleValidate();
+  if (!isValid) return;
+  
+  setIsOptimising(true);
+  setTimeout(() => {
+    const options = generateOptions();
+    setGeneratedOptions(options);
+    setStoredResults(prev => ({
+      ...prev,
+      [activeComponent]: options
+    }));
+    setIsOptimising(false);
+    setShowResults(true);
+    setShowReport(false);
+    setShowAIRecommendation(false);
+    setShowTradeoff(false);
+  }, 2000);
+};
 
   const handleViewReport = (optionId) => {
     setSelectedOptionId(optionId);
@@ -612,7 +691,6 @@ const generateOptions = () => {
   const handleComponentSwitch = (componentId) => {
     setActiveComponent(componentId);
     
-    // Load stored results for this component
     const savedResults = storedResults[componentId];
     if (savedResults && savedResults.length > 0) {
       setGeneratedOptions(savedResults);
@@ -622,12 +700,198 @@ const generateOptions = () => {
       setShowResults(false);
     }
     
-    // Reset other view states
     setShowReport(false);
     setShowAIRecommendation(false);
     setShowTradeoff(false);
     setSelectedOptionId(null);
   };
+
+  const handleSwitchToTwoWay = () => {
+    setFormData(prev => ({ ...prev, slabType: 'two-way' }));
+    setShowSpanWarning(false);
+  };
+
+  // Validation function
+const handleValidate = () => {
+  setIsValidating(true);
+  const errors = [];
+  const warnings = [];
+
+  // 1. Check Span X
+  const spanX = parseFloat(formData.spanX);
+  if (isNaN(spanX) || spanX <= 0) {
+    errors.push("Span X must be a positive number");
+  } else if (spanX > 12) {
+    warnings.push(`Span X (${spanX}m) exceeds typical concrete slab limits (max 12m). Consider steel design.`);
+  } else if (spanX < 1.5) {
+    warnings.push(`Span X (${spanX}m) is very short. Minimum recommended is 1.5m.`);
+  }
+
+  // 2. Check Span Y (if two-way slab)
+  if (formData.slabType === 'two-way') {
+    const spanY = parseFloat(formData.spanY);
+    if (isNaN(spanY) || spanY <= 0) {
+      errors.push("Span Y must be a positive number");
+    }
+  }
+
+  // 3. Check Thickness
+  const thickness = parseFloat(formData.thickness);
+  if (isNaN(thickness) || thickness <= 0) {
+    errors.push("Thickness must be a positive number");
+  } else if (thickness < 100) {
+    errors.push(`Thickness (${thickness}mm) is below minimum recommended (100mm)`);
+  } else if (thickness > 500) {
+    warnings.push(`Thickness (${thickness}mm) is very heavy. Consider alternative structural systems.`);
+  }
+
+  // 4. Check Cover
+  const cover = parseFloat(formData.cover);
+  if (isNaN(cover) || cover <= 0) {
+    errors.push("Cover must be a positive number");
+  } else if (cover < 15) {
+    errors.push(`Cover (${cover}mm) is below minimum requirement (15mm)`);
+  } else if (cover > 75) {
+    warnings.push(`Cover (${cover}mm) is high. Consider if this is necessary for durability.`);
+  }
+
+  // 5. Check Loads
+  const finishes = parseFloat(formData.finishes) || 0;
+  const serviceAllowance = parseFloat(formData.serviceAllowance) || 0;
+  const partition = parseFloat(formData.partition) || 0;
+  
+  if (finishes < 0 || serviceAllowance < 0 || partition < 0) {
+    errors.push("Load values cannot be negative");
+  }
+
+  // 6. Check Permanent Loads
+  formData.permanentLoads.forEach((load, idx) => {
+    const value = parseFloat(load.value);
+    if (load.name.trim() === "") {
+      warnings.push(`Permanent load ${idx + 1} has no name`);
+    }
+    if (isNaN(value)) {
+      warnings.push(`Permanent load "${load.name || idx + 1}" has no value`);
+    } else if (value < 0) {
+      errors.push(`Permanent load "${load.name}" cannot be negative`);
+    }
+  });
+
+  // 7. Check Leading Variable Load
+  const leadingValue = parseFloat(formData.leadingLoad.value);
+  if (isNaN(leadingValue) || leadingValue < 0) {
+    errors.push("Leading variable load must be a non-negative number");
+  } else if (leadingValue > 20) {
+    warnings.push(`Leading variable load (${leadingValue} kN/m²) is very high. Verify usage category.`);
+  }
+
+  // 8. Check Accompanying Loads
+  formData.accompanyingLoads.forEach((load, idx) => {
+    const value = parseFloat(load.value);
+    if (isNaN(value)) {
+      warnings.push(`Accompanying load ${idx + 1} has no value`);
+    } else if (value < 0) {
+      errors.push(`Accompanying load "${load.key}" cannot be negative`);
+    } else if (value > 15) {
+      warnings.push(`Accompanying load "${load.key}" (${value} kN/m²) is unusually high`);
+    }
+  });
+
+  // 9. Check Material Properties
+  if (!formData.concreteGrade) {
+    errors.push("Concrete grade must be selected");
+  }
+  if (!formData.steelGrade) {
+    errors.push("Steel grade must be selected");
+  }
+  if (!formData.exposureClass) {
+    warnings.push("Exposure class not selected. Using default (XC3).");
+  }
+
+  // 10. Check Fire Rating
+  const fireRating = parseFloat(formData.fireRating);
+  if (isNaN(fireRating) || fireRating < 30) {
+    warnings.push("Fire rating less than 30 minutes may not meet building regulations");
+  }
+
+  // 11. Check Crack Width
+  const crackWidth = parseFloat(formData.crackWidthLimit);
+  if (isNaN(crackWidth) || crackWidth < 0.1) {
+    warnings.push("Crack width limit is very low (0.1mm min). Consider if this is necessary.");
+  } else if (crackWidth > 0.4) {
+    warnings.push(`Crack width (${crackWidth}mm) exceeds typical limit (0.3-0.4mm)`);
+  }
+
+  // 12. Check Thickness Options
+  const thickness1 = parseFloat(formData.thickness1);
+  const thickness2 = parseFloat(formData.thickness2);
+  if (isNaN(thickness1) || thickness1 <= 0) {
+    errors.push("Thickness 1 must be a positive number");
+  }
+  if (isNaN(thickness2) || thickness2 <= 0) {
+    errors.push("Thickness 2 must be a positive number");
+  }
+  if (thickness1 === thickness2) {
+    warnings.push("Thickness 1 and Thickness 2 are the same. Consider different values for comparison.");
+  }
+
+  // 13. Check Bar Diameters
+  const barDia1 = parseFloat(formData.barDiameter1);
+  const barDia2 = parseFloat(formData.barDiameter2);
+  if (isNaN(barDia1) || barDia1 <= 0) {
+    errors.push("Bar diameter 1 must be a positive number");
+  }
+  if (isNaN(barDia2) || barDia2 <= 0) {
+    errors.push("Bar diameter 2 must be a positive number");
+  }
+  if (![8, 10, 12, 16, 20, 25, 32].includes(barDia1)) {
+    warnings.push(`Bar diameter ${barDia1}mm is non-standard. Available: 8, 10, 12, 16, 20, 25, 32mm`);
+  }
+  if (![8, 10, 12, 16, 20, 25, 32].includes(barDia2)) {
+    warnings.push(`Bar diameter ${barDia2}mm is non-standard. Available: 8, 10, 12, 16, 20, 25, 32mm`);
+  }
+
+  // 14. Check Span/Thickness Ratio (Simple rule of thumb)
+  if (!isNaN(spanX) && !isNaN(thickness) && thickness > 0) {
+    const ratio = spanX * 1000 / thickness;
+    if (ratio > 35) {
+      warnings.push(`Span/Thickness ratio (${ratio.toFixed(1)}) > 35. Slab may be too thin. Recommended L/h ≤ 30-35 for simply supported slabs.`);
+    } else if (ratio < 15) {
+      warnings.push(`Span/Thickness ratio (${ratio.toFixed(1)}) < 15. Slab may be over-designed. Consider reducing thickness.`);
+    }
+  }
+
+  // 15. Check if continuous spans are valid
+  if (formData.supportCondition === 'continuous') {
+    formData.continuousSpans.forEach((span, idx) => {
+      const s = parseFloat(span);
+      if (isNaN(s) || s <= 0) {
+        errors.push(`Span ${idx + 1} must be a positive number`);
+      }
+    });
+  }
+
+  // Show results
+  setIsValidating(false);
+  
+  if (errors.length > 0) {
+    // Show errors in a modal
+    alert(`❌ Validation Failed:\n\n${errors.join('\n')}\n\nPlease fix these issues before running optimisation.`);
+    return false;
+  } else if (warnings.length > 0) {
+    // Show warnings and ask if user wants to continue
+    const confirmed = window.confirm(
+      `⚠️ Validation Warnings:\n\n${warnings.join('\n')}\n\nDo you want to continue with optimisation?`
+    );
+    if (!confirmed) {
+      return false;
+    }
+  } else {
+    alert(`✅ Validation Passed!\n\nAll inputs are valid. You can now run optimisation.`);
+  }
+  
+  return true;
+};
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] dark:bg-[#111827] flex transition-colors duration-300">
@@ -646,6 +910,26 @@ const generateOptions = () => {
             <div className="flex justify-end space-x-3">
               <button onClick={cancelOverride} className="px-4 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">Cancel</button>
               <button onClick={confirmOverride} className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors cursor-pointer">Override</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Span Warning Modal for 2-way slab transition */}
+      {showSpanWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center space-x-3 text-blue-600 mb-4">
+              <FiInfo className="text-3xl" />
+              <h3 className="text-lg font-semibold text-[#02090d] dark:text-white">Span exceeds 4.2m</h3>
+            </div>
+            <p className="text-[#4b5563] dark:text-[#9ca3af] mb-6">
+              For spans greater than 4.2m, a two-way slab is recommended for better structural efficiency.
+              Would you like to switch to two-way slab?
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button onClick={() => setShowSpanWarning(false)} className="px-4 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">Keep One-way</button>
+              <button onClick={handleSwitchToTwoWay} className="px-4 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors cursor-pointer">Switch to Two-way</button>
             </div>
           </div>
         </div>
@@ -701,7 +985,7 @@ const generateOptions = () => {
               <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">
                 <FiMenu className="text-xl text-[#6b7280] dark:text-[#9ca3af]" />
               </button>
-              <button onClick={() => navigate(-1)} className="flex items-center space-x-2 text-[#6b7280] dark:text-[#9ca3af] hover:text-[#0A2F44] dark:hover:text-[#66a4c2] transition-colors cursor-pointer">
+              <button onClick={handleBack} className="flex items-center space-x-2 text-[#6b7280] dark:text-[#9ca3af] hover:text-[#0A2F44] dark:hover:text-[#66a4c2] transition-colors cursor-pointer">
                 <FiArrowLeft className="text-lg" />
                 <span className="text-sm">Back to Project</span>
               </button>
@@ -796,6 +1080,7 @@ const generateOptions = () => {
                     onBack={() => { setShowReport(false); setShowResults(true); }}
                     onExport={(format) => console.log(`Export as ${format}`)}
                     slabArea={slabArea}
+                     span={parseFloat(formData.spanX)}
                   />
                 );
               })()}
@@ -855,7 +1140,7 @@ const generateOptions = () => {
                       searchable={true}
                     />
                     <p className="text-xs text-[#6b7280] dark:text-[#9ca3af] mt-2">
-                      This determines default load values and reinforcement recommendations
+                      This determines the live load value automatically
                     </p>
                   </div>
 
@@ -866,178 +1151,186 @@ const generateOptions = () => {
                       Slab Geometry
                     </h2>
                     <div className="space-y-4">
-                    {/* Slab Type */}
-<div>
-  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-    Slab Type
-  </label>
-  <div className="grid grid-cols-2 gap-3">
-    <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
-      formData.slabType === 'one-way'
-        ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-        : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-    }`}>
-      <div className="flex items-center">
-        <input
-          type="radio"
-          name="slabType"
-          value="one-way"
-          checked={formData.slabType === 'one-way'}
-          onChange={handleChange}
-          className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
-        />
-        <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">One-way</span>
-      </div>
-      <FiInfo className="text-[#9ca3af] text-sm" title="Load transfers in one direction (short span)" />
-    </label>
-    
-    <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
-      formData.slabType === 'two-way'
-        ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-        : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-    }`}>
-      <div className="flex items-center">
-        <input
-          type="radio"
-          name="slabType"
-          value="two-way"
-          checked={formData.slabType === 'two-way'}
-          onChange={handleChange}
-          className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
-        />
-        <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Two-way</span>
-      </div>
-      <FiInfo className="text-[#9ca3af] text-sm" title="Load transfers in both directions" />
-    </label>
-  </div>
-</div>
+                      {/* Slab Type */}
+                      <div>
+                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                          Slab Type
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                            formData.slabType === 'one-way'
+                              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                          }`}>
+                            <div className="flex items-center">
+                              <input
+                                type="radio"
+                                name="slabType"
+                                value="one-way"
+                                checked={formData.slabType === 'one-way'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                              />
+                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">One-way</span>
+                            </div>
+                            <FiInfo className="text-[#9ca3af] text-sm" title="Load transfers in one direction (short span)" />
+                          </label>
+                          
+                          <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                            formData.slabType === 'two-way'
+                              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                          }`}>
+                            <div className="flex items-center">
+                              <input
+                                type="radio"
+                                name="slabType"
+                                value="two-way"
+                                checked={formData.slabType === 'two-way'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                              />
+                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Two-way</span>
+                            </div>
+                            <FiInfo className="text-[#9ca3af] text-sm" title="Load transfers in both directions" />
+                          </label>
+                        </div>
+                      </div>
 
-                      {/* Support Condition*/}
-<div>
-  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-    Support Condition
-  </label>
-  <div className="grid grid-cols-2 gap-3">
-    <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
-      formData.supportCondition === 'ss'
-        ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-        : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-    }`}>
-      <div className="flex items-center">
-        <input
-          type="radio"
-          name="supportCondition"
-          value="ss"
-          checked={formData.supportCondition === 'ss'}
-          onChange={handleChange}
-          className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
-        />
-        <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Simply Supported</span>
-      </div>
-      <FiInfo className="text-[#9ca3af] text-sm" title="Simple support - no moment transfer" />
-    </label>
-    
-    <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
-      formData.supportCondition === 'continuous'
-        ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-        : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-    }`}>
-      <div className="flex items-center">
-        <input
-          type="radio"
-          name="supportCondition"
-          value="continuous"
-          checked={formData.supportCondition === 'continuous'}
-          onChange={handleChange}
-          className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
-        />
-        <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Continuous</span>
-      </div>
-      <FiInfo className="text-[#9ca3af] text-sm" title="Moment continuity over supports" />
-    </label>
-  </div>
-</div>
-                  {/* Continuous Spans */}
-{formData.supportCondition === 'continuous' && (
-  <div className="animate-fade-in space-y-4 border-l-4 border-[#0A2F44] pl-4">
-    <div>
-      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-        Number of Spans
-      </label>
-      <CustomDropdown
-        label=""
-        name="numSpans"
-        value={formData.continuousSpans.length.toString()}
-        options={[
-          { value: '2', label: '2 spans', description: 'Two-span continuous slab' },
-          { value: '3', label: '3 spans', description: 'Three-span continuous slab' },
-          { value: '4', label: '4 spans', description: 'Four-span continuous slab' },
-          { value: '5', label: '5 spans', description: 'Five-span continuous slab' },
-        ]}
-        onChange={(e) => {
-          const num = parseInt(e.target.value);
-          setFormData(prev => ({
-            ...prev,
-            continuousSpans: Array(num).fill('5.0')
-          }));
-        }}
-      />
-    </div>
+                      {/* Support Condition */}
+                      <div>
+                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                          Support Condition
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                            formData.supportCondition === 'ss'
+                              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                          }`}>
+                            <div className="flex items-center">
+                              <input
+                                type="radio"
+                                name="supportCondition"
+                                value="ss"
+                                checked={formData.supportCondition === 'ss'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                              />
+                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Simply Supported</span>
+                            </div>
+                            <FiInfo className="text-[#9ca3af] text-sm" title="Simple support - no moment transfer" />
+                          </label>
+                          
+                          <label className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                            formData.supportCondition === 'continuous'
+                              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                          }`}>
+                            <div className="flex items-center">
+                              <input
+                                type="radio"
+                                name="supportCondition"
+                                value="continuous"
+                                checked={formData.supportCondition === 'continuous'}
+                                onChange={handleChange}
+                                className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
+                              />
+                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Fixed</span>
+                            </div>
+                            <FiInfo className="text-[#9ca3af] text-sm" title="Moment continuity over supports" />
+                          </label>
+                        </div>
+                      </div>
 
-    {formData.continuousSpans.map((span, index) => (
-      <div key={index}>
-        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-          Span {index + 1} (m)
-        </label>
-        <input
-          type="number"
-          value={span}
-          onChange={(e) => {
-            const newSpans = [...formData.continuousSpans];
-            newSpans[index] = e.target.value;
-            setFormData(prev => ({ ...prev, continuousSpans: newSpans }));
-          }}
-          step="0.1"
-          min="0"
-          className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
-        />
-      </div>
-    ))}
+                      {/* Continuous Spans */}
+                      {formData.supportCondition === 'continuous' && (
+                        <div className="animate-fade-in space-y-4 border-l-4 border-[#0A2F44] pl-4">
+                          <div>
+                            <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                              Number of Spans
+                            </label>
+                            <CustomDropdown
+                              label=""
+                              name="spanCount"
+                              value={formData.spanCount}
+                              options={spanCountOptions}
+                              onChange={handleChange}
+                            />
+                          </div>
 
-    <div className="grid grid-cols-2 gap-4">
-      <div>
-        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-          Left End
-        </label>
-        <CustomDropdown
-          label=""
-          name="endFixityLeft"
-          value={formData.endFixityLeft}
-          options={[
-            { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
-            { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
-          ]}
-          onChange={handleChange}
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-          Right End
-        </label>
-        <CustomDropdown
-          label=""
-          name="endFixityRight"
-          value={formData.endFixityRight}
-          options={[
-            { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
-            { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
-          ]}
-          onChange={handleChange}
-        />
-      </div>
-    </div>
-  </div>
-)}
+                          {formData.spanCount === 'others' && (
+                            <div>
+                              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                Custom Number of Spans
+                              </label>
+                              <input
+                                type="number"
+                                name="customSpanCount"
+                                value={formData.customSpanCount}
+                                onChange={handleChange}
+                                min="2"
+                                max="20"
+                                placeholder="Enter number of spans"
+                                className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                              />
+                            </div>
+                          )}
+
+                          {formData.continuousSpans.map((span, index) => (
+                            <div key={index}>
+                              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                Span {index + 1} (m)
+                              </label>
+                              <input
+                                type="number"
+                                value={span}
+                                onChange={(e) => {
+                                  const newSpans = [...formData.continuousSpans];
+                                  newSpans[index] = e.target.value;
+                                  setFormData(prev => ({ ...prev, continuousSpans: newSpans }));
+                                }}
+                                step="0.1"
+                                min="0"
+                                className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                              />
+                            </div>
+                          ))}
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                Left End Condition
+                              </label>
+                              <CustomDropdown
+                                label=""
+                                name="endFixityLeft"
+                                value={formData.endFixityLeft}
+                                options={[
+                                  { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
+                                  { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
+                                ]}
+                                onChange={handleChange}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                                Right End Condition 
+                              </label>
+                              <CustomDropdown
+                                label=""
+                                name="endFixityRight"
+                                value={formData.endFixityRight}
+                                options={[
+                                  { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
+                                  { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
+                                ]}
+                                onChange={handleChange}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       <div>
                         <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Span X (m) <span className="text-xs text-[#6b7280] dark:text-[#9ca3af]">(primary span)</span></label>
@@ -1103,27 +1396,95 @@ const generateOptions = () => {
                       <button onClick={addPermanentLoad} className="mt-2 text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"><span className="text-lg mr-1">+</span> Add other permanent load</button>
                     </div>
 
-                    <div>
-                      <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Variable Actions</h3>
-                      <div className="mb-4 p-4 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg border-l-4 border-[#0A2F44]">
-                        <div className="flex items-center mb-3"><div className="w-6 h-6 rounded-full bg-[#0A2F44] text-white flex items-center justify-center text-xs font-bold mr-2">L</div><p className="text-xs font-medium text-[#0A2F44] dark:text-[#cce1eb]">Leading Variable Load</p></div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <CustomDropdown name="leadingLoadKey" value={formData.leadingLoad.key} options={variableActionKeys} onChange={(e) => setFormData(prev => ({ ...prev, leadingLoad: { ...prev.leadingLoad, key: e.target.value } }))} />
-                          <input type="number" placeholder="Value (kN/m²)" value={formData.leadingLoad.value} onChange={(e) => setFormData(prev => ({ ...prev, leadingLoad: { ...prev.leadingLoad, value: e.target.value } }))} step="0.1" className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" />
-                        </div>
-                      </div>
-                      <div className="mb-2">
-                        <div className="flex items-center mb-3"><div className="w-6 h-6 rounded-full bg-[#9ca3af] text-white flex items-center justify-center text-xs font-bold mr-2">A</div><p className="text-xs font-medium text-[#6b7280]">Accompanying Variable Loads</p></div>
-                        {formData.accompanyingLoads.map((load, index) => (
-                          <div key={index} className="grid grid-cols-5 gap-2 mb-2">
-                            <div className="col-span-2"><CustomDropdown name={`accKey-${index}`} value={load.key} options={variableActionKeys} onChange={(e) => handleAccompanyingLoadChange(index, 'key', e.target.value)} /></div>
-                            <div className="col-span-2"><input type="number" placeholder="Value (kN/m²)" value={load.value} onChange={(e) => handleAccompanyingLoadChange(index, 'value', e.target.value)} step="0.1" className="w-full px-3 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                            <div><button onClick={() => removeAccompanyingLoad(index)} className="w-full h-full flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-lg cursor-pointer">×</button></div>
-                          </div>
-                        ))}
-                        <button onClick={addAccompanyingLoad} className="mt-2 text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"><span className="text-lg mr-1">+</span> Add accompanying variable load</button>
-                      </div>
-                    </div>
+        {/* Variable Actions */}
+<div>
+  <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Variable Actions</h3>
+  
+  {/* Leading Load - With dropdown selection */}
+  <div className="mb-4 p-4 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg border-l-4 border-[#0A2F44]">
+    <div className="flex items-center mb-3">
+      <div className="w-6 h-6 rounded-full bg-[#0A2F44] text-white flex items-center justify-center text-xs font-bold mr-2">L</div>
+      <p className="text-xs font-medium text-[#0A2F44] dark:text-[#cce1eb]">Leading Variable Load</p>
+    </div>
+    <div className="grid grid-cols-2 gap-3">
+      {/* Leading Load Dropdown */}
+      <CustomDropdown 
+        name="leadingLoadKey" 
+        value={formData.leadingLoad.key} 
+        options={allVariableActionKeys}
+        onChange={(e) => {
+          const newKey = e.target.value;
+          setFormData(prev => ({ 
+            ...prev, 
+            leadingLoad: { ...prev.leadingLoad, key: newKey }
+          }));
+        }} 
+      />
+      <input 
+        type="number" 
+        placeholder="Value (kN/m²)" 
+        value={formData.leadingLoad.value} 
+        onChange={(e) => setFormData(prev => ({ 
+          ...prev, 
+          leadingLoad: { ...prev.leadingLoad, value: e.target.value }
+        }))} 
+        step="0.1" 
+        className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" 
+      />
+    </div>
+  </div>
+  
+  {/* Accompanying Loads - Excluding selected leading load */}
+  <div className="mb-2">
+    <div className="flex items-center mb-3">
+      <div className="w-6 h-6 rounded-full bg-[#9ca3af] text-white flex items-center justify-center text-xs font-bold mr-2">A</div>
+      <p className="text-xs font-medium text-[#6b7280]">Accompanying Variable Loads</p>
+    </div>
+    
+    {/* Filter options - exclude the selected leading load */}
+    {(() => {
+      const filteredOptions = allVariableActionKeys.filter(
+        key => key.value !== formData.leadingLoad.key
+      );
+      return formData.accompanyingLoads.map((load, index) => (
+        <div key={index} className="grid grid-cols-5 gap-2 mb-2">
+          <div className="col-span-2">
+            <CustomDropdown 
+              name={`accKey-${index}`} 
+              value={load.key} 
+              options={filteredOptions}
+              onChange={(e) => handleAccompanyingLoadChange(index, 'key', e.target.value)} 
+            />
+          </div>
+          <div className="col-span-2">
+            <input 
+              type="number" 
+              placeholder="Value (kN/m²)" 
+              value={load.value} 
+              onChange={(e) => handleAccompanyingLoadChange(index, 'value', e.target.value)} 
+              step="0.1" 
+              className="w-full px-3 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" 
+            />
+          </div>
+          <div>
+            <button 
+              onClick={() => removeAccompanyingLoad(index)} 
+              className="w-full h-full flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-lg cursor-pointer"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ));
+    })()}
+    <button 
+      onClick={addAccompanyingLoad} 
+      className="mt-2 text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"
+    >
+      <span className="text-lg mr-1">+</span> Add accompanying variable load
+    </button>
+  </div>
+</div>
                   </div>
                 </div>
 
@@ -1142,16 +1503,24 @@ const generateOptions = () => {
                     </div>
                   </div>
 
-                  {/* Optimisation Settings Card */}
+                  {/* Optimisation Settings Card - Moved to backend engine (now just displays weights) */}
                   <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
                     <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
                       <FiPercent className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Optimisation Settings
+                      Optimisation Weights
                     </h2>
                     <div className="space-y-4">
-                      <CustomDropdown name="numThicknesses" value={formData.numThicknesses} options={[{ value: '1', label: '1 combination' }, { value: '2', label: '2 combinations' }, { value: '3', label: '3 combinations' }]} onChange={handleChange} />
-                      <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Thickness 1 (mm)</label><input type="number" name="thickness1" value={formData.thickness1} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div><div><label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Bar dia 1 (mm)</label><input type="number" name="barDiameter1" value={formData.barDiameter1} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div></div>
-                      <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Thickness 2 (mm)</label><input type="number" name="thickness2" value={formData.thickness2} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div><div><label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Bar dia 2 (mm)</label><input type="number" name="barDiameter2" value={formData.barDiameter2} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div></div>
+                      <div>
+                        <label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Thickness Options</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-xs text-[#6b7280] mb-1">Thickness 1 (mm)</label><input type="number" name="thickness1" value={formData.thickness1} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          <div><label className="block text-xs text-[#6b7280] mb-1">Bar dia 1 (mm)</label><input type="number" name="barDiameter1" value={formData.barDiameter1} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                          <div><label className="block text-xs text-[#6b7280] mb-1">Thickness 2 (mm)</label><input type="number" name="thickness2" value={formData.thickness2} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          <div><label className="block text-xs text-[#6b7280] mb-1">Bar dia 2 (mm)</label><input type="number" name="barDiameter2" value={formData.barDiameter2} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                        </div>
+                      </div>
                       <div className="pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
                         <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Optimisation Weights</h3>
                         <div className="space-y-3">
@@ -1175,33 +1544,92 @@ const generateOptions = () => {
                     </div>
                   </div>
 
-                  {/* Cost Details Card */}
+                  {/* Cost Details Card - Updated with Company and Real-time rates */}
                   <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
                     <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
                       <FiCircle className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
                       Cost Details
                     </h2>
-                    <div className="space-y-3">
-                      <div className="flex items-center"><input type="checkbox" checked={formData.useAIDatabase} onChange={(e) => setFormData(prev => ({ ...prev, useAIDatabase: e.target.checked }))} className="w-4 h-4 text-[#0A2F44] mr-2" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Use StructAI Database rates</span></div>
-                      <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-1">Region (e.g. UK)</label><input type="text" name="region" value={formData.region} onChange={handleChange} className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                      <div className="grid grid-cols-2 gap-3"><div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP) [170]</label><input type="number" name="concreteRate" value={formData.concreteRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div><div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP) [1300]</label><input type="number" name="steelRate" value={formData.steelRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div></div>
-                      <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP) [50]</label><input type="number" name="formworkRate" value={formData.formworkRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                      <div className="flex items-center space-x-2"><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Use AI recommendation?</span><label className="flex items-center"><input type="radio" name="useAIRecommendation" value="y" checked={formData.useAIRecommendation === 'y'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Yes</span></label><label className="flex items-center"><input type="radio" name="useAIRecommendation" value="n" checked={formData.useAIRecommendation === 'n'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">No</span></label></div>
-                    </div>
-                  </div>
-
-                  {/* Bar Selection Card */}
-                  <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                      <FiCircle className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Bar Selection
-                    </h2>
                     <div className="space-y-4">
-                      <div className="relative"><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Main Bar Diameter (mm)</label>
-                        <CustomDropdown name="mainBarDiameter" value={formData.mainBarDiameter} options={formData.candidateDiameters.map(d => ({ value: d, label: `${d} mm` }))} onChange={handleChange} customClass={isOverridden('mainBarDiameter') ? 'border-yellow-500' : ''} />
-                        {!isOverridden('mainBarDiameter') && <p className="text-xs text-[#0A2F44] dark:text-[#66a4c2] mt-1">Recommended: {autoValues.recommendedBarDiameter}mm</p>}
+                      <div>
+                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Cost Source</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'database' }))}
+                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
+                              formData.costSource === 'database'
+                                ? 'bg-[#0A2F44] text-white'
+                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
+                            }`}
+                          >
+                            StructAI DB
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'company' }))}
+                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
+                              formData.costSource === 'company'
+                                ? 'bg-[#0A2F44] text-white'
+                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
+                            }`}
+                          >
+                            Company Rates
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'realtime' }))}
+                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
+                              formData.costSource === 'realtime'
+                                ? 'bg-[#0A2F44] text-white'
+                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
+                            }`}
+                          >
+                            Real-time
+                          </button>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Min Spacing (mm)</label><input type="number" name="minSpacing" value={formData.minSpacing} onChange={handleChange} step="10" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div><div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Max Spacing (mm)</label><input type="number" name="maxSpacing" value={formData.maxSpacing} onChange={handleChange} step="10" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div></div>
+
+                      {/* StructAI Database Rates (default) */}
+                      {formData.costSource === 'database' && (
+                        <>
+                          <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-1">Region (e.g. UK)</label><input type="text" name="region" value={formData.region} onChange={handleChange} className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP) [170]</label><input type="number" name="concreteRate" value={formData.concreteRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP) [1300]</label><input type="number" name="steelRate" value={formData.steelRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          </div>
+                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP) [50]</label><input type="number" name="formworkRate" value={formData.formworkRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                        </>
+                      )}
+
+                      {/* Company Rates */}
+                      {formData.costSource === 'company' && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP)</label><input type="number" name="companyConcreteRate" value={formData.companyConcreteRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP)</label><input type="number" name="companySteelRate" value={formData.companySteelRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          </div>
+                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP)</label><input type="number" name="companyFormworkRate" value={formData.companyFormworkRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                        </div>
+                      )}
+
+                      {/* Real-time Rates */}
+                      {formData.costSource === 'realtime' && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP) - Real-time</label><input type="number" name="realtimeConcreteRate" value={formData.realtimeConcreteRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP) - Real-time</label><input type="number" name="realtimeSteelRate" value={formData.realtimeSteelRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          </div>
+                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP) - Real-time</label><input type="number" name="realtimeFormworkRate" value={formData.realtimeFormworkRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+                          <p className="text-xs text-[#0A2F44] dark:text-[#66a4c2]">Real-time rates are fetched from market data</p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center space-x-2 mt-2">
+                        <span className="text-sm text-[#374151] dark:text-[#d1d5db]">Use AI recommendation?</span>
+                        <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="y" checked={formData.useAIRecommendation === 'y'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Yes</span></label>
+                        <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="n" checked={formData.useAIRecommendation === 'n'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">No</span></label>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1209,9 +1637,21 @@ const generateOptions = () => {
 
               {/* Action Buttons */}
               <div className="mt-8 flex justify-end space-x-4">
-                <button onClick={handleValidate} disabled={isValidating} className="px-6 py-3 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors disabled:opacity-50 cursor-pointer">{isValidating ? 'Validating...' : 'Validate'}</button>
-                <button onClick={handleOptimise} disabled={isOptimising} className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer">{isOptimising ? 'Optimising...' : 'Run Optimisation'}</button>
-              </div>
+  <button 
+    onClick={handleValidate} 
+    disabled={isValidating} 
+    className="px-6 py-3 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors disabled:opacity-50 cursor-pointer"
+  >
+    {isValidating ? 'Validating...' : 'Validate'}
+  </button>
+  <button 
+    onClick={handleOptimise} 
+    disabled={isOptimising} 
+    className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer"
+  >
+    {isOptimising ? 'Optimising...' : 'Run Optimisation'}
+  </button>
+</div>
             </>
           )}
 

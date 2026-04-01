@@ -113,18 +113,7 @@
   color: #6b7280 !important;
 }
 
-/* Ensure icons are visible in dark mode */
-/* .dark svg {
-  color: inherit;
-}
 
-.dark .text-[#6b7280] {
-  color: #9ca3af !important;
-}
-
-.dark .text-[#0A2F44] {
-  color: #66a4c2 !important;
-} */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -139,3 +128,5 @@
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out;
 }
+
+

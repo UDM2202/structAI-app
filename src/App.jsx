@@ -17,6 +17,8 @@ import TeamMembers from './pages/TeamMembers';
 import WorkspaceSettings from './pages/WorkspaceSettings';
 import StructuralInput from './pages/StructuralInput';
 import ProjectSetup from './pages/ProjectSetup';
+import NewDesign from './pages/NewDesign';
+
 
 function App() {
   return (
@@ -70,6 +72,15 @@ function App() {
                     </ProtectedRoute>
                   } />
                   
+                  <Route 
+    path="/workspace/:workspaceId/projects/new/structural-input" 
+    element={
+      <ProtectedRoute>
+        <StructuralInput />
+      </ProtectedRoute>
+    } 
+  />
+                  
                   <Route path="/workspace/:workspaceId/settings" element={
                     <ProtectedRoute>
                       <WorkspaceSettings />
@@ -93,6 +104,22 @@ function App() {
                       </ProtectedRoute>
                     } 
 /> 
+<Route 
+  path="/new-design" 
+  element={
+    <ProtectedRoute>
+      <NewDesign />
+    </ProtectedRoute>
+  } 
+/>
+<Route 
+  path="/new-design/slab" 
+  element={
+    <ProtectedRoute>
+      <StructuralInput /> 
+    </ProtectedRoute>
+  } 
+/>
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
               </div>
