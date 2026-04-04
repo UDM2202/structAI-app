@@ -3,7 +3,8 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { 
   FiArrowLeft, FiSun, FiMoon, FiHome, FiBriefcase, FiTool,
   FiChevronRight, FiChevronLeft, FiInfo, FiLoader, FiUsers, FiUser,
-  FiMail, FiPlus, FiX, FiChevronDown, FiCheck, FiEye, FiGlobe, FiSearch, FiAlertCircle
+  FiMail, FiPlus, FiX, FiChevronDown, FiCheck, FiEye, FiGlobe, FiSearch, FiAlertCircle,
+  FiGrid, FiLayers, FiBarChart2, FiDollarSign, FiTrendingUp  // Added new icons
 } from 'react-icons/fi'
 import ReactDOM from 'react-dom';
 import { useTheme } from '../contexts/ThemeContext';
@@ -20,22 +21,49 @@ const CreateWorkspace = () => {
   const [showLoading, setShowLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   
-const [isRoleOpen, setIsRoleOpen] = useState(false);
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
+  const [isProfessionOpen, setIsProfessionOpen] = useState(false); // Added for profession dropdown
 
-const [isLocationOpen, setIsLocationOpen] = useState(false);
-const [locationSearch, setLocationSearch] = useState('');
-const [selectedCode, setSelectedCode] = useState('Eurocode');
-const locationButtonRef = useRef(null); 
-const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
-
+  const [isLocationOpen, setIsLocationOpen] = useState(false);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [selectedCode, setSelectedCode] = useState('Eurocode');
+  const locationButtonRef = useRef(null); 
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
 
   // Team invite state
   const [invites, setInvites] = useState([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
+  const [inviteProfession, setInviteProfession] = useState('structural_engineer'); // Added for profession
   const [showInviteInput, setShowInviteInput] = useState(false);
   const [skipInvite, setSkipInvite] = useState(false);
-  
+
+  // Helper function to get profession label
+  const getProfessionLabel = (profession) => {
+    const professions = {
+      structural_engineer: 'Structural Engineer',
+      architect: 'Architect',
+      civil_engineer: 'Civil Engineer',
+      project_manager: 'Project Manager',
+      quantity_surveyor: 'Quantity Surveyor',
+      analyst: 'Analyst'
+    };
+    return professions[profession] || 'Select Profession';
+  };
+
+  // Helper function to get profession icon
+  const getProfessionIcon = (profession) => {
+    const icons = {
+      structural_engineer: FiGrid,
+      architect: FiLayers,
+      civil_engineer: FiBarChart2,
+      project_manager: FiUsers,
+      quantity_surveyor: FiDollarSign,
+      analyst: FiTrendingUp
+    };
+    return icons[profession] || FiUser;
+  };
+
 // ISO-style country source
 const baseCountries = [
   // Africa
@@ -252,6 +280,12 @@ const baseCountries = [
   { name: 'Vanuatu', iso2: 'VU', region: 'Oceania' },
 ];
 
+const buildingTypes = [
+  { value: 'residential', label: 'Residential', icon: FiHome },
+  { value: 'commercial', label: 'Commercial', icon: FiBriefcase },
+  { value: 'industrial', label: 'Industrial', icon: FiTool },
+];
+
 // Converts ISO code to emoji flag
 const isoToFlag = (iso2) =>
   iso2
@@ -347,7 +381,10 @@ const filteredLocations = countries.filter((country) =>
     // Project Info
     buildingType: 'commercial',
     location: 'London, UK',
+    description: '',
   });
+
+  const [errors, setErrors] = useState({});
 
   // Loading animation effect
   useEffect(() => {
@@ -360,7 +397,7 @@ const filteredLocations = countries.filter((country) =>
           }
           return prev + 10;
         });
-      }, 1000);
+      }, 300);
       return () => clearInterval(interval);
     }
   }, [showLoading]);
@@ -371,83 +408,103 @@ const filteredLocations = countries.filter((country) =>
       setTimeout(() => {
         setShowLoading(false);
         handleCreateProject();
-      }, 500);
+      }, 0);
     }
   }, [loadingProgress]);
 
-useEffect(() => {
-  if (isLocationOpen && locationButtonRef.current) {
-    const rect = locationButtonRef.current.getBoundingClientRect();
-    setDropdownPosition({
-      top: rect.bottom + window.scrollY + 4,
-      left: rect.left + window.scrollX,
-      width: rect.width
-    });
-  }
-}, [isLocationOpen]);
-
-useEffect(() => {
-  const handleClickOutside = (event) => {
-    if (locationButtonRef.current && !locationButtonRef.current.contains(event.target)) {
-      // Check if click is on the dropdown itself
-      const dropdown = document.getElementById('location-dropdown');
-      if (dropdown && !dropdown.contains(event.target)) {
-        setIsLocationOpen(false);
-      }
+  useEffect(() => {
+    if (isLocationOpen && locationButtonRef.current) {
+      const rect = locationButtonRef.current.getBoundingClientRect();
+      setDropdownPosition({
+        top: rect.bottom + window.scrollY + 4,
+        left: rect.left + window.scrollX,
+        width: rect.width
+      });
     }
-  };
-  
-  document.addEventListener('mousedown', handleClickOutside);
-  return () => document.removeEventListener('mousedown', handleClickOutside);
-}, []);
+  }, [isLocationOpen]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (locationButtonRef.current && !locationButtonRef.current.contains(event.target)) {
+        const dropdown = document.getElementById('location-dropdown');
+        if (dropdown && !dropdown.contains(event.target)) {
+          setIsLocationOpen(false);
+        }
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleAddInvite = () => {
-    if (inviteEmail.trim()) {
-      setInvites([...invites, { email: inviteEmail, role: inviteRole }]);
-      setInviteEmail('');
-      setInviteRole('member');
-      setShowInviteInput(false);
-    }
+ const handleAddInvite = () => {
+  // Check if email is valid
+  if (!inviteEmail.trim()) {
+    alert('Please enter an email address');
+    return;
+  }
+  
+  // Basic email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(inviteEmail.trim())) {
+    alert('Please enter a valid email address');
+    return;
+  }
+  
+  // Add the invite
+  const newInvite = { 
+    email: inviteEmail.trim(), 
+    role: inviteRole,
+    profession: inviteProfession 
   };
-
+  
+  setInvites(prev => [...prev, newInvite]);
+  
+  // Reset form
+  setInviteEmail('');
+  setInviteRole('member');
+  setInviteProfession('structural_engineer');
+  setShowInviteInput(false);
+ };
+ 
   const handleRemoveInvite = (index) => {
     setInvites(invites.filter((_, i) => i !== index));
   };
 
   const handleNext = () => {
     if (step === 1) {
+      if (!formData.workspaceName.trim()) {
+        setErrors({ ...errors, workspaceName: 'Workspace name is required' });
+        return;
+      }
+      setErrors({});
       setStep(2);
-    } else if (step === 2 && formData.workspaceType === 'team') {
-      // For team: after invite screen, go to building info
-      setStep(3);
-    } else if (step === 2 && formData.workspaceType === 'personal') {
-      // For personal: after building info, go to summary
+    } else if (step === 2) {
       setStep(3);
     } else if (step === 3) {
-      // Summary step - go to loading
       setShowLoading(true);
     }
   };
 
   const handleBack = () => {
-    setStep(step - 1);
+    if (step > 1) {
+      setStep(step - 1);
+    }
   };
 
   const handleSkipInvite = () => {
     setSkipInvite(true);
-    setStep(3); // Go to building info
+    setStep(3);
   };
 
   const handleCreateProject = async () => {
     setIsSubmitting(true);
     
-    // Create workspace
     const workspaceData = {
       name: formData.workspaceName,
       type: formData.workspaceType,
@@ -457,14 +514,12 @@ useEffect(() => {
       const workspaceResult = await createWorkspace(workspaceData);
       
       if (workspaceResult.success) {
-        // Send invites if any
         if (invites.length > 0 && !skipInvite) {
           for (const invite of invites) {
-            await inviteMember(workspaceResult.workspace.id, invite.email, invite.role);
+            await inviteMember(workspaceResult.workspace.id, invite.email, invite.role, invite.profession);
           }
         }
         
-        // Navigate to structural input
         navigate(`/workspace/${workspaceResult.workspace.id}/projects/new/structural-input`);
       } else {
         console.error('Failed to create workspace:', workspaceResult.error);
@@ -487,7 +542,7 @@ useEffect(() => {
       </button>
 
       {/* Main Card */}
-     <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-xl max-w-2xl w-full p-8 border border-[#e5e7eb] dark:border-[#374151] relative overflow-visible">
+      <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-xl max-w-2xl w-full p-8 border border-[#e5e7eb] dark:border-[#374151] relative overflow-visible">
         
         {/* Logo */}
         <div className="flex items-center justify-center mb-6">
@@ -502,7 +557,7 @@ useEffect(() => {
           <p className="text-sm text-[#6b7280] dark:text-[#9ca3af] mt-2">Set up your workspace to start collaborating</p>
         </div>
 
-        {/* Progress Steps - 3 steps total */}
+        {/* Progress Steps */}
         {!showLoading && (
           <div className="flex items-center justify-center mb-8">
             <div className="flex items-center">
@@ -550,6 +605,9 @@ useEffect(() => {
                   className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
                   required
                 />
+                {errors.workspaceName && (
+                  <p className="text-red-500 text-xs mt-1">{errors.workspaceName}</p>
+                )}
               </div>
 
               <div>
@@ -597,330 +655,513 @@ useEffect(() => {
         {!showLoading && step === 2 && (
           <form onSubmit={(e) => e.preventDefault()}>
             {formData.workspaceType === 'team' ? (
-  // Team Invite Screen
-  <div className="space-y-6">
-    <div className="text-center py-8">
-      <div className="w-20 h-20 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-full flex items-center justify-center mx-auto mb-4">
-        <FiUsers className="text-3xl text-[#0A2F44] dark:text-[#66a4c2]" />
-      </div>
-      <h2 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Invite Your Team</h2>
-      <p className="text-[#6b7280] dark:text-[#9ca3af] text-center max-w-md mx-auto">
-        Add team members to collaborate on projects
-      </p>
-    </div>
+              // Team Invite Screen with Profession
+              <div className="space-y-6">
+                <div className="text-center py-8">
+                  <div className="w-20 h-20 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-full flex items-center justify-center mx-auto mb-4">
+                    <FiUsers className="text-3xl text-[#0A2F44] dark:text-[#66a4c2]" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-[#02090d] dark:text-white mb-2">Invite Your Team</h2>
+                  <p className="text-[#6b7280] dark:text-[#9ca3af] text-center max-w-md mx-auto">
+                    Add team members to collaborate on projects
+                  </p>
+                </div>
 
-    {/* Invite List */}
-    {invites.length > 0 && (
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-[#374151] dark:text-[#d1d5db]">Invited members:</p>
-        {invites.map((invite, index) => (
-          <div key={index} className="flex items-center justify-between p-3 bg-[#f9fafb] dark:bg-[#374151] rounded-lg border border-[#e5e7eb] dark:border-[#4b5563]">
-            <div className="flex items-center space-x-3">
-              <FiMail className="text-[#6b7280] dark:text-[#9ca3af]" />
-              <div>
-                <p className="text-sm font-medium text-[#02090d] dark:text-white">{invite.email}</p>
-                <p className="text-xs text-[#6b7280] dark:text-[#9ca3af] capitalize">{invite.role}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => handleRemoveInvite(index)}
-              className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-            >
-              <FiX />
-            </button>
-          </div>
-        ))}
-      </div>
-    )}
+                {/* Invite List */}
+                {invites.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-[#374151] dark:text-[#d1d5db]">Invited members:</p>
+                    {invites.map((invite, index) => {
+                      const ProfessionIcon = getProfessionIcon(invite.profession);
+                      return (
+                        <div key={index} className="flex items-center justify-between p-3 bg-[#f9fafb] dark:bg-[#374151] rounded-lg border border-[#e5e7eb] dark:border-[#4b5563]">
+                          <div className="flex items-center space-x-3">
+                            <FiMail className="text-[#6b7280] dark:text-[#9ca3af]" />
+                            <div>
+                              <p className="text-sm font-medium text-[#02090d] dark:text-white">{invite.email}</p>
+                              <div className="flex items-center space-x-2 mt-0.5">
+                                <p className="text-xs text-[#6b7280] dark:text-[#9ca3af] capitalize">{invite.role}</p>
+                                <span className="text-xs text-[#9ca3af]">•</span>
+                                <div className="flex items-center space-x-1">
+                                  <ProfessionIcon className="text-xs text-[#0A2F44] dark:text-[#66a4c2]" />
+                                  <p className="text-xs text-[#0A2F44] dark:text-[#66a4c2]">{getProfessionLabel(invite.profession)}</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveInvite(index)}
+                            className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                          >
+                            <FiX />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
-   {/* Add Invite Input - Updated with CustomDropdown and visible dark mode */}
-{showInviteInput ? (
-  <div className="space-y-4 p-4 bg-[#f9fafb] dark:bg-[#374151] rounded-lg border border-[#e5e7eb] dark:border-[#4b5563]">
-    <div className="relative">
-      <FiMail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#9ca3af] dark:text-[#6b7280]" />
-      <input
-        type="email"
-        value={inviteEmail}
-        onChange={(e) => setInviteEmail(e.target.value)}
-        placeholder="colleague@company.com"
-        className="w-full pl-10 pr-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937] text-[#02090d] dark:text-white placeholder:text-[#9ca3af] dark:placeholder:text-[#6b7280] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
-      />
-    </div>
-    
-    {/* Aesthetic Role Dropdown */}
-    <div className="relative">
-      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-        Role
-      </label>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setIsRoleOpen(!isRoleOpen)}
-          className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-        >
-          <div className="flex items-center space-x-2">
-            {inviteRole === 'member' && <FiUsers className="text-[#0A2F44]" />}
-            {inviteRole === 'admin' && <FiUser className="text-[#0A2F44]" />}
-            {inviteRole === 'viewer' && <FiEye className="text-[#0A2F44]" />}
-            <span>{inviteRole === 'member' ? 'Member' : inviteRole === 'admin' ? 'Admin' : 'Viewer'}</span>
-          </div>
-          <FiChevronDown className={`text-[#6b7280] dark:text-[#9ca3af] transition-transform duration-200 ${isRoleOpen ? 'rotate-180' : ''}`} />
-        </button>
+                {/* Add Invite Input */}
+                {showInviteInput ? (
+                  <div className="space-y-4 p-4 bg-[#f9fafb] dark:bg-[#374151] rounded-lg border border-[#e5e7eb] dark:border-[#4b5563]">
+                    <div className="relative">
+                      <FiMail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#9ca3af] dark:text-[#6b7280]" />
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="colleague@company.com"
+                        className="w-full pl-10 pr-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937] text-[#02090d] dark:text-white placeholder:text-[#9ca3af] dark:placeholder:text-[#6b7280] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] transition-all"
+                      />
+                    </div>
+                    
+                    {/* Role Dropdown */}
+                    <div className="relative">
+                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                        Role
+                      </label>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setIsRoleOpen(!isRoleOpen)}
+                          className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                        >
+                          <div className="flex items-center space-x-2">
+                            {inviteRole === 'member' && <FiUsers className="text-[#0A2F44]" />}
+                            {inviteRole === 'admin' && <FiUser className="text-[#0A2F44]" />}
+                            {inviteRole === 'viewer' && <FiEye className="text-[#0A2F44]" />}
+                            <span>{inviteRole === 'member' ? 'Member' : inviteRole === 'admin' ? 'Admin' : 'Viewer'}</span>
+                          </div>
+                          <FiChevronDown className={`text-[#6b7280] dark:text-[#9ca3af] transition-transform duration-200 ${isRoleOpen ? 'rotate-180' : ''}`} />
+                        </button>
 
-        {isRoleOpen && (
-          <div className="absolute z-20 w-full mt-1 bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-lg shadow-xl overflow-hidden animate-fade-in">
-            <button
-              type="button"
-              onClick={() => {
-                setInviteRole('member');
-                setIsRoleOpen(false);
-              }}
-              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
-                inviteRole === 'member' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <FiUsers className="text-[#0A2F44]" />
-                <div>
-                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Member</div>
-                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Can view and create designs</div>
+                        {isRoleOpen && (
+                          <div className="absolute z-20 w-full mt-1 bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-lg shadow-xl overflow-hidden animate-fade-in">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteRole('member');
+                                setIsRoleOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteRole === 'member' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiUsers className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Member</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Can view and create designs</div>
+                                </div>
+                              </div>
+                              {inviteRole === 'member' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteRole('admin');
+                                setIsRoleOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteRole === 'admin' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiUser className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Admin</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Can manage members and settings</div>
+                                </div>
+                              </div>
+                              {inviteRole === 'admin' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteRole('viewer');
+                                setIsRoleOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteRole === 'viewer' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiEye className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Viewer</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Read-only access</div>
+                                </div>
+                              </div>
+                              {inviteRole === 'viewer' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Profession Dropdown - NEW */}
+                    <div className="relative">
+                      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                        Profession
+                      </label>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setIsProfessionOpen(!isProfessionOpen)}
+                          className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                        >
+                          <div className="flex items-center space-x-2">
+                            {(() => {
+                              const Icon = getProfessionIcon(inviteProfession);
+                              return <Icon className="text-[#0A2F44]" />;
+                            })()}
+                            <span>{getProfessionLabel(inviteProfession)}</span>
+                          </div>
+                          <FiChevronDown className={`text-[#6b7280] dark:text-[#9ca3af] transition-transform duration-200 ${isProfessionOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isProfessionOpen && (
+                          <div className="absolute z-20 w-full mt-1 bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-lg shadow-xl overflow-hidden animate-fade-in max-h-80 overflow-y-auto">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('structural_engineer');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'structural_engineer' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiGrid className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Structural Engineer</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Designs structural elements, beams, columns, foundations</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'structural_engineer' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('architect');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'architect' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiLayers className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Architect</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Focuses on building layout, aesthetics, and spatial planning</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'architect' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('civil_engineer');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'civil_engineer' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiBarChart2 className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Civil Engineer</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Oversees site works, foundations, and infrastructure</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'civil_engineer' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('project_manager');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'project_manager' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiUsers className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Project Manager</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Coordinates project timeline, budget, and resources</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'project_manager' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('quantity_surveyor');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'quantity_surveyor' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiDollarSign className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Quantity Surveyor</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Manages costs, materials, and procurement</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'quantity_surveyor' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteProfession('analyst');
+                                setIsProfessionOpen(false);
+                              }}
+                              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
+                                inviteProfession === 'analyst' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <FiTrendingUp className="text-[#0A2F44]" />
+                                <div>
+                                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Analyst</div>
+                                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Analyzes structural performance and optimization data</div>
+                                </div>
+                              </div>
+                              {inviteProfession === 'analyst' && <FiCheck className="text-[#0A2F44]" />}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-end space-x-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowInviteInput(false);
+                          setInviteEmail('');
+                          setInviteRole('member');
+                          setInviteProfession('structural_engineer');
+                        }}
+                        className="px-4 py-2 text-sm border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddInvite}
+                        className="px-4 py-2 text-sm bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors cursor-pointer"
+                      >
+                        Add Member
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowInviteInput(true)}
+                    className="w-full py-3 border-2 border-dashed border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#0A2F44] dark:text-[#66a4c2] hover:border-[#0A2F44] dark:hover:border-[#66a4c2] transition-colors flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <FiPlus className="text-[#0A2F44] dark:text-[#66a4c2]" />
+                    <span>Invite Member</span>
+                  </button>
+                )}
+
+                {/* Settings Link */}
+                <div className="text-center pt-2">
+                  <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">
+                    You can also{' '}
+                    <span className="text-[#0A2F44] dark:text-[#66a4c2] opacity-50 cursor-not-allowed relative group">
+                      manage team members later from workspace settings
+                      <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        Will be available after workspace creation
+                      </span>
+                    </span>
+                  </p>
                 </div>
               </div>
-              {inviteRole === 'member' && <FiCheck className="text-[#0A2F44]" />}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setInviteRole('admin');
-                setIsRoleOpen(false);
-              }}
-              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
-                inviteRole === 'admin' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <FiUser className="text-[#0A2F44]" />
-                <div>
-                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Admin</div>
-                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Can manage members and settings</div>
-                </div>
-              </div>
-              {inviteRole === 'admin' && <FiCheck className="text-[#0A2F44]" />}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setInviteRole('viewer');
-                setIsRoleOpen(false);
-              }}
-              className={`w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors ${
-                inviteRole === 'viewer' ? 'bg-[#e6f0f5] dark:bg-[#1e3a4a]' : ''
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <FiEye className="text-[#0A2F44]" />
-                <div>
-                  <div className="text-sm font-medium text-[#02090d] dark:text-white">Viewer</div>
-                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">Read-only access</div>
-                </div>
-              </div>
-              {inviteRole === 'viewer' && <FiCheck className="text-[#0A2F44]" />}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-    
-    <div className="flex justify-end space-x-3">
-      <button
-        type="button"
-        onClick={() => setShowInviteInput(false)}
-        className="px-4 py-2 text-sm border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        onClick={handleAddInvite}
-        className="px-4 py-2 text-sm bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors cursor-pointer"
-      >
-        Add Member
-      </button>
-    </div>
-  </div>
-) : (
-  <button
-    type="button"
-    onClick={() => setShowInviteInput(true)}
-    className="w-full py-3 border-2 border-dashed border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#0A2F44] dark:text-[#66a4c2] hover:border-[#0A2F44] dark:hover:border-[#66a4c2] transition-colors flex items-center justify-center space-x-2 cursor-pointer"
-  >
-    <FiPlus className="text-[#0A2F44] dark:text-[#66a4c2]" />
-    <span>Invite Member</span>
-  </button>
-)}
-
-    {/* Settings Link - DARK MODE VISIBLE */}
-   <div className="text-center pt-2">
-  <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">
-    You can also{' '}
-    <span className="text-[#0A2F44] dark:text-[#66a4c2] opacity-50 cursor-not-allowed relative group">
-      manage team members later from workspace settings
-      <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        Will be available after workspace creation
-      </span>
-    </span>
-  </p>
-</div>
-  </div>
             ) : (
               <>
-             {/* Building Info Screen (Personal) */}
-<div className="space-y-6 overflow-visible">
-  {/* Building Type */}
-  <div>
-    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-      Building Type
-    </label>
-    <div className="grid grid-cols-3 gap-3">
-      {[
-        { type: 'residential', icon: FiHome, label: 'Residential' },
-        { type: 'commercial', icon: FiBriefcase, label: 'Commercial' },
-        { type: 'industrial', icon: FiTool, label: 'Industrial' },
-      ].map((option) => (
-        <button
-          key={option.type}
-          type="button"
-          onClick={() => setFormData({...formData, buildingType: option.type})}
-          className={`p-4 rounded-lg border-2 transition-all cursor-pointer ${
-            formData.buildingType === option.type
-              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
-              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
-          }`}
-        >
-          <option.icon className="mx-auto text-2xl mb-2 text-[#0A2F44]" />
-          <span className="text-sm font-medium text-[#374151] dark:text-[#d1d5db]">{option.label}</span>
-        </button>
-      ))}
-    </div>
-  </div>
-
- {/* Location with Aesthetic Dropdown - PORTAL VERSION */}
-<div className="overflow-visible relative">
-  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
-    Location
-  </label>
-  <div className="relative overflow-visible">
-    <button
-      ref={locationButtonRef} // Add ref here
-      type="button"
-      onClick={() => setIsLocationOpen(!isLocationOpen)}
-      className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors cursor-pointer"
-    >
-      <div className="flex items-center space-x-2">
-        <FiGlobe className="text-[#0A2F44] dark:text-[#66a4c2]" />
-        <span>{formData.location}</span>
-      </div>
-      <FiChevronDown className={`text-[#6b7280] transition-transform duration-200 ${isLocationOpen ? 'rotate-180' : ''}`} />
-    </button>
-
-    {/* PORTAL DROPDOWN - Renders outside the card */}
-    {isLocationOpen && ReactDOM.createPortal(
-      <div 
-        id="location-dropdown"
-        className="fixed bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-xl shadow-xl overflow-hidden animate-fade-in"
-        style={{
-          top: dropdownPosition.top,
-          left: dropdownPosition.left,
-          width: dropdownPosition.width,
-          zIndex: 9999
-        }}
-      >
-        {/* Search Input */}
-        <div className="sticky top-0 p-3 border-b border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937]">
-          <div className="relative">
-            <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#9ca3af]" />
-            <input
-              type="text"
-              placeholder="Search country..."
-              value={locationSearch}
-              onChange={(e) => setLocationSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
-            />
-          </div>
-        </div>
-
-        {/* Countries List */}
-        <div className="max-h-64 overflow-y-auto">
-          {filteredLocations.map((country) => (
-            <button
-              key={country.name}
-              type="button"
-              onClick={() => {
-                setFormData({...formData, location: country.name});
-                setSelectedCode(country.code);
-                setIsLocationOpen(false);
-                setLocationSearch('');
-              }}
-              className="w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
-            >
-              <div className="flex items-center space-x-3">
-                <span className="text-xl">{country.flag}</span>
-                <div>
-                  <div className="text-sm font-medium text-[#02090d] dark:text-white">{country.name}</div>
-                  <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">
-                    {country.code === 'Eurocode' && '🇪🇺 Eurocode'}
-                    {country.code === 'BS' && '🇬🇧 British Standards'}
-                    {country.code === 'unsupported' && '⚠️ Coming soon'}
+                {/* Building Info Screen (Personal) */}
+                <div className="space-y-6 overflow-visible">
+                  {/* Building Type */}
+                  <div>
+                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">
+                      Building Type
+                    </label>
+                    <div className="grid grid-cols-3 gap-4">
+                      {buildingTypes.map((type) => (
+                        <button
+                          key={type.value}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, buildingType: type.value })}
+                          className={`p-4 rounded-lg border-2 text-center transition-all cursor-pointer ${
+                            formData.buildingType === type.value
+                              ? 'border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a]'
+                              : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#99c2d6]'
+                          }`}
+                        >
+                          <type.icon className={`text-2xl mx-auto mb-2 ${
+                            formData.buildingType === type.value
+                              ? 'text-[#0A2F44] dark:text-[#66a4c2]'
+                              : 'text-[#6b7280] dark:text-[#9ca3af]'
+                          }`} />
+                          <span className={`text-sm font-medium ${
+                            formData.buildingType === type.value
+                              ? 'text-[#02090d] dark:text-white'
+                              : 'text-[#374151] dark:text-[#d1d5db]'
+                          }`}>
+                            {type.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Project Description Field */}
+                  <div>
+                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                      Project Description <span className="text-xs text-[#6b7280]">(optional)</span>
+                    </label>
+                    <textarea
+                      name="description"
+                      value={formData.description}
+                      onChange={handleChange}
+                      placeholder="Describe the type of buildings you design, your specialities, or any specific requirements..."
+                      rows="4"
+                      className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44] resize-none"
+                    />
+                    <p className="text-xs text-[#6b7280] dark:text-[#9ca3af] mt-1">
+                      This helps us tailor recommendations for your projects
+                    </p>
+                  </div>
+
+                  {/* Location with Aesthetic Dropdown */}
+                  <div className="overflow-visible relative">
+                    <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                      Location
+                    </label>
+                    <div className="relative overflow-visible">
+                      <button
+                        ref={locationButtonRef} 
+                        type="button"
+                        onClick={() => setIsLocationOpen(!isLocationOpen)}
+                        className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white flex items-center justify-between hover:border-[#0A2F44] transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <FiGlobe className="text-[#0A2F44] dark:text-[#66a4c2]" />
+                          <span>{formData.location}</span>
+                        </div>
+                        <FiChevronDown className={`text-[#6b7280] transition-transform duration-200 ${isLocationOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* PORTAL DROPDOWN */}
+                      {isLocationOpen && ReactDOM.createPortal(
+                        <div 
+                          id="location-dropdown"
+                          className="fixed bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-xl shadow-xl overflow-hidden animate-fade-in"
+                          style={{
+                            top: dropdownPosition.top,
+                            left: dropdownPosition.left,
+                            width: dropdownPosition.width,
+                            zIndex: 9999
+                          }}
+                        >
+                          <div className="sticky top-0 p-3 border-b border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#1f2937]">
+                            <div className="relative">
+                              <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#9ca3af]" />
+                              <input
+                                type="text"
+                                placeholder="Search country..."
+                                value={locationSearch}
+                                onChange={(e) => setLocationSearch(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                              />
+                            </div>
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            {filteredLocations.map((country) => (
+                              <button
+                                key={country.name}
+                                type="button"
+                                onClick={() => {
+                                  setFormData({...formData, location: country.name});
+                                  setSelectedCode(country.code);
+                                  setIsLocationOpen(false);
+                                  setLocationSearch('');
+                                }}
+                                className="w-full px-4 py-3 text-left flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
+                              >
+                                <div className="flex items-center space-x-3">
+                                  <span className="text-xl">{country.flag}</span>
+                                  <div>
+                                    <div className="text-sm font-medium text-[#02090d] dark:text-white">{country.name}</div>
+                                    <div className="text-xs text-[#6b7280] dark:text-[#9ca3af]">
+                                      {country.code === 'Eurocode' && '🇪🇺 Eurocode'}
+                                      {country.code === 'BS' && '🇬🇧 British Standards'}
+                                      {country.code === 'unsupported' && '⚠️ Coming soon'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div>
+                                  {country.code !== 'unsupported' ? (
+                                    <span className={`text-xs px-2 py-1 rounded-full ${
+                                      country.code === 'Eurocode' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
+                                    }`}>
+                                      {country.code}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">
+                                      Coming Soon
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>,
+                        document.body
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Code Support Message */}
+                  {selectedCode === 'unsupported' && (
+                    <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                      <p className="text-sm text-yellow-800 dark:text-yellow-200 flex items-start space-x-2">
+                        <FiAlertCircle className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                        <span>
+                          <strong>Design codes for {formData.location} coming soon.</strong> For now, we recommend using Eurocode or British Standards as an alternative.
+                        </span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Code Recommendation for Unsupported */}
+                  {selectedCode === 'unsupported' && (
+                    <div className="mt-3 p-3 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg">
+                      <p className="text-sm text-[#0A2F44] dark:text-[#cce1eb] flex items-start space-x-2">
+                        <FiInfo className="mt-0.5 flex-shrink-0" />
+                        <span>
+                          <strong>Alternative suggestion:</strong> Use Eurocode (European standard) or British Standards for your design. Both are widely accepted internationally.
+                        </span>
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div>
-                {country.code !== 'unsupported' ? (
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    country.code === 'Eurocode' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
-                  }`}>
-                    {country.code}
-                  </span>
-                ) : (
-                  <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">
-                    Coming Soon
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>,
-      document.body
-    )}
-  </div>
-</div>
-
-    {/* Code Support Message */}
-    {selectedCode === 'unsupported' && (
-      <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-        <p className="text-sm text-yellow-800 dark:text-yellow-200 flex items-start space-x-2">
-          <FiAlertCircle className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
-          <span>
-            <strong>Design codes for {formData.location} coming soon.</strong> For now, we recommend using Eurocode or British Standards as an alternative.
-          </span>
-        </p>
-      </div>
-    )}
-
-    {/* Code Recommendation for Unsupported */}
-    {selectedCode === 'unsupported' && (
-      <div className="mt-3 p-3 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg">
-        <p className="text-sm text-[#0A2F44] dark:text-[#cce1eb] flex items-start space-x-2">
-          <FiInfo className="mt-0.5 flex-shrink-0" />
-          <span>
-            <strong>Alternative suggestion:</strong> Use Eurocode (European standard) or British Standards for your design. Both are widely accepted internationally.
-          </span>
-        </p>
-      </div>
-    )}
-  </div>
-                </> 
+              </> 
             )}
 
             {/* Navigation Buttons */}
@@ -977,12 +1218,34 @@ useEffect(() => {
                         <p className="text-[#6b7280] dark:text-[#9ca3af]">Location</p>
                         <p className="font-medium text-[#02090d] dark:text-white">{formData.location}</p>
                       </div>
+                      {formData.description && (
+                        <div className="col-span-2">
+                          <p className="text-[#6b7280] dark:text-[#9ca3af]">Description</p>
+                          <p className="font-medium text-[#02090d] dark:text-white mt-1">{formData.description}</p>
+                        </div>
+                      )}
                     </>
                   )}
                   {formData.workspaceType === 'team' && invites.length > 0 && (
                     <div className="col-span-2">
                       <p className="text-[#6b7280] dark:text-[#9ca3af]">Invited Members</p>
-                      <p className="font-medium text-[#02090d] dark:text-white">{invites.length} member(s) will be invited</p>
+                      <div className="space-y-1 mt-1">
+                        {invites.map((invite, idx) => {
+                          const ProfessionIcon = getProfessionIcon(invite.profession);
+                          return (
+                            <div key={idx} className="flex items-center space-x-2 text-sm">
+                              <span className="text-[#02090d] dark:text-white">{invite.email}</span>
+                              <span className="text-[#9ca3af]">•</span>
+                              <span className="text-xs capitalize text-[#6b7280]">{invite.role}</span>
+                              <span className="text-[#9ca3af]">•</span>
+                              <div className="flex items-center space-x-1">
+                                <ProfessionIcon className="text-xs text-[#0A2F44]" />
+                                <span className="text-xs text-[#0A2F44]">{getProfessionLabel(invite.profession)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

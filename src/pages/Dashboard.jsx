@@ -9,6 +9,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import { useTheme } from '../contexts/ThemeContext';
+import DesignStreak from '../components/ui/DesignStreak';
 
 // Mock projects data (shared with Projects page)
 export const mockProjects = [
@@ -442,13 +443,7 @@ const Dashboard = () => {
               <p className="text-3xl font-bold text-[#02090d] dark:text-white">{activeThisMonth}</p>
             </div>
 
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-6 border border-[#e5e7eb] dark:border-[#374151]">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-[#6b7280] dark:text-[#9ca3af]">Design Streak</span>
-                <FiTrendingUp className="text-[#0A2F44] dark:text-[#cce1eb]" />
-              </div>
-              <p className="text-3xl font-bold text-[#02090d] dark:text-white">{activityData.streak} days</p>
-            </div>
+            <DesignStreak userId={user?.id} />
           </div>
 
           {/* GitHub-style Activity Heatmap */}

@@ -244,40 +244,34 @@ const SlabDetailedReport = ({ option, onBack, onExport, slabArea, span }) => {
         <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-3">Design Calculations</h2>
         <div className="overflow-x-auto border border-[#e5e7eb] dark:border-[#374151] rounded-lg">
           <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-[#f3f4f6] dark:bg-[#374151]">
-                <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white border-r border-[#e5e7eb] dark:border-[#374151] w-1/4">
-                  Output
-                </th>
-                <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white border-r border-[#e5e7eb] dark:border-[#374151] w-1/2">
-                  Calculations
-                </th>
-                <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white w-1/4">
-                  Reference
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#e5e7eb] dark:divide-[#374151]">
-              {calculationSteps.map((step, idx) => (
-                <tr key={idx} className="hover:bg-[#f9fafb] dark:hover:bg-[#374151] transition-colors">
-                  <td className="p-3 align-top border-r border-[#e5e7eb] dark:border-[#374151]">
-                    <code className="text-sm font-mono text-[#02090d] dark:text-white whitespace-pre-wrap">
-                      {step.output}
-                    </code>
-                  </td>
-                  <td className="p-3 align-top border-r border-[#e5e7eb] dark:border-[#374151]">
-                    <div className="text-sm text-[#4b5563] dark:text-[#9ca3af] font-mono whitespace-pre-wrap">
-                      {step.calculation}
-                    </div>
-                  </td>
-                  <td className="p-3 align-top">
-                    <span className="text-xs font-mono text-[#6b7280] dark:text-[#9ca3af] bg-[#f3f4f6] dark:bg-[#1f2937] px-2 py-1 rounded">
-                      {step.reference}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+          <thead>
+  <tr className="bg-[#f3f4f6] dark:bg-[#374151] border-b border-[#e5e7eb] dark:border-[#374151]">
+    <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white w-1/4">Reference</th>
+    <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white w-1/2">Calculations</th>
+    <th className="text-left p-3 font-semibold text-[#02090d] dark:text-white w-1/4">Output</th>
+  </tr>
+</thead>
+           <tbody className="divide-y divide-[#e5e7eb] dark:divide-[#374151]">
+  {calculationSteps.map((step, idx) => (
+    <tr key={idx} className="hover:bg-[#f9fafb] dark:hover:bg-[#374151] transition-colors">
+      <td className="p-3 align-top border-r border-[#e5e7eb] dark:border-[#374151]">
+        <span className="text-xs font-mono text-[#6b7280] dark:text-[#9ca3af] bg-[#f3f4f6] dark:bg-[#1f2937] px-2 py-1 rounded">
+          {step.reference}
+        </span>
+      </td>
+      <td className="p-3 align-top border-r border-[#e5e7eb] dark:border-[#374151]">
+        <div className="text-sm text-[#4b5563] dark:text-[#9ca3af] font-mono whitespace-pre-wrap">
+          {step.calculation}
+        </div>
+      </td>
+      <td className="p-3 align-top">
+        <code className="text-sm font-mono text-[#02090d] dark:text-white whitespace-pre-wrap">
+          {step.output}
+        </code>
+      </td>
+    </tr>
+  ))}
+</tbody>
           </table>
         </div>
       </div>

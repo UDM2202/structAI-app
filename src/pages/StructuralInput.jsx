@@ -5,7 +5,7 @@ import {
   FiColumns, FiLayers, FiTriangle, FiSquare, FiCircle,
   FiDroplet, FiWind, FiPercent, FiClock, FiInfo, FiAlertTriangle,
   FiChevronDown, FiSearch, FiCheck, FiHome, FiBriefcase, FiUsers,
-  FiDownload, FiPrinter, FiEye
+  FiDownload, FiPrinter, FiEye, FiPlus, FiX 
 } from 'react-icons/fi';
 import { useTheme } from '../contexts/ThemeContext';
 import SlabResultsComparison from '../components/SlabResultsComparison';
@@ -31,6 +31,8 @@ const StructuralInput = () => {
   const [generatedOptions, setGeneratedOptions] = useState([]);
   const [slabArea, setSlabArea] = useState(100);
   const [showSpanWarning, setShowSpanWarning] = useState(false);
+  const [isValidated, setIsValidated] = useState(false);
+  const isNewDesignMode = location.pathname.includes('/new-design');
   
   // Store results per component
   const [storedResults, setStoredResults] = useState({
@@ -61,8 +63,8 @@ const StructuralInput = () => {
     thickness: '200',
     cover: '25',
     continuousSpans: ['5.0', '5.0', '4.0'],
-    spanCount: '3', // Added for "others" option
-    customSpanCount: '', // For custom number of spans
+    spanCount: '3', 
+    customSpanCount: '', 
     endFixityLeft: 'pinned',
     endFixityRight: 'pinned',
     buildingUse: 'office',
@@ -91,6 +93,7 @@ const StructuralInput = () => {
     concreteRate: '170',
     steelRate: '1300',
     formworkRate: '50',
+    otherCosts: [],
     useAIRecommendation: 'y',
     // New cost options
     costSource: 'database', // 'database', 'company', 'realtime'
@@ -376,7 +379,23 @@ const StructuralInput = () => {
           const steelWeight = asProv * 1e-6 * 7850;
           const steelCost = steelWeight * steelRate / 1000;
           const formworkCost = formworkRate;
-          const totalCost = concreteCost + steelCost + formworkCost;
+            let otherCostsTotal = 0;
+        if (formData.otherCosts && formData.otherCosts.length > 0) {
+          formData.otherCosts.forEach(cost => {
+            let costValue = parseFloat(cost.rate) || 0;
+            if (cost.unit === 'm²') {
+              otherCostsTotal += costValue;
+            } else if (cost.unit === 'm³') {
+              otherCostsTotal += costValue * (thickness / 1000);
+            } else if (cost.unit === 'tonne') {
+              otherCostsTotal += costValue * steelWeight;
+            } else {
+              otherCostsTotal += costValue / slabArea;
+            }
+          });
+        }
+        
+        const totalCost = concreteCost + steelCost + formworkCost + otherCostsTotal;
           
           const concreteCarbon = concreteVol * 240 * slabArea;
           const steelCarbon = steelWeight * 1.5 * slabArea;
@@ -623,7 +642,7 @@ const StructuralInput = () => {
 
   const getUserInitials = () => 'JE';
 
-  const handleBack = () => {
+ const handleBack = () => {
     if (isNewDesignMode) {
       navigate('/new-design');
     } else {
@@ -632,26 +651,34 @@ const StructuralInput = () => {
   };
 
  
-
 const handleOptimise = () => {
-  const isValid = handleValidate();
-  if (!isValid) return;
-  
   setIsOptimising(true);
+  
   setTimeout(() => {
     const options = generateOptions();
-    setGeneratedOptions(options);
-    setStoredResults(prev => ({
-      ...prev,
-      [activeComponent]: options
-    }));
-    setIsOptimising(false);
-    setShowResults(true);
-    setShowReport(false);
-    setShowAIRecommendation(false);
-    setShowTradeoff(false);
+    
+    if (options.length > 0) {
+      setGeneratedOptions(options);
+      setStoredResults(prev => ({
+        ...prev,
+        [activeComponent]: options
+      }));
+      setIsOptimising(false);
+      setShowResults(true);
+      setShowReport(false);
+      setShowAIRecommendation(false);
+      setShowTradeoff(false);
+    } else {
+      setIsOptimising(false);
+      alert("No valid design options found. Please adjust your inputs.");
+    }
   }, 2000);
 };
+
+// Reset validation when inputs change
+useEffect(() => {
+  setIsValidated(false);
+}, [formData]);
 
   const handleViewReport = (optionId) => {
     setSelectedOptionId(optionId);
@@ -872,25 +899,28 @@ const handleValidate = () => {
   }
 
   // Show results
-  setIsValidating(false);
+ setIsValidating(false);
   
   if (errors.length > 0) {
-    // Show errors in a modal
     alert(`❌ Validation Failed:\n\n${errors.join('\n')}\n\nPlease fix these issues before running optimisation.`);
+    setIsValidated(false);
     return false;
   } else if (warnings.length > 0) {
-    // Show warnings and ask if user wants to continue
     const confirmed = window.confirm(
       `⚠️ Validation Warnings:\n\n${warnings.join('\n')}\n\nDo you want to continue with optimisation?`
     );
-    if (!confirmed) {
+    if (confirmed) {
+      setIsValidated(true);
+      return true;
+    } else {
+      setIsValidated(false);
       return false;
     }
   } else {
     alert(`✅ Validation Passed!\n\nAll inputs are valid. You can now run optimisation.`);
+    setIsValidated(true);
+    return true;
   }
-  
-  return true;
 };
 
   return (
@@ -1236,7 +1266,7 @@ const handleValidate = () => {
                                 onChange={handleChange}
                                 className="w-4 h-4 text-[#0A2F44] focus:ring-[#0A2F44]"
                               />
-                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Fixed</span>
+                              <span className="ml-3 text-sm font-medium text-[#02090d] dark:text-white">Continous</span>
                             </div>
                             <FiInfo className="text-[#9ca3af] text-sm" title="Moment continuity over supports" />
                           </label>
@@ -1307,7 +1337,7 @@ const handleValidate = () => {
                                 name="endFixityLeft"
                                 value={formData.endFixityLeft}
                                 options={[
-                                  { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
+                                  { value: 'pinned', label: 'Simply Supported', description: 'Simple support - no moment transfer' },
                                   { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
                                 ]}
                                 onChange={handleChange}
@@ -1322,7 +1352,7 @@ const handleValidate = () => {
                                 name="endFixityRight"
                                 value={formData.endFixityRight}
                                 options={[
-                                  { value: 'pinned', label: 'Pinned', description: 'Simple support - no moment transfer' },
+                                  { value: 'pinned', label: 'Simply Supported', description: 'Simple support - no moment transfer' },
                                   { value: 'fixed', label: 'Fixed', description: 'Fully restrained - moment transferred' },
                                 ]}
                                 onChange={handleChange}
@@ -1364,128 +1394,6 @@ const handleValidate = () => {
                     </div>
                   </div>
 
-                  {/* Loads Card */}
-                  <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                      <FiWind className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Loads (kN/m²)
-                    </h2>
-                    
-                    <div className="mb-6">
-                      <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Permanent Actions</h3>
-                      <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Finishes</label><input type="number" name="finishes" value={formData.finishes} onChange={handleChange} step="0.1" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Service allowance</label><input type="number" name="serviceAllowance" value={formData.serviceAllowance} onChange={handleChange} step="0.1" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Partition load</label><input type="number" name="partition" value={formData.partition} onChange={handleChange} step="0.1" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Partition mode</label>
-                          <div className="flex space-x-4 mt-1">
-                            <label className="flex items-center"><input type="radio" name="partitionMode" value="permanent" checked={formData.partitionMode === 'permanent'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44]" /><span className="ml-1 text-sm text-[#02090d] dark:text-white">Permanent (Gk)</span></label>
-                            <label className="flex items-center"><input type="radio" name="partitionMode" value="variable" checked={formData.partitionMode === 'variable'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44]" /><span className="ml-1 text-sm text-[#02090d] dark:text-white">Variable (Qk)</span></label>
-                          </div>
-                        </div>
-                      </div>
-                      {formData.permanentLoads.map((load, index) => (
-                        <div key={index} className="grid grid-cols-5 gap-2 mb-2">
-                          <div className="col-span-2"><input type="text" placeholder="Load name" value={load.name} onChange={(e) => handlePermanentLoadChange(index, 'name', e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white placeholder:text-[#9ca3af] dark:placeholder:text-[#6b7280]" /></div>
-                          <div className="col-span-2"><input type="number" placeholder="Value (kN/m²)" value={load.value} onChange={(e) => handlePermanentLoadChange(index, 'value', e.target.value)} step="0.1" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          <div><button onClick={() => removePermanentLoad(index)} className="w-full h-full flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-lg cursor-pointer">×</button></div>
-                        </div>
-                      ))}
-                      <button onClick={addPermanentLoad} className="mt-2 text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"><span className="text-lg mr-1">+</span> Add other permanent load</button>
-                    </div>
-
-        {/* Variable Actions */}
-<div>
-  <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-3">Variable Actions</h3>
-  
-  {/* Leading Load - With dropdown selection */}
-  <div className="mb-4 p-4 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-lg border-l-4 border-[#0A2F44]">
-    <div className="flex items-center mb-3">
-      <div className="w-6 h-6 rounded-full bg-[#0A2F44] text-white flex items-center justify-center text-xs font-bold mr-2">L</div>
-      <p className="text-xs font-medium text-[#0A2F44] dark:text-[#cce1eb]">Leading Variable Load</p>
-    </div>
-    <div className="grid grid-cols-2 gap-3">
-      {/* Leading Load Dropdown */}
-      <CustomDropdown 
-        name="leadingLoadKey" 
-        value={formData.leadingLoad.key} 
-        options={allVariableActionKeys}
-        onChange={(e) => {
-          const newKey = e.target.value;
-          setFormData(prev => ({ 
-            ...prev, 
-            leadingLoad: { ...prev.leadingLoad, key: newKey }
-          }));
-        }} 
-      />
-      <input 
-        type="number" 
-        placeholder="Value (kN/m²)" 
-        value={formData.leadingLoad.value} 
-        onChange={(e) => setFormData(prev => ({ 
-          ...prev, 
-          leadingLoad: { ...prev.leadingLoad, value: e.target.value }
-        }))} 
-        step="0.1" 
-        className="w-full px-4 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" 
-      />
-    </div>
-  </div>
-  
-  {/* Accompanying Loads - Excluding selected leading load */}
-  <div className="mb-2">
-    <div className="flex items-center mb-3">
-      <div className="w-6 h-6 rounded-full bg-[#9ca3af] text-white flex items-center justify-center text-xs font-bold mr-2">A</div>
-      <p className="text-xs font-medium text-[#6b7280]">Accompanying Variable Loads</p>
-    </div>
-    
-    {/* Filter options - exclude the selected leading load */}
-    {(() => {
-      const filteredOptions = allVariableActionKeys.filter(
-        key => key.value !== formData.leadingLoad.key
-      );
-      return formData.accompanyingLoads.map((load, index) => (
-        <div key={index} className="grid grid-cols-5 gap-2 mb-2">
-          <div className="col-span-2">
-            <CustomDropdown 
-              name={`accKey-${index}`} 
-              value={load.key} 
-              options={filteredOptions}
-              onChange={(e) => handleAccompanyingLoadChange(index, 'key', e.target.value)} 
-            />
-          </div>
-          <div className="col-span-2">
-            <input 
-              type="number" 
-              placeholder="Value (kN/m²)" 
-              value={load.value} 
-              onChange={(e) => handleAccompanyingLoadChange(index, 'value', e.target.value)} 
-              step="0.1" 
-              className="w-full px-3 py-3 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" 
-            />
-          </div>
-          <div>
-            <button 
-              onClick={() => removeAccompanyingLoad(index)} 
-              className="w-full h-full flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-lg cursor-pointer"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      ));
-    })()}
-    <button 
-      onClick={addAccompanyingLoad} 
-      className="mt-2 text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"
-    >
-      <span className="text-lg mr-1">+</span> Add accompanying variable load
-    </button>
-  </div>
-</div>
-                  </div>
                 </div>
 
                 {/* Right Column */}
@@ -1503,135 +1411,135 @@ const handleValidate = () => {
                     </div>
                   </div>
 
-                  {/* Optimisation Settings Card - Moved to backend engine (now just displays weights) */}
-                  <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                      <FiPercent className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Optimisation Weights
-                    </h2>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm text-[#374151] dark:text-[#d1d5db] mb-2">Thickness Options</label>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-xs text-[#6b7280] mb-1">Thickness 1 (mm)</label><input type="number" name="thickness1" value={formData.thickness1} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          <div><label className="block text-xs text-[#6b7280] mb-1">Bar dia 1 (mm)</label><input type="number" name="barDiameter1" value={formData.barDiameter1} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 mt-2">
-                          <div><label className="block text-xs text-[#6b7280] mb-1">Thickness 2 (mm)</label><input type="number" name="thickness2" value={formData.thickness2} onChange={handleChange} step="5" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          <div><label className="block text-xs text-[#6b7280] mb-1">Bar dia 2 (mm)</label><input type="number" name="barDiameter2" value={formData.barDiameter2} onChange={handleChange} step="2" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        </div>
-                      </div>
-                      <div className="pt-4 border-t border-[#e5e7eb] dark:border-[#374151]">
-                        <h3 className="text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Optimisation Weights</h3>
-                        <div className="space-y-3">
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Cost Weight (%)</label><input type="range" name="costWeight" value={formData.costWeight} onChange={handleChange} min="0" max="100" className="w-full accent-[#0A2F44]" /><div className="text-xs text-right text-[#6b7280] dark:text-[#9ca3af]">{formData.costWeight}%</div></div>
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Carbon Weight (%)</label><input type="range" name="carbonWeight" value={formData.carbonWeight} onChange={handleChange} min="0" max="100" className="w-full accent-[#0A2F44]" /><div className="text-xs text-right text-[#6b7280] dark:text-[#9ca3af]">{formData.carbonWeight}%</div></div>
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Material Weight (%)</label><input type="range" name="materialWeight" value={formData.materialWeight} onChange={handleChange} min="0" max="100" className="w-full accent-[#0A2F44]" /><div className="text-xs text-right text-[#6b7280] dark:text-[#9ca3af]">{formData.materialWeight}%</div></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  {/* Cost Details Card */}
+<div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
+  <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
+    <FiCircle className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
+    Cost Details
+  </h2>
+  
+  <div className="space-y-4">
+    {/* Cost Source - Keep existing */}
+    <div>
+      <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Cost Source</label>
+      <div className="grid grid-cols-3 gap-2">
+        <button type="button" onClick={() => setFormData(prev => ({ ...prev, costSource: 'database' }))} className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${formData.costSource === 'database' ? 'bg-[#0A2F44] text-white' : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'}`}>StructAI DB</button>
+        <button type="button" onClick={() => setFormData(prev => ({ ...prev, costSource: 'company' }))} className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${formData.costSource === 'company' ? 'bg-[#0A2F44] text-white' : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'}`}>Company Rates</button>
+        <button type="button" onClick={() => setFormData(prev => ({ ...prev, costSource: 'realtime' }))} className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${formData.costSource === 'realtime' ? 'bg-[#0A2F44] text-white' : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'}`}>Real-time</button>
+      </div>
+    </div>
 
-                  {/* Design Constraints Card */}
-                  <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                      <FiClock className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Design Constraints
-                    </h2>
-                    <div className="space-y-4">
-                      <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Crack Width (mm)</label><input type="number" name="crackWidthLimit" value={formData.crackWidthLimit} onChange={handleChange} step="0.1" className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                      <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Fire Rating (min)</label><CustomDropdown name="fireRating" value={formData.fireRating} options={[{ value: '60', label: '60 min' }, { value: '90', label: '90 min' }, { value: '120', label: '120 min' }]} onChange={handleChange} /></div>
-                    </div>
-                  </div>
+    {/* Region field - Keep existing */}
+    {formData.costSource === 'database' && (
+      <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-1">Region (e.g. UK)</label><input type="text" name="region" value={formData.region} onChange={handleChange} className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+    )}
 
-                  {/* Cost Details Card - Updated with Company and Real-time rates */}
-                  <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] p-6">
-                    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4 flex items-center">
-                      <FiCircle className="mr-2 text-[#0A2F44] dark:text-[#66a4c2]" />
-                      Cost Details
-                    </h2>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Cost Source</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'database' }))}
-                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
-                              formData.costSource === 'database'
-                                ? 'bg-[#0A2F44] text-white'
-                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
-                            }`}
-                          >
-                            StructAI DB
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'company' }))}
-                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
-                              formData.costSource === 'company'
-                                ? 'bg-[#0A2F44] text-white'
-                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
-                            }`}
-                          >
-                            Company Rates
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFormData(prev => ({ ...prev, costSource: 'realtime' }))}
-                            className={`px-3 py-2 rounded-lg text-sm transition-all cursor-pointer ${
-                              formData.costSource === 'realtime'
-                                ? 'bg-[#0A2F44] text-white'
-                                : 'bg-[#f3f4f6] dark:bg-[#374151] text-[#6b7280] hover:bg-[#e5e7eb]'
-                            }`}
-                          >
-                            Real-time
-                          </button>
-                        </div>
-                      </div>
+    {/* Standard Rates - Keep existing */}
+    {(formData.costSource === 'database' || formData.costSource === 'company' || formData.costSource === 'realtime') && (
+      <>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP)</label><input type="number" name="concreteRate" value={formData.concreteRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP)</label><input type="number" name="steelRate" value={formData.steelRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+        </div>
+        <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP)</label><input type="number" name="formworkRate" value={formData.formworkRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
+      </>
+    )}
 
-                      {/* StructAI Database Rates (default) */}
-                      {formData.costSource === 'database' && (
-                        <>
-                          <div><label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-1">Region (e.g. UK)</label><input type="text" name="region" value={formData.region} onChange={handleChange} className="w-full px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP) [170]</label><input type="number" name="concreteRate" value={formData.concreteRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP) [1300]</label><input type="number" name="steelRate" value={formData.steelRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          </div>
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP) [50]</label><input type="number" name="formworkRate" value={formData.formworkRate} onChange={handleChange} className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        </>
-                      )}
+    {/* NEW: Other Cost Elements Section */}
+    <div className="border-t border-[#e5e7eb] dark:border-[#374151] pt-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db]">Other Cost Elements</label>
+        <button
+          type="button"
+          onClick={() => {
+            setFormData(prev => ({
+              ...prev,
+              otherCosts: [...(prev.otherCosts || []), { name: '', rate: '', unit: 'm²' }]
+            }));
+          }}
+          className="text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center cursor-pointer"
+        >
+          <FiPlus className="mr-1" /> Add Cost
+        </button>
+      </div>
 
-                      {/* Company Rates */}
-                      {formData.costSource === 'company' && (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP)</label><input type="number" name="companyConcreteRate" value={formData.companyConcreteRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP)</label><input type="number" name="companySteelRate" value={formData.companySteelRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          </div>
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP)</label><input type="number" name="companyFormworkRate" value={formData.companyFormworkRate} onChange={handleChange} placeholder="Enter rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                        </div>
-                      )}
+      {/* List of other costs */}
+      {(formData.otherCosts || []).map((cost, index) => (
+        <div key={index} className="grid grid-cols-12 gap-2 mb-3 items-center">
+          <div className="col-span-5">
+            <input
+              type="text"
+              placeholder="Cost name (e.g., Insulation)"
+              value={cost.name}
+              onChange={(e) => {
+                const updated = [...(formData.otherCosts || [])];
+                updated[index].name = e.target.value;
+                setFormData(prev => ({ ...prev, otherCosts: updated }));
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white text-sm"
+            />
+          </div>
+          <div className="col-span-4">
+            <input
+              type="number"
+              placeholder="Rate (GBP)"
+              value={cost.rate}
+              onChange={(e) => {
+                const updated = [...(formData.otherCosts || [])];
+                updated[index].rate = e.target.value;
+                setFormData(prev => ({ ...prev, otherCosts: updated }));
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <select
+              value={cost.unit}
+              onChange={(e) => {
+                const updated = [...(formData.otherCosts || [])];
+                updated[index].unit = e.target.value;
+                setFormData(prev => ({ ...prev, otherCosts: updated }));
+              }}
+              className="w-full px-2 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white text-sm"
+            >
+              <option value="m²">per m²</option>
+              <option value="m³">per m³</option>
+              <option value="item">per item</option>
+              <option value="tonne">per tonne</option>
+            </select>
+          </div>
+          <div className="col-span-1">
+            <button
+              type="button"
+              onClick={() => {
+                const updated = [...(formData.otherCosts || [])];
+                updated.splice(index, 1);
+                setFormData(prev => ({ ...prev, otherCosts: updated }));
+              }}
+              className="w-full h-full flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-lg py-2 cursor-pointer"
+            >
+              <FiX />
+            </button>
+          </div>
+        </div>
+      ))}
 
-                      {/* Real-time Rates */}
-                      {formData.costSource === 'realtime' && (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Concrete rate (GBP) - Real-time</label><input type="number" name="realtimeConcreteRate" value={formData.realtimeConcreteRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                            <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Steel rate (GBP) - Real-time</label><input type="number" name="realtimeSteelRate" value={formData.realtimeSteelRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          </div>
-                          <div><label className="block text-xs text-[#6b7280] dark:text-[#9ca3af] mb-1">Formwork rate (GBP) - Real-time</label><input type="number" name="realtimeFormworkRate" value={formData.realtimeFormworkRate} onChange={handleChange} placeholder="Live rate" className="w-full px-3 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white" /></div>
-                          <p className="text-xs text-[#0A2F44] dark:text-[#66a4c2]">Real-time rates are fetched from market data</p>
-                        </div>
-                      )}
+      {/* Example hint */}
+      {(!formData.otherCosts || formData.otherCosts.length === 0) && (
+        <p className="text-xs text-[#9ca3af] dark:text-[#6b7280] mt-2">
+          Example: Insulation, waterproofing, finishes, etc.
+        </p>
+      )}
+    </div>
 
-                      <div className="flex items-center space-x-2 mt-2">
-                        <span className="text-sm text-[#374151] dark:text-[#d1d5db]">Use AI recommendation?</span>
-                        <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="y" checked={formData.useAIRecommendation === 'y'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Yes</span></label>
-                        <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="n" checked={formData.useAIRecommendation === 'n'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">No</span></label>
-                      </div>
-                    </div>
-                  </div>
+    {/* AI Recommendation - Keep existing */}
+    <div className="flex items-center space-x-2 mt-2">
+      <span className="text-sm text-[#374151] dark:text-[#d1d5db]">Use AI recommendation?</span>
+      <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="y" checked={formData.useAIRecommendation === 'y'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">Yes</span></label>
+      <label className="flex items-center"><input type="radio" name="useAIRecommendation" value="n" checked={formData.useAIRecommendation === 'n'} onChange={handleChange} className="w-4 h-4 text-[#0A2F44] mr-1" /><span className="text-sm text-[#374151] dark:text-[#d1d5db]">No</span></label>
+    </div>
+  </div>
+</div>
                 </div>
               </div>
 
@@ -1646,8 +1554,12 @@ const handleValidate = () => {
   </button>
   <button 
     onClick={handleOptimise} 
-    disabled={isOptimising} 
-    className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer"
+    disabled={isOptimising || !isValidated} 
+    className={`px-6 py-3 rounded-lg transition-colors cursor-pointer ${
+      isOptimising || !isValidated
+        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+        : 'bg-[#0A2F44] text-white hover:bg-[#082636]'
+    }`}
   >
     {isOptimising ? 'Optimising...' : 'Run Optimisation'}
   </button>
