@@ -1,47 +1,165 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
-import { FiArrowLeft, FiUser, FiMail, FiLock, FiBriefcase, FiSun, FiMoon, FiEye, FiEyeOff } from 'react-icons/fi';
+import { 
+  FiArrowLeft, FiUser, FiMail, FiLock, FiBriefcase, FiSun, FiMoon, 
+  FiEye, FiEyeOff, FiCheckCircle, FiAlertCircle, FiChevronDown, FiCheck 
+} from 'react-icons/fi';
 import { FcGoogle } from 'react-icons/fc';
 import { FaLinkedin } from 'react-icons/fa';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { registerSchema } from '../utils/validation';
 
+// Profession options
+const professionOptions = [
+  { value: 'structural_engineer', label: 'Structural Engineer', icon: FiBriefcase },
+  { value: 'civil_engineer', label: 'Civil Engineer', icon: FiBriefcase },
+  { value: 'architect', label: 'Architect', icon: FiBriefcase },
+  { value: 'project_manager', label: 'Project Manager', icon: FiBriefcase },
+  { value: 'quantity_surveyor', label: 'Quantity Surveyor', icon: FiBriefcase },
+  { value: 'analyst', label: 'Analyst', icon: FiBriefcase },
+  { value: 'contractor', label: 'Contractor', icon: FiBriefcase },
+  { value: 'student', label: 'Student', icon: FiBriefcase },
+  { value: 'other', label: 'Other', icon: FiBriefcase },
+];
+
+// Custom Dropdown Component
+const CustomDropdown = ({ value, onChange, options, placeholder, error }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  const selectedOption = options.find(opt => opt.value === value);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full pl-10 pr-4 py-3 rounded-lg border transition-all duration-200 flex items-center justify-between ${
+          error 
+            ? 'border-red-500' 
+            : 'border-[#e5e7eb] dark:border-[#374151] hover:border-[#0A2F44] dark:hover:border-[#66a4c2]'
+        } focus:outline-none focus:ring-2 focus:ring-[#0A2F44]`}
+        style={{ 
+          backgroundColor: 'var(--bg-primary)',
+          color: 'var(--text-primary)'
+        }}
+      >
+        <div className="flex items-center space-x-2">
+          <FiBriefcase style={{ color: 'var(--text-muted)' }} />
+          <span>
+            {selectedOption ? selectedOption.label : placeholder || 'Select your profession'}
+          </span>
+        </div>
+        <FiChevronDown className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} style={{ color: 'var(--text-muted)' }} />
+      </button>
+
+      {isOpen && (
+        <div 
+          className="absolute z-20 w-full mt-1 rounded-lg shadow-xl overflow-hidden animate-fade-in"
+          style={{ 
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-color)'
+          }}
+        >
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value);
+                setIsOpen(false);
+              }}
+              className="w-full px-4 py-3 text-left flex items-center justify-between transition-colors"
+              style={{ 
+                backgroundColor: value === option.value ? 'var(--info-bg)' : 'transparent',
+                color: 'var(--text-primary)'
+              }}
+              onMouseEnter={(e) => {
+                if (value !== option.value) {
+                  e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (value !== option.value) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }
+              }}
+            >
+              <div className="flex items-center space-x-3">
+                <option.icon style={{ color: 'var(--accent)' }} />
+                <div className="text-sm font-medium">{option.label}</div>
+              </div>
+              {value === option.value && <FiCheck style={{ color: 'var(--accent)' }} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SignUp = () => {
   const { isDarkMode, toggleDarkMode } = useTheme();
-  const { register: registerUser } = useAuth();
+  const { register: registerUser, createPersonalOrganization } = useAuth();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverError, setServerError] = useState('');
+  const [profession, setProfession] = useState('');
 
   const {
     register,
     handleSubmit,
     formState: { errors },
+    setValue,
+    trigger,
   } = useForm({
     resolver: yupResolver(registerSchema),
     defaultValues: {
       termsAccepted: false,
+      profession: '',
     },
   });
+
+  const handleProfessionChange = (value) => {
+    setProfession(value);
+    setValue('profession', value);
+    trigger('profession');
+  };
 
   const onSubmit = async (data) => {
     setIsSubmitting(true);
     setServerError('');
     
-    // Remove confirmPassword and termsAccepted before sending
     const { confirmPassword, termsAccepted, ...userData } = data;
     
     const result = await registerUser(userData);
     
     if (result.success) {
-      navigate('/dashboard');
+      const personalOrgResult = await createPersonalOrganization(result.user.id, result.user.name);
+      
+      if (personalOrgResult.success) {
+        navigate('/dashboard');
+      } else {
+        setServerError('Account created but personal workspace setup failed. Please contact support.');
+        setIsSubmitting(false);
+      }
     } else {
-      setServerError(result.error);
+      setServerError(result.error || 'Registration failed. Please try again.');
       setIsSubmitting(false);
     }
   };
@@ -73,7 +191,7 @@ const SignUp = () => {
         {isDarkMode ? (
           <FiSun className="text-2xl" style={{ color: 'var(--text-primary)' }} />
         ) : (
-          <FiMoon className="text-2xl" style={{ color: 'var(--primary)' }} />
+          <FiMoon className="text-2xl" style={{ color: '#0A2F44' }} />
         )}
       </button>
 
@@ -110,10 +228,29 @@ const SignUp = () => {
           </p>
         </div>
 
+        {/* Personal Organization Info Banner - FIXED: Only text color changed */}
+        <div 
+          className="mb-6 rounded-lg p-3 flex items-start space-x-2"
+          style={{ 
+            backgroundColor: 'var(--info-bg)',
+            border: '1px solid var(--info-border)'
+          }}
+        >
+          <FiCheckCircle className="mt-0.5 flex-shrink-0" style={{ color: 'var(--accent)' }} />
+          <p className="text-xs dark:text-[#cce1eb]">
+            A personal organization will be created automatically for you. You can create or join other organizations later.
+          </p>
+        </div>
+
         {/* Server error message */}
         {serverError && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
-            {serverError}
+          <div className="mb-4 p-3 rounded-lg flex items-start space-x-2" style={{ 
+            backgroundColor: 'var(--error-bg)', 
+            border: '1px solid var(--error-border)',
+            color: 'var(--error-text)'
+          }}>
+            <FiAlertCircle className="mt-0.5 flex-shrink-0" />
+            <span className="text-sm">{serverError}</span>
           </div>
         )}
         
@@ -159,27 +296,16 @@ const SignUp = () => {
             <p className="text-sm text-red-500 mt-1">{errors.email.message}</p>
           )}
           
-          {/* Profession Field */}
+          {/* Profession Field - Aesthetic Custom Dropdown */}
           <div className="relative">
-            <FiBriefcase className="absolute left-3 top-1/2 transform -translate-y-1/2" 
-                    style={{ color: 'var(--text-muted)' }} />
-            <select
-              {...register('profession')}
-              className="w-full pl-10 pr-4 py-3 rounded-lg transition-colors duration-300 appearance-none"
-              style={{ 
-                backgroundColor: 'var(--bg-primary)',
-                border: `1px solid ${errors.profession ? '#ef4444' : 'var(--border-color)'}`,
-                color: 'var(--text-primary)'
-              }}
-            >
-              <option value="">Select your profession</option>
-              <option value="structural_engineer">Structural Engineer</option>
-              <option value="civil_engineer">Civil Engineer</option>
-              <option value="architect">Architect</option>
-              <option value="contractor">Contractor</option>
-              <option value="student">Student</option>
-              <option value="other">Other</option>
-            </select>
+            <CustomDropdown
+              value={profession}
+              onChange={handleProfessionChange}
+              options={professionOptions}
+              placeholder="Select your profession"
+              error={errors.profession}
+            />
+            <input type="hidden" {...register('profession')} value={profession} />
           </div>
           {errors.profession && (
             <p className="text-sm text-red-500 mt-1">{errors.profession.message}</p>

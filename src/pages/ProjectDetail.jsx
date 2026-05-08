@@ -3,21 +3,29 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { 
   FiArrowLeft, FiEdit2, FiTrash2, FiCopy, FiArchive, 
   FiDownload, FiShare2, FiSettings, FiFileText,
-  FiBarChart2, FiUsers, FiClock
+  FiBarChart2, FiUsers, FiClock, FiSave, FiAlertCircle
 } from 'react-icons/fi';
 import { useWorkspace } from '../contexts/WorkspaceContext';
-import { useAuth } from '../contexts/AuthContext'; // ADD THIS
+import { useAuth } from '../contexts/AuthContext';
 import ChatRoom from '../components/chat/ChatRoom';
 import { ChatProvider } from '../contexts/ChatContext';
 
 const ProjectDetail = () => {
   const { workspaceId, projectId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth(); // ADD THIS - get current user
-  const { projects, loading, loadProjects } = useWorkspace();
+  const { user } = useAuth();
+  const { projects, loading, loadProjects, updateProject, deleteProject } = useWorkspace();
   const [project, setProject] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    project_type: '',
+    design_standard: '',
+    location: ''
+  });
 
   useEffect(() => {
     loadProjects(workspaceId);
@@ -28,9 +36,44 @@ const ProjectDetail = () => {
       const found = projects.find(p => p.id === projectId);
       if (found) {
         setProject(found);
+        setFormData({
+          name: found.name || '',
+          description: found.description || '',
+          project_type: found.project_type || 'commercial',
+          design_standard: found.design_standard || 'Eurocode',
+          location: found.location || ''
+        });
       }
     }
   }, [projects, projectId]);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSaving(true);
+    const result = await updateProject(projectId, formData);
+    if (result.success) {
+      // Update local project state
+      setProject(prev => ({ ...prev, ...formData, updated_at: new Date().toISOString() }));
+      alert('Project settings saved successfully!');
+    } else {
+      alert('Failed to save: ' + result.error);
+    }
+    setIsSaving(false);
+  };
+
+  const handleDelete = async () => {
+    const result = await deleteProject(projectId);
+    if (result.success) {
+      setShowDeleteModal(false);
+      navigate(`/workspace/${workspaceId}/projects`);
+    } else {
+      alert('Failed to delete project');
+    }
+  };
 
   if (loading || !project) {
     return (
@@ -45,18 +88,15 @@ const ProjectDetail = () => {
     );
   }
 
-  const handleDelete = () => {
-    // API call to delete project
-    setShowDeleteModal(false);
-    navigate(`/workspace/${workspaceId}/projects`);
-  };
-
   const tabs = [
     { id: 'overview', label: 'Overview', icon: FiFileText },
     { id: 'calculations', label: 'Calculations', icon: FiBarChart2 },
     { id: 'team', label: 'Team', icon: FiUsers },
     { id: 'settings', label: 'Settings', icon: FiSettings },
   ];
+
+  // Check if user is project owner
+  const isProjectOwner = project?.userRole === 'project_owner';
 
   return (
     <ChatProvider workspaceId={workspaceId} projectId={projectId} user={user}>
@@ -127,12 +167,14 @@ const ProjectDetail = () => {
                 <button className="p-2 hover:bg-[#f3f4f6] dark:hover:bg-[#374151] rounded-lg transition-colors">
                   <FiDownload className="text-[#6b7280]" />
                 </button>
-                <button
-                  onClick={() => setShowDeleteModal(true)}
-                  className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                >
-                  <FiTrash2 className="text-red-500" />
-                </button>
+                {isProjectOwner && (
+                  <button
+                    onClick={() => setShowDeleteModal(true)}
+                    className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                  >
+                    <FiTrash2 className="text-red-500" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -254,9 +296,115 @@ const ProjectDetail = () => {
           )}
 
           {activeTab === 'settings' && (
-            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg p-6 border border-[#e5e7eb] dark:border-[#374151]">
-              <h2 className="text-lg font-semibold text-[#02090d] dark:text-white mb-4">Project Settings</h2>
-              <p className="text-[#6b7280]">Project settings interface will be here</p>
+            <div className="bg-white dark:bg-[#1f2937] rounded-xl shadow-lg border border-[#e5e7eb] dark:border-[#374151] overflow-visible">
+              <div className="p-6 border-b border-[#e5e7eb] dark:border-[#374151]">
+                <h2 className="text-lg font-semibold text-[#02090d] dark:text-white">Project Settings</h2>
+                <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">Manage project configuration and preferences</p>
+              </div>
+              
+              <div className="p-6 space-y-6 overflow-visible">
+                {/* Project Name */}
+                <div>
+                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Project Name</label>
+                  <input 
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleInputChange}
+                    className="w-full max-w-md px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  />
+                </div>
+                
+                {/* Project Description */}
+                <div>
+                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Description</label>
+                  <textarea 
+                    name="description"
+                    rows="3"
+                    value={formData.description}
+                    onChange={handleInputChange}
+                    className="w-full max-w-2xl px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  />
+                </div>
+                
+                {/* Project Type */}
+                <div>
+                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Project Type</label>
+                  <select 
+                    name="project_type"
+                    value={formData.project_type}
+                    onChange={handleInputChange}
+                    className="px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  >
+                    <option value="residential">Residential</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="industrial">Industrial</option>
+                    <option value="infrastructure">Infrastructure</option>
+                  </select>
+                </div>
+                
+                {/* Design Standard */}
+                <div>
+                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Design Standard</label>
+                  <select 
+                    name="design_standard"
+                    value={formData.design_standard}
+                    onChange={handleInputChange}
+                    className="px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  >
+                    <option value="Eurocode">Eurocode</option>
+                    <option value="BS">British Standards</option>
+                    <option value="ACI">ACI</option>
+                  </select>
+                </div>
+                
+                {/* Location */}
+                <div>
+                  <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">Location</label>
+                  <input 
+                    type="text"
+                    name="location"
+                    value={formData.location}
+                    onChange={handleInputChange}
+                    placeholder="e.g., London, UK"
+                    className="w-full max-w-md px-4 py-2 rounded-lg border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+                  />
+                </div>
+                
+                {/* Save Button */}
+                <div className="pt-4">
+                  <button 
+                    onClick={handleSaveSettings}
+                    disabled={isSaving}
+                    className="flex items-center space-x-2 px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <FiSave />
+                    <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Danger Zone - Only Project Owner sees this */}
+              {isProjectOwner && (
+                <div className="p-6 border-t border-[#e5e7eb] dark:border-[#374151] bg-red-50 dark:bg-red-900/20">
+                  <div className="flex items-start space-x-4">
+                    <FiAlertCircle className="text-red-500 text-2xl flex-shrink-0" />
+                    <div>
+                      <h3 className="text-lg font-semibold text-red-700 dark:text-red-400">Danger Zone</h3>
+                      <p className="text-sm text-red-600 dark:text-red-300 mb-4">
+                        Once you delete this project, there is no going back. All data will be permanently removed.
+                      </p>
+                      <button 
+                        onClick={() => setShowDeleteModal(true)} 
+                        className="flex items-center space-x-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors cursor-pointer"
+                      >
+                        <FiTrash2 />
+                        <span>Delete Project</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -287,7 +435,7 @@ const ProjectDetail = () => {
           </div>
         )}
 
-        {/* Chat Room - Place it here, inside ChatProvider */}
+        {/* Chat Room */}
         <ChatRoom 
           workspaceId={workspaceId} 
           projectId={projectId}

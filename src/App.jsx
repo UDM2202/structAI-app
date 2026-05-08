@@ -18,7 +18,7 @@ import WorkspaceSettings from './pages/WorkspaceSettings';
 import StructuralInput from './pages/StructuralInput';
 import ProjectSetup from './pages/ProjectSetup';
 import NewDesign from './pages/NewDesign';
-
+import OrganisationTeam from './pages/OrganisationTeam';
 
 function App() {
   return (
@@ -80,6 +80,9 @@ function App() {
       </ProtectedRoute>
     } 
   />
+
+ 
+<Route path="/workspace/:workspaceId/team" element={<OrganisationTeam />} />
                   
                   <Route path="/workspace/:workspaceId/settings" element={
                     <ProtectedRoute>
