@@ -1,7 +1,7 @@
 // Add this to src/services/api.js (same file as slabAPI)
 // Sends nested request matching backend BeamDesignRequest.
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://structdh.onrender.com";
 
 export const beamAPI = {
   startDesign: async (formData) => {
