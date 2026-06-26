@@ -4,12 +4,14 @@ import {
   FiGrid, FiFolder, FiFileText, FiSettings, FiHelpCircle, 
   FiSun, FiMoon, FiUser, FiLogOut, FiMenu, FiChevronLeft, FiX,
   FiPlus, FiUsers, FiClock, FiEdit3, FiCalendar, FiActivity,
-  FiTrendingUp, FiCheckCircle, FiCircle
+  FiTrendingUp, FiCheckCircle, FiCircle, FiShield, FiSave, FiUpload
 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import { useTheme } from '../contexts/ThemeContext';
 import DesignStreak from '../components/ui/DesignStreak';
+import NotificationBell from '../components/notifications/NotificationBell';
+import { NotificationProvider } from '../contexts/NotificationContext';
 
 // Mock projects data (shared with Projects page)
 export const mockProjects = [
@@ -30,6 +32,7 @@ export const mockProjects = [
     name: 'Riverside Apartments',
     description: 'Residential complex with 120 units, underground parking, and communal gardens',
     project_type: 'residential',
+    
     location: 'Manchester, UK',
     design_standard: 'Eurocode',
     status: 'active',
@@ -139,12 +142,14 @@ const Dashboard = () => {
 
  const tabs = [
   { name: 'Dashboard', icon: FiGrid, path: '/dashboard', active: true },
-  { name: 'New Design', icon: FiEdit3, path: '/new-design', active: false },
+   { name: 'Organization', icon: FiShield, path: `/workspace/${getWorkspaceId()}`, active: false },
+  { name: 'New Design', icon: FiEdit3, path: '/quick-design', active: false },
   { name: 'New Project', icon: FiPlus, path: '/workspace/create', active: false },
   { name: 'Projects', icon: FiFolder, path: `/workspace/${getWorkspaceId()}/projects`, active: false },
   { name: 'Reports', icon: FiFileText, path: '/reports', active: false },
-  { name: 'Settings', icon: FiSettings, path: `/workspace/${getWorkspaceId()}/settings`, active: false },
+  { name: 'External Design', icon: FiUpload, path: '/external-design', active: false },
   { name: 'Help', icon: FiHelpCircle, path: '/help', active: false },
+  { name: 'Saved Designs', icon: FiSave, path: '/saved-designs', active: false },
 ];
 
   const getUserInitials = () => {
@@ -414,6 +419,7 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="flex items-center space-x-3">
+               <NotificationBell />
               <div className="hidden md:block">
                 <div className="w-10 h-10 bg-[#0A2F44] rounded-full flex items-center justify-center text-white font-medium shadow-md">
                   {getUserInitials()}

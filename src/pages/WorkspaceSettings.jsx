@@ -134,10 +134,18 @@ const WorkspaceSettings = () => {
   const { workspaceId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { currentWorkspace, updateWorkspace, deleteWorkspace, members, loadMembers, inviteMember, loading } = useWorkspace();
+  const { 
+    currentWorkspace, 
+    updateWorkspace, 
+    deleteOrganization,  // Changed from deleteWorkspace
+    members, 
+    loadMembers, 
+    inviteMember,
+    transferOwnership,
+    projects  // Add projects to check count
+  } = useWorkspace();
   const { isDarkMode, toggleDarkMode } = useTheme();
   
-  // Get current user's role in this workspace
   const userRole = currentWorkspace?.userRole;
   const isOwner = userRole === ROLES.ORG_OWNER;
   const isAdmin = userRole === ROLES.ORG_ADMIN;
@@ -146,14 +154,17 @@ const WorkspaceSettings = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [isInviting, setIsInviting] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [selectedNewOwner, setSelectedNewOwner] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isRoleFilterOpen, setIsRoleFilterOpen] = useState(false);
   
-  // Form state
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -166,7 +177,6 @@ const WorkspaceSettings = () => {
     defaultDesignStandard: 'Eurocode',
   });
 
-  // Project type options
   const projectTypeOptions = [
     { value: 'commercial', label: 'Commercial', description: 'Office buildings, retail spaces, shopping centres' },
     { value: 'residential', label: 'Residential', description: 'Houses, apartments, housing developments' },
@@ -174,7 +184,6 @@ const WorkspaceSettings = () => {
     { value: 'infrastructure', label: 'Infrastructure', description: 'Bridges, roads, public works' },
   ];
 
-  // Design standard options
   const designStandardOptions = [
     { value: 'Eurocode', label: 'Eurocode', description: 'European design standards' },
     { value: 'BS', label: 'British Standards', description: 'UK design standards' },
@@ -182,7 +191,6 @@ const WorkspaceSettings = () => {
     { value: 'AS', label: 'Australian Standards', description: 'Australian design standards' },
   ];
 
-  // Industry options
   const industryOptions = [
     { value: 'engineering', label: 'Engineering & Construction', description: 'Structural and civil engineering firms' },
     { value: 'architecture', label: 'Architecture & Design', description: 'Architectural and design practices' },
@@ -191,7 +199,6 @@ const WorkspaceSettings = () => {
     { value: 'other', label: 'Other', description: 'Other industries' },
   ];
 
-  // Role filter options for member list
   const roleFilterOptions = [
     { value: 'all', label: 'All Roles', description: 'Show all members' },
     { value: 'owner', label: 'Owner', description: 'Workspace owners' },
@@ -200,7 +207,6 @@ const WorkspaceSettings = () => {
     { value: 'viewer', label: 'Viewer', description: 'Read-only members' },
   ];
 
-  // Analytics data
   const analytics = {
     totalProjects: 24,
     activeMembers: members.filter(m => m.active).length || 8,
@@ -257,13 +263,45 @@ const WorkspaceSettings = () => {
     setIsSaving(false);
   };
 
-  const handleDelete = async () => {
-    await deleteWorkspace(workspaceId);
-    navigate('/dashboard');
+  const confirmDeleteOrganization = async () => {
+    if (projects.length > 0) {
+      alert(`Cannot delete workspace. Please delete or move ${projects.length} project(s) first.`);
+      return;
+    }
+    
+    setIsDeleting(true);
+    const result = await deleteOrganization(workspaceId);
+    setIsDeleting(false);
+    
+    if (result.success) {
+      setShowDeleteModal(false);
+      navigate('/dashboard');
+    } else {
+      alert(result.error || 'Failed to delete workspace');
+    }
   };
 
   const handleTransferOwnership = () => {
-    alert('Transfer ownership feature coming soon');
+    setSelectedNewOwner('');
+    setShowTransferModal(true);
+  };
+
+  const confirmTransferOwnership = async () => {
+    if (!selectedNewOwner) {
+      alert('Please select a member to transfer ownership to');
+      return;
+    }
+    
+    setIsTransferring(true);
+    const result = await transferOwnership(workspaceId, selectedNewOwner);
+    
+    if (result.success) {
+      setShowTransferModal(false);
+      window.location.reload();
+    } else {
+      alert(result.error || 'Failed to transfer ownership');
+    }
+    setIsTransferring(false);
   };
 
   const handleInvite = async () => {
@@ -356,14 +394,9 @@ const WorkspaceSettings = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* ============================================================ */}
-        {/* ROLE-BASED ACTION BUTTONS - ADDED HERE */}
-        {/* ============================================================ */}
         <div className="mb-6 p-4 bg-[#e6f0f5] dark:bg-[#1e3a4a] rounded-2xl border border-[#cce1eb] dark:border-[#2a5a6a]">
           <h3 className="font-semibold mb-3 text-[#02090d] dark:text-white">Workspace Actions</h3>
           <div className="flex flex-wrap gap-3">
-            {/* Only Owner sees these */}
             {isOwner && (
               <>
                 <button
@@ -381,7 +414,6 @@ const WorkspaceSettings = () => {
               </>
             )}
             
-            {/* Owner and Admin see Invite button */}
             {(isOwner || isAdmin) && (
               <button
                 onClick={() => setShowInviteModal(true)}
@@ -391,7 +423,6 @@ const WorkspaceSettings = () => {
               </button>
             )}
             
-            {/* Everyone except Owner sees Leave button */}
             {!isOwner && (
               <button
                 onClick={() => alert('Leave workspace feature coming soon')}
@@ -480,28 +511,28 @@ const WorkspaceSettings = () => {
             </div>
 
             {/* Project Defaults Card */}
-<div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl border border-[#e5e7eb] dark:border-[#374151] overflow-visible">
-  <div className="p-6 border-b border-[#e5e7eb] dark:border-[#374151]">
-    <h2 className="text-lg font-semibold text-[#02090d] dark:text-white">Project Defaults</h2>
-    <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">Default settings for new projects</p>
-  </div>
-  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-visible">
-    <CustomDropdown
-      label="Default Project Type"
-      name="defaultProjectType"
-      value={formData.defaultProjectType}
-      options={projectTypeOptions}
-      onChange={handleChange}
-    />
-    <CustomDropdown
-      label="Design Standard"
-      name="defaultDesignStandard"
-      value={formData.defaultDesignStandard}
-      options={designStandardOptions}
-      onChange={handleChange}
-    />
-  </div>
-</div>
+            <div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl border border-[#e5e7eb] dark:border-[#374151] overflow-visible">
+              <div className="p-6 border-b border-[#e5e7eb] dark:border-[#374151]">
+                <h2 className="text-lg font-semibold text-[#02090d] dark:text-white">Project Defaults</h2>
+                <p className="text-sm text-[#6b7280] dark:text-[#9ca3af]">Default settings for new projects</p>
+              </div>
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-visible">
+                <CustomDropdown
+                  label="Default Project Type"
+                  name="defaultProjectType"
+                  value={formData.defaultProjectType}
+                  options={projectTypeOptions}
+                  onChange={handleChange}
+                />
+                <CustomDropdown
+                  label="Design Standard"
+                  name="defaultDesignStandard"
+                  value={formData.defaultDesignStandard}
+                  options={designStandardOptions}
+                  onChange={handleChange}
+                />
+              </div>
+            </div>
 
             {/* Save Button */}
             <div className="flex justify-end sticky bottom-4">
@@ -552,15 +583,15 @@ const WorkspaceSettings = () => {
                 </div>
               </div>
             </div>
-             <div className="flex justify-end">
-      <Link 
-        to={`/workspace/${workspaceId}/team`}
-        className="text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center space-x-1"
-      >
-        <span>Manage all members</span>
-        <FiArrowRight className="text-sm" />
-      </Link>
-    </div>
+            <div className="flex justify-end">
+              <Link 
+                to={`/workspace/${workspaceId}/team`}
+                className="text-sm text-[#0A2F44] dark:text-[#66a4c2] hover:underline flex items-center space-x-1"
+              >
+                <span>Manage all members</span>
+                <FiArrowRight className="text-sm" />
+              </Link>
+            </div>
 
             {/* Search and Filter Bar */}
             <div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl border border-[#e5e7eb] dark:border-[#374151] p-4">
@@ -604,7 +635,6 @@ const WorkspaceSettings = () => {
                   )}
                 </div>
                 
-                {/* Only Owner and Admin can see Invite button here too */}
                 {(isOwner || isAdmin) && (
                   <button onClick={() => setShowInviteModal(true)} className="flex items-center space-x-2 px-4 py-2 bg-[#0A2F44] text-white rounded-xl hover:bg-[#082636] transition-colors cursor-pointer">
                     <FiUserPlus />
@@ -675,7 +705,7 @@ const WorkspaceSettings = () => {
           </div>
         )}
 
-        {/* Analytics Tab - Keep existing */}
+        {/* Analytics Tab */}
         {activeTab === 'analytics' && (
           <div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl border border-[#e5e7eb] dark:border-[#374151] p-6">
             <div className="text-center py-12">
@@ -739,15 +769,117 @@ const WorkspaceSettings = () => {
         )}
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal - Updated with project check */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl max-w-md w-full mx-4 p-6">
-            <h3 className="text-lg font-semibold text-[#02090d] dark:text-white mb-2">Delete Workspace</h3>
-            <p className="text-[#6b7280] mb-6">Are you sure you want to delete "{currentWorkspace?.name}"? This action cannot be undone.</p>
+            <div className="flex items-center space-x-3 mb-4">
+              <FiAlertCircle className="text-red-500 text-2xl" />
+              <h3 className="text-lg font-semibold text-[#02090d] dark:text-white">Delete Workspace</h3>
+            </div>
+            
+            {/* Show warning if projects exist */}
+            {projects.length > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-3 mb-4">
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  ⚠️ This workspace has {projects.length} project(s). You must delete or move all projects before deleting the workspace.
+                </p>
+                <ul className="text-xs text-yellow-700 dark:text-yellow-300 mt-2 list-disc list-inside">
+                  {projects.slice(0, 3).map(p => (
+                    <li key={p.id}>{p.name}</li>
+                  ))}
+                  {projects.length > 3 && <li>...and {projects.length - 3} more</li>}
+                </ul>
+              </div>
+            )}
+            
+            <p className="text-[#6b7280] dark:text-[#9ca3af] mb-6">
+              Are you sure you want to delete "{currentWorkspace?.name}"? This action cannot be undone. All projects and data will be permanently removed.
+            </p>
+            
             <div className="flex justify-end space-x-3">
-              <button onClick={() => setShowDeleteModal(false)} className="px-4 py-2 border border-[#e5e7eb] rounded-lg hover:bg-[#f3f4f6] cursor-pointer">Cancel</button>
-              <button onClick={handleDelete} className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 cursor-pointer">Delete</button>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] hover:bg-[#f3f4f6] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteOrganization}
+                disabled={projects.length > 0 || isDeleting}
+                className={`px-4 py-2 rounded-lg transition-colors cursor-pointer ${
+                  projects.length > 0
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-red-500 text-white hover:bg-red-600'
+                }`}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Workspace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer Ownership Modal */}
+      {showTransferModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-[#1f2937] rounded-2xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <FiShield className="text-green-500 text-2xl" />
+              <h3 className="text-lg font-semibold text-[#02090d] dark:text-white">Transfer Ownership</h3>
+            </div>
+            
+            <p className="text-[#6b7280] dark:text-[#9ca3af] mb-4">
+              Transfer workspace ownership to another member. You will become a regular member after transfer.
+            </p>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-[#374151] dark:text-[#d1d5db] mb-2">
+                Select New Owner
+              </label>
+              <select
+                value={selectedNewOwner}
+                onChange={(e) => setSelectedNewOwner(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-[#e5e7eb] dark:border-[#374151] bg-white dark:bg-[#374151] text-[#02090d] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]"
+              >
+                <option value="">Select a member...</option>
+                {members && members.length > 0 ? (
+                  members
+                    .filter(m => {
+                      const isCurrentOwner = m.role === 'owner' || m.role === ROLES.ORG_OWNER;
+                      return !isCurrentOwner;
+                    })
+                    .map((member) => (
+                      <option key={member.id} value={member.user_id}>
+                        {member.name} ({member.email}) - Current: {member.role}
+                      </option>
+                    ))
+                ) : (
+                  <option disabled>Loading members...</option>
+                )}
+              </select>
+            </div>
+            
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-3 mb-6">
+              <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                ⚠️ This action cannot be undone. You will lose owner privileges and cannot restore them unless the new owner transfers back.
+              </p>
+            </div>
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowTransferModal(false)}
+                className="px-4 py-2 border border-[#e5e7eb] dark:border-[#374151] rounded-lg text-[#6b7280] hover:bg-[#f3f4f6] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmTransferOwnership}
+                disabled={isTransferring || !selectedNewOwner}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isTransferring ? 'Transferring...' : 'Confirm Transfer'}
+              </button>
             </div>
           </div>
         </div>

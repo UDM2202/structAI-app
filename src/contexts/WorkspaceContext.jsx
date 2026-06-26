@@ -195,6 +195,49 @@ const DEFAULT_MOCK_MEMBERS = [
   }
 ];
 
+const DEFAULT_PENDING_INVITES = [
+  {
+    id: "invite-1",
+    email: "sarah.pending@example.com",
+    role: ROLES.ORG_ADMIN,
+    invited_by: "John Engineer",
+    invited_at: "2026-05-10T10:30:00Z",
+    status: "pending",
+    workspace_id: "ws-1"
+  },
+  {
+    id: "invite-2",
+    email: "mike.pending@example.com",
+    role: ROLES.ORG_EDITOR,
+    invited_by: "John Engineer",
+    invited_at: "2026-05-09T14:20:00Z",
+    status: "pending",
+    workspace_id: "ws-1"
+  },
+  {
+    id: "invite-3",
+    email: "emma.pending@example.com",
+    role: ROLES.ORG_MEMBER,
+    invited_by: "Sarah Designer",
+    invited_at: "2026-05-08T09:15:00Z",
+    status: "pending",
+    workspace_id: "ws-1"
+  }
+];
+
+const DEFAULT_FAILED_INVITES = [
+  {
+    id: "failed-1",
+    email: "invalid.email@example.com",
+    role: ROLES.ORG_MEMBER,
+    invited_by: "John Engineer",
+    invited_at: "2026-05-01T11:00:00Z",
+    error: "Email delivery failed",
+    status: "failed",
+    workspace_id: "ws-1"
+  }
+];
+
 // Helper functions for permissions
 export const hasOrgRole = (userRole, requiredRole) => {
   const userLevel = ORG_ROLE_HIERARCHY[userRole] || 0;
@@ -223,6 +266,12 @@ const initializeLocalStorage = () => {
   if (!localStorage.getItem('mock_members')) {
     localStorage.setItem('mock_members', JSON.stringify(DEFAULT_MOCK_MEMBERS));
   }
+  if (!localStorage.getItem('mock_pending_invites')) {
+    localStorage.setItem('mock_pending_invites', JSON.stringify(DEFAULT_PENDING_INVITES));
+  }
+  if (!localStorage.getItem('mock_failed_invites')) {
+    localStorage.setItem('mock_failed_invites', JSON.stringify(DEFAULT_FAILED_INVITES));
+  }
 };
 
 // Load mock data from localStorage
@@ -246,6 +295,8 @@ export const WorkspaceProvider = ({ children }) => {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [failedInvites, setFailedInvites] = useState([]);
 
   // Load mock data on mount
   useEffect(() => {
@@ -289,6 +340,168 @@ export const WorkspaceProvider = ({ children }) => {
     }, 300);
   };
 
+  const loadPendingInvites = async (workspaceId) => {
+    setLoading(true);
+    setTimeout(() => {
+      const savedInvites = localStorage.getItem('mock_pending_invites');
+      const allInvites = savedInvites ? JSON.parse(savedInvites) : [...DEFAULT_PENDING_INVITES];
+      const filtered = allInvites.filter(invite => invite.workspace_id === workspaceId);
+      setPendingInvites(filtered);
+      setLoading(false);
+    }, 300);
+  };
+
+  const loadFailedInvites = async (workspaceId) => {
+    setLoading(true);
+    setTimeout(() => {
+      const savedInvites = localStorage.getItem('mock_failed_invites');
+      const allInvites = savedInvites ? JSON.parse(savedInvites) : [...DEFAULT_FAILED_INVITES];
+      const filtered = allInvites.filter(invite => invite.workspace_id === workspaceId);
+      setFailedInvites(filtered);
+      setLoading(false);
+    }, 300);
+  };
+
+  const cancelPendingInvite = async (inviteId) => {
+    const savedInvites = localStorage.getItem('mock_pending_invites');
+    let allInvites = savedInvites ? JSON.parse(savedInvites) : [...DEFAULT_PENDING_INVITES];
+    allInvites = allInvites.filter(invite => invite.id !== inviteId);
+    localStorage.setItem('mock_pending_invites', JSON.stringify(allInvites));
+    setPendingInvites(prev => prev.filter(invite => invite.id !== inviteId));
+    return { success: true };
+  };
+
+  const leaveWorkspace = async (workspaceId) => {
+    setLoading(true);
+    try {
+      const savedMembers = localStorage.getItem('mock_members');
+      let allMembers = savedMembers ? JSON.parse(savedMembers) : [...DEFAULT_MOCK_MEMBERS];
+      allMembers = allMembers.filter(m => !(m.workspace_id === workspaceId && m.user_id === user?.id));
+      localStorage.setItem('mock_members', JSON.stringify(allMembers));
+      
+      const savedWorkspaces = localStorage.getItem('mock_workspaces');
+      let allWorkspaces = savedWorkspaces ? JSON.parse(savedWorkspaces) : [...DEFAULT_MOCK_WORKSPACES];
+      const updatedWorkspaces = allWorkspaces.filter(w => w.id !== workspaceId);
+      localStorage.setItem('mock_workspaces', JSON.stringify(updatedWorkspaces));
+      
+      setWorkspaces(updatedWorkspaces);
+      
+      if (currentWorkspace?.id === workspaceId) {
+        const nextWorkspace = updatedWorkspaces[0] || null;
+        setCurrentWorkspace(nextWorkspace);
+        if (nextWorkspace) {
+          await loadProjects(nextWorkspace.id);
+          await loadMembers(nextWorkspace.id);
+        } else {
+          setProjects([]);
+          setMembers([]);
+        }
+      }
+      
+      setLoading(false);
+      return { success: true };
+    } catch (error) {
+      setError(error.message);
+      setLoading(false);
+      return { success: false, error: error.message };
+    }
+  };
+
+  const transferOwnership = async (workspaceId, newOwnerId) => {
+    setLoading(true);
+    try {
+      const savedWorkspaces = localStorage.getItem('mock_workspaces');
+      const savedMembers = localStorage.getItem('mock_members');
+      let allWorkspaces = savedWorkspaces ? JSON.parse(savedWorkspaces) : [...DEFAULT_MOCK_WORKSPACES];
+      let allMembers = savedMembers ? JSON.parse(savedMembers) : [...DEFAULT_MOCK_MEMBERS];
+      
+      const workspaceIndex = allWorkspaces.findIndex(w => w.id === workspaceId);
+      if (workspaceIndex === -1) {
+        throw new Error('Workspace not found');
+      }
+      
+      const newOwnerMember = allMembers.find(m => m.user_id === newOwnerId && m.workspace_id === workspaceId);
+      if (!newOwnerMember) {
+        throw new Error('Selected member not found in this workspace');
+      }
+      
+      const currentOwnerMember = allMembers.find(m => m.workspace_id === workspaceId && m.role === ROLES.ORG_OWNER);
+      
+      allWorkspaces[workspaceIndex].userRole = ROLES.ORG_MEMBER;
+      
+      allMembers = allMembers.map(m => {
+        if (m.user_id === newOwnerId && m.workspace_id === workspaceId) {
+          return { ...m, role: ROLES.ORG_OWNER };
+        }
+        if (m.user_id === currentOwnerMember?.user_id && m.workspace_id === workspaceId) {
+          return { ...m, role: ROLES.ORG_MEMBER };
+        }
+        return m;
+      });
+      
+      localStorage.setItem('mock_workspaces', JSON.stringify(allWorkspaces));
+      localStorage.setItem('mock_members', JSON.stringify(allMembers));
+      
+      setWorkspaces(allWorkspaces);
+      if (currentWorkspace?.id === workspaceId) {
+        setCurrentWorkspace(allWorkspaces[workspaceIndex]);
+      }
+      setMembers(allMembers.filter(m => m.workspace_id === workspaceId));
+      
+      setLoading(false);
+      return { success: true };
+    } catch (error) {
+      setError(error.message);
+      setLoading(false);
+      return { success: false, error: error.message };
+    }
+  };
+
+  const deleteOrganization = async (organizationId) => {
+    setLoading(true);
+    try {
+      const savedProjects = localStorage.getItem('mock_projects');
+      const allProjects = savedProjects ? JSON.parse(savedProjects) : [];
+      const orgProjects = allProjects.filter(p => p.workspace_id === organizationId);
+      
+      if (orgProjects.length > 0) {
+        setLoading(false);
+        return { success: false, error: `Cannot delete organization with ${orgProjects.length} project(s). Delete or move all projects first.` };
+      }
+      
+      const savedWorkspaces = localStorage.getItem('mock_workspaces');
+      let allWorkspaces = savedWorkspaces ? JSON.parse(savedWorkspaces) : [];
+      const updatedWorkspaces = allWorkspaces.filter(w => w.id !== organizationId);
+      localStorage.setItem('mock_workspaces', JSON.stringify(updatedWorkspaces));
+      
+      const savedMembers = localStorage.getItem('mock_members');
+      let allMembers = savedMembers ? JSON.parse(savedMembers) : [];
+      const updatedMembers = allMembers.filter(m => m.workspace_id !== organizationId);
+      localStorage.setItem('mock_members', JSON.stringify(updatedMembers));
+      
+      setWorkspaces(updatedWorkspaces);
+      
+      if (currentWorkspace?.id === organizationId) {
+        const nextWorkspace = updatedWorkspaces[0] || null;
+        setCurrentWorkspace(nextWorkspace);
+        if (nextWorkspace) {
+          await loadProjects(nextWorkspace.id);
+          await loadMembers(nextWorkspace.id);
+        } else {
+          setProjects([]);
+          setMembers([]);
+        }
+      }
+      
+      setLoading(false);
+      return { success: true };
+    } catch (error) {
+      setError(error.message);
+      setLoading(false);
+      return { success: false, error: error.message };
+    }
+  };
+
   const createWorkspace = async (workspaceData) => {
     const newWorkspace = {
       id: `ws-${Date.now()}`,
@@ -329,6 +542,27 @@ export const WorkspaceProvider = ({ children }) => {
     setCurrentProject(project);
   };
 
+  // SET CURRENT PROJECT BY PROJECT ID - ADD THIS FUNCTION
+  const setCurrentProjectByProjectId = async (projectId) => {
+    setLoading(true);
+    try {
+      const { projects: mockProjects } = loadMockDataFromLocalStorage();
+      const foundProject = mockProjects.find(p => p.id === projectId);
+      if (foundProject) {
+        setCurrentProject(foundProject);
+        setLoading(false);
+        return { success: true, project: foundProject };
+      } else {
+        setLoading(false);
+        return { success: false, error: 'Project not found' };
+      }
+    } catch (error) {
+      setError(error.message);
+      setLoading(false);
+      return { success: false, error: error.message };
+    }
+  };
+
   const createProject = async (workspaceId, projectData) => {
     const newProject = {
       id: `proj-${Date.now()}`,
@@ -344,7 +578,6 @@ export const WorkspaceProvider = ({ children }) => {
     const updatedProjects = [...currentProjects, newProject];
     localStorage.setItem('mock_projects', JSON.stringify(updatedProjects));
     
-    // Update project count in workspace
     const updatedWorkspaces = currentWorkspaces.map(w => 
       w.id === workspaceId 
         ? { ...w, project_count: (w.project_count || 0) + 1 } 
@@ -394,7 +627,6 @@ export const WorkspaceProvider = ({ children }) => {
       const updatedProjects = currentProjects.filter(p => p.id !== projectId);
       localStorage.setItem('mock_projects', JSON.stringify(updatedProjects));
       
-      // Update workspace project count
       if (projectToDelete) {
         const updatedWorkspaces = currentWorkspaces.map(w => 
           w.id === projectToDelete.workspace_id 
@@ -432,7 +664,6 @@ export const WorkspaceProvider = ({ children }) => {
     const updatedMembers = [...currentMembers, newMember];
     localStorage.setItem('mock_members', JSON.stringify(updatedMembers));
     
-    // Update member count in workspace
     const updatedWorkspaces = currentWorkspaces.map(w => 
       w.id === workspaceId 
         ? { ...w, member_count: (w.member_count || 0) + 1 } 
@@ -500,7 +731,6 @@ export const WorkspaceProvider = ({ children }) => {
     const updatedMembers = currentMembers.filter(m => m.user_id !== userId);
     localStorage.setItem('mock_members', JSON.stringify(updatedMembers));
     
-    // Update member count in workspace
     const updatedWorkspaces = currentWorkspaces.map(w => 
       w.id === workspaceId 
         ? { ...w, member_count: Math.max(0, (w.member_count || 1) - 1) } 
@@ -579,9 +809,12 @@ export const WorkspaceProvider = ({ children }) => {
     members,
     loading,
     error,
+    pendingInvites,
+    failedInvites,
     createWorkspace,
     switchWorkspace,
     switchProject,
+    setCurrentProjectByProjectId,  // ADD THIS
     createProject,
     updateProject,
     deleteProject,
@@ -590,10 +823,16 @@ export const WorkspaceProvider = ({ children }) => {
     deleteWorkspace,
     removeMember,
     updateMemberRole,
+    leaveWorkspace,
+    transferOwnership,
+    deleteOrganization,
     loadWorkspaces,
     refreshWorkspaces: loadWorkspaces,
     loadProjects,
     loadMembers,
+    loadPendingInvites,
+    loadFailedInvites,
+    cancelPendingInvite,
     // Permission helpers
     getUserRoleInWorkspace,
     getUserRoleInProject,

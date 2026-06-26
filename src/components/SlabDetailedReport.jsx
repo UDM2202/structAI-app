@@ -273,7 +273,7 @@ const SlabDetailedReport = ({ option, onBack, onExport, slabArea, span }) => {
   ))}
 </tbody>
           </table>
-        </div>
+        </div>.
       </div>
 
       {/* Cost & Carbon Cards - Side by Side */}
