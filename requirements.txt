@@ -1,4 +1,4 @@
 uvicorn[standard]>=0.30.0
 pydantic>=2.10.0
 python-multipart>=0.0.9
-numpy>=2.0.0"
+numpy>=2.0.0
