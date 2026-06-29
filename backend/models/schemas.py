@@ -77,6 +77,7 @@ class SlabDesignRequest(BaseModel):
     thickness_options: Optional[List[float]] = Field(None, description="Alternative thicknesses to try in mm")
     use_ai: bool = Field(False, description="Enable AI recommendation")
     region: str = Field("UK", description="Region for cost rates")
+    building_use: str = Field("office", description="Occupancy for two-way EC2 engine presets / auto-loads")
 
     @model_validator(mode="after")
     def check_continuity_matches_type(self):
@@ -158,6 +159,15 @@ class OptimizationOption(BaseModel):
     status: str
     utilization_ratio: float
 
+class ReportRow(BaseModel):
+    reference: str
+    calculation: str
+    output: str
+
+class ReportSection(BaseModel):
+    title: str
+    rows: List[ReportRow]
+
 class SlabDesignResult(BaseModel):
     task_id: str
     status: str
@@ -169,6 +179,7 @@ class SlabDesignResult(BaseModel):
     compliance: List[ComplianceCheck]
     cost_breakdown: CostBreakdown
     optimization_options: List[OptimizationOption]
+    report: List[ReportSection] = []
 
 class TaskStatusResponse(BaseModel):
     task_id: str
@@ -176,3 +187,75 @@ class TaskStatusResponse(BaseModel):
     progress: float = 0
     result: Optional[SlabDesignResult] = None
     error: Optional[str] = None
+
+
+# ============ CONTINUOUS ONE-WAY SLAB (multi-span) ============
+
+class SupportType(str, Enum):
+    PINNED = "pinned"
+    FIXED = "fixed"
+
+class ContinuousSlabRequest(BaseModel):
+    span_lengths: List[float] = Field(..., min_length=1, description="Span lengths in metres (left to right)")
+    start_support: SupportType = SupportType.PINNED
+    end_support: SupportType = SupportType.PINNED
+    geometry_thickness: float = Field(..., gt=0, description="Slab thickness in mm")
+    clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
+    materials: MaterialInput
+    loads: LoadInput
+    design_params: DesignParameters
+    bar_diameters: Optional[List[int]] = Field([10, 12, 16])
+    region: str = Field("UK")
+
+    @model_validator(mode="after")
+    def check_spans(self):
+        if any(s <= 0 for s in self.span_lengths):
+            raise ValueError("All span lengths must be > 0")
+        return self
+
+class SpanDesignOut(BaseModel):
+    index: int
+    length: float
+    max_sagging_moment: float        # kNm/m
+    area_required: float
+    area_provided: float
+    bar_diameter: int
+    spacing: int
+    status: str
+
+class SupportDesignOut(BaseModel):
+    index: int
+    position: str
+    hogging_moment: float            # kNm/m (magnitude)
+    shear: float                     # kN/m (design shear at support)
+    area_required: float
+    area_provided: float
+    bar_diameter: int
+    spacing: int
+    status: str
+
+class EnvelopeOut(BaseModel):
+    max_sagging_moment: float
+    max_hogging_moment: float
+    max_shear_force: float
+    ultimate_load: float
+    service_load: float
+
+class DiagramOut(BaseModel):
+    x: List[float]                   # metres along beam
+    bmd: List[float]                 # kNm/m
+    sfd: List[float]                 # kN/m
+
+class ContinuousSlabResult(BaseModel):
+    task_id: str
+    status: str
+    summary: DesignSummary
+    envelope: EnvelopeOut
+    spans: List[SpanDesignOut]
+    supports: List[SupportDesignOut]
+    deflection: DeflectionResult
+    shear: ShearResult
+    compliance: List[ComplianceCheck]
+    cost_breakdown: CostBreakdown
+    diagram: DiagramOut
+    report: List[ReportSection] = []

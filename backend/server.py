@@ -4,6 +4,8 @@ from routers import slab, rates
 from routers import beam 
 from routers import continuous_beam
 import uvicorn
+from routers import continuous_slab
+
 
 app = FastAPI(
     title="StructAI Design Engine",
@@ -25,6 +27,7 @@ app.include_router(slab.router, prefix="/api/slab", tags=["Slab Design"])
 app.include_router(rates.router, prefix="/api/rates", tags=["Material Rates"])
 app.include_router(beam.router, prefix="/api/beam")
 app.include_router(continuous_beam.router, prefix="/api/continuous-beam")
+app.include_router(continuous_slab.router, prefix="/api/continuous-slab")
 
 @app.get("/")
 async def root():
