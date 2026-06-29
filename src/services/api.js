@@ -1,5 +1,5 @@
 // src/services/api.js
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'https://structdh.onrender.com';
 
 export const slabAPI = {
   startDesign: async (formData) => {
@@ -161,7 +161,6 @@ export const continuousBeamAPI = {
     return res.json();
   },
 };
-
 
 export const continuousSlabAPI = {
   startDesign: async (form) => {
