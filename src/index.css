@@ -2,171 +2,87 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Light theme - Your original */
+/* ============================================================
+   LIGHT THEME (unchanged)
+   ============================================================ */
 :root {
   --bg-primary: #f3f4f6;
   --bg-card: #ffffff;
-  --text-primary: #02090d;
-  --text-secondary: #4b5563;
-  --text-muted: #6b7280;
-  --border-color: #e5e7eb;
-  --primary: #0A2F44;        /*  buttons, links */
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
+  --primary: #0A2F44;        /* navy — buttons, links */
   --primary-light: #e6f0f5;
   --primary-dark: #082636;
-  --accent: #0A2F44;          /* Same navy for consistency */
+  --accent: #0A2F44;
 }
 
-/* Dark theme - Navy family only */
+/* ============================================================
+   DARK THEME — matches the Beam Output palette (slate family)
+   page #111827 · cards #1f2937 · borders #334155 · accent #66a4c2
+   ============================================================ */
 .dark {
-  --bg-primary: #0A2F44;      /*  navy - full background */
-  --bg-card: #1e3a4a;         /* Navy +20% - cards */
-  --text-primary: #ffffff;     /* Pure white */
-  --text-secondary: #cce1eb;   /* Light navy blue */
-  --text-muted: #99b8cc;       /* Muted navy */
-  --border-color: #2a4a5a;     /* Navy +30% - borders */
-  --primary: #ffffff;          /* White becomes primary button */
-  --primary-light: #e6f0f5;
-  --primary-dark: #cce1eb;
-  --accent: #cce1eb;           /* Light navy for accents */
+  --bg-primary: #111827;       /* page background */
+  --bg-card: #1f2937;          /* cards / panels */
+  --text-primary: #ffffff;     /* headings / main text */
+  --text-secondary: #cbd5e1;   /* body text (slate-300) */
+  --text-muted: #94a3b8;       /* sub / muted (slate-400) */
+  --border-color: #334155;     /* borders (slate-700) */
+  --primary: #0A2F44;          /* primary buttons stay navy (white text) */
+  --primary-light: #1e3a4a;    /* hover/selected tint */
+  --primary-dark: #082636;
+  --accent: #66a4c2;           /* light navy-blue accent (matches ACCENT) */
 }
 
-/* Slide animation for mobile menu */
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
 @keyframes slideRight {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
 }
-
-.animate-slide-right {
-  animation: slideRight 0.3s ease-out;
-}
-
-/* Fade-in animation for conditional elements */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
+.animate-slide-right { animation: slideRight 0.3s ease-out; }
 
 @keyframes slideLeft {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
 }
-
-.animate-slide-left {
-  animation: slideLeft 0.3s ease-out;
-}
-
-/* Force text visibility in dark mode */
-.dark .text-[#02090d] {
-  color: #ffffff !important;
-}
-
-.dark .text-[#374151] {
-  color: #e5e7eb !important;
-}
-
-.dark .text-[#6b7280] {
-  color: #9ca3af !important;
-}
-
-.dark .text-[#4b5563] {
-  color: #d1d5db !important;
-}
-
-.dark input, .dark select, .dark textarea {
-  color: #ffffff !important;
-}
-
-.dark input::placeholder, .dark textarea::placeholder {
-  color: #6b7280 !important;
-}
-
+.animate-slide-left { animation: slideLeft 0.3s ease-out; }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
+.animate-fade-in { animation: fadeIn 0.3s ease-out; }
 
 @keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+.animate-slide-up { animation: slide-up 0.3s ease-out; }
 
 @keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes bounce {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+.animate-bounce { animation: bounce 0.6s infinite; }
+
+/* ============================================================
+   DARK-MODE FORM CONTROL LEGIBILITY
+   ============================================================ */
+.dark input,
+.dark select,
+.dark textarea {
+  color: #ffffff;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #94a3b8;
 }
 
-.animate-slide-up {
-  animation: slide-up 0.3s ease-out;
-}
-
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out;
-}
-
-.animate-bounce {
-  animation: bounce 0.6s infinite;
-}

@@ -33,6 +33,8 @@ import BeamInput from './pages/BeamInput';
 import BeamResults from './pages/BeamResults';
 import ContinuousBeamInput from './pages/ContinuousBeamInput';
 import ContinuousBeamResults from './pages/ContinuousBeamResults';
+import ContinuousSlabInput from './pages/ContinuousSlabInput';
+import ContinuousSlabResults from './pages/ContinuousSlabResults';
 
 function App() {
   return (
@@ -49,57 +51,57 @@ function App() {
                     <Route path="/signup" element={<SignUp />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
                     <Route path="/reset-password/:token" element={<ResetPassword />} />
-                    
+
                     {/* Dashboard - NO MainLayout */}
                     <Route path="/dashboard" element={
                       <ProtectedRoute>
                         <Dashboard />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* Workspace Routes - NO MainLayout */}
                     <Route path="/workspace/create" element={
                       <ProtectedRoute>
                         <CreateWorkspace />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId" element={
                       <ProtectedRoute>
                         <OrganizationOverview />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/projects" element={
                       <ProtectedRoute>
                         <Projects />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/projects/:projectId" element={
                       <ProtectedRoute>
                         <ProjectDetail />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/members" element={
                       <ProtectedRoute>
                         <TeamMembers />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/team" element={
                       <ProtectedRoute>
                         <OrganisationTeam />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/settings" element={
                       <ProtectedRoute>
                         <WorkspaceSettings />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* STRUCTURAL INPUT - WITH MainLayout */}
                     <Route path="/workspace/:workspaceId/projects/:projectId/slab" element={
                       <ProtectedRoute>
@@ -108,7 +110,7 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/projects/new/structural-input" element={
                       <ProtectedRoute>
                         <MainLayout currentModule="slab" breadcrumb="Slab Design > Input">
@@ -116,8 +118,16 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/projects/:projectId/slab-input" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="slab" breadcrumb="Slab Design > Input">
+                          <StructuralInput />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
+
+                    <Route path="/structural-input" element={
                       <ProtectedRoute>
                         <MainLayout currentModule="slab" breadcrumb="Slab Design > Input">
                           <StructuralInput />
@@ -142,67 +152,84 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
-{/* BEAM - WITH MainLayout */}
-<Route path="/beam" element={
-  <ProtectedRoute>
-    <MainLayout currentModule="beam" breadcrumb="Beam Design > Simply Supported Beam > Input">
-      <BeamInput />
-    </MainLayout>
-  </ProtectedRoute>
-} />
 
-<Route path="/beam-results" element={
-  <ProtectedRoute>
-    <MainLayout currentModule="beam" breadcrumb="Beam Design > Results">
-      <BeamResults />
-    </MainLayout>
-  </ProtectedRoute>
-} />
+                    {/* CONTINUOUS SLAB - WITH MainLayout */}
+                    <Route path="/continuous-slab" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="slab" breadcrumb="Slab Design > Continuous Slab > Input">
+                          <ContinuousSlabInput />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/continuous-slab-results" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="slab" breadcrumb="Slab Design > Continuous Slab > Results">
+                          <ContinuousSlabResults />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
 
-<Route path="/continuous-beam" element={
-  <ProtectedRoute>
-    <MainLayout currentModule="beam" breadcrumb="Beam Design > Continuous Beam > Input">
-      <ContinuousBeamInput />
-    </MainLayout>
-  </ProtectedRoute>
-} />
-<Route path="/continuous-beam-results" element={
-  <ProtectedRoute>
-    <MainLayout currentModule="beam" breadcrumb="Beam Design > Continuous Beam > Results">
-      <ContinuousBeamResults />
-    </MainLayout>
-  </ProtectedRoute>
-} />
+                    {/* BEAM - WITH MainLayout */}
+                    <Route path="/beam" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="beam" breadcrumb="Beam Design > Simply Supported Beam > Input">
+                          <BeamInput />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
+
+                    <Route path="/beam-results" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="beam" breadcrumb="Beam Design > Results">
+                          <BeamResults />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
+
+                    <Route path="/continuous-beam" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="beam" breadcrumb="Beam Design > Continuous Beam > Input">
+                          <ContinuousBeamInput />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/continuous-beam-results" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="beam" breadcrumb="Beam Design > Continuous Beam > Results">
+                          <ContinuousBeamResults />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
 
                     <Route path="/workspace/:workspaceId/projects/:projectId/results" element={<ResultsDashboard />} />
-                    
+
                     {/* External Design Routes */}
                     <Route path="/workspace/:workspaceId/projects/:projectId/external-design" element={
                       <ProtectedRoute>
                         <ExternalDesign />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/workspace/:workspaceId/projects/:projectId/external-design/:workId" element={
                       <ProtectedRoute>
                         <ExternalDesign />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* Project Setup */}
                     <Route path="/workspace/:workspaceId/projects/new" element={
                       <ProtectedRoute>
                         <ProjectSetup />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* Quick Design Routes */}
                     <Route path="/new-design" element={
                       <ProtectedRoute>
                         <NewDesign />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* QUICK DESIGN SLAB - WITH MainLayout */}
                     <Route path="/quick-design" element={
                       <ProtectedRoute>
@@ -211,13 +238,13 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/saved-designs" element={
                       <ProtectedRoute>
                         <SavedDesigns />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/new-design/slab" element={
                       <ProtectedRoute>
                         <MainLayout currentModule="slab" breadcrumb="Quick Design > Slab">
@@ -225,27 +252,27 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* External Tools */}
                     <Route path="/external-design" element={
                       <ProtectedRoute>
                         <ExternalDesign />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/sdh-agent" element={
                       <ProtectedRoute>
                         <SDHAgentDownload />
                       </ProtectedRoute>
                     } />
-                    
+
                     {/* Legacy */}
                     <Route path="/workspace/:workspaceId/old" element={
                       <ProtectedRoute>
                         <WorkspaceDashboard />
                       </ProtectedRoute>
                     } />
-                    
+
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 </div>
@@ -253,7 +280,7 @@ function App() {
             </NotificationProvider>
           </WorkspaceProvider>
         </LoadingProvider>
-      </AuthProvider>  
+      </AuthProvider>
     </ThemeProvider>
   );
 }

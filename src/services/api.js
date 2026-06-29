@@ -36,7 +36,8 @@ export const slabAPI = {
       },
       bar_diameters: [10, 12, 16],
       use_ai: false,
-      region: "Nigeria"
+      region: "Nigeria",
+      building_use: formData.buildingUse || "office"
     };
 
     const response = await fetch(`${API_BASE}/api/slab/design/sync`, {
@@ -149,6 +150,53 @@ export const continuousBeamAPI = {
       region: form.region || "Nigeria",
     };
     const res = await fetch(`${API_BASE}/api/continuous-beam/design/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.detail ? (typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail)) : `Request failed: ${res.status}`);
+    }
+    return res.json();
+  },
+};
+
+
+export const continuousSlabAPI = {
+  startDesign: async (form) => {
+    const request = {
+      span_lengths: (form.spanLengths || []).map((v) => parseFloat(v)),
+      start_support: form.startSupport || "pinned",
+      end_support: form.endSupport || "pinned",
+      geometry_thickness: parseFloat(form.thickness),
+      clear_cover: parseFloat(form.clearCover),
+      materials: {
+        concrete_grade: form.concreteGrade,
+        steel_grade: form.steelGrade,
+        unit_weight_concrete: parseFloat(form.unitWeightConcrete) || 25,
+        unit_weight_steel: parseFloat(form.unitWeightSteel) || 78.5,
+      },
+      loads: {
+        dead_load: parseFloat(form.deadLoad) || 0,
+        floor_finish: parseFloat(form.floorFinish) || 0,
+        live_load: parseFloat(form.liveLoad) || 0,
+        additional_dead_load: parseFloat(form.additionalDeadLoad) || 0,
+        additional_live_load: parseFloat(form.additionalLiveLoad) || 0,
+      },
+      design_params: {
+        design_code: form.designCode || "EC2",
+        analysis_method: form.analysisMethod || "limit_state",
+        exposure_class: form.exposureClass || "XC3",
+        fire_rating: parseInt(form.fireRating) || 60,
+        crack_width_limit: parseFloat(form.crackWidthLimit) || 0.3,
+        deflection_limit: parseInt(form.deflectionLimit) || 250,
+      },
+      bar_diameters: form.barDiameters || [10, 12, 16],
+      region: form.region || "Nigeria",
+    };
+
+    const res = await fetch(`${API_BASE}/api/continuous-slab/design/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),

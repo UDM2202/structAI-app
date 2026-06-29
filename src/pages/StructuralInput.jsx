@@ -68,6 +68,18 @@ const ANALYSIS_METHODS = [
   { value: "elastic", label: "Elastic Analysis" },
 ];
 
+// Values map to the engine's classify_occupancy() keys (anything else → office).
+const BUILDING_USES = [
+  { value: "office", label: "Office" },
+  { value: "residential", label: "Residential" },
+  { value: "hotel", label: "Hotel" },
+  { value: "education", label: "Education / School" },
+  { value: "retail", label: "Retail" },
+  { value: "shopping_mall", label: "Shopping Mall" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "hospital_ward", label: "Hospital — Ward" },
+];
+
 const NAV = [
   { id: "slab", label: "Slab", icon: FiGrid },
   { id: "beam", label: "Beam", icon: FiMinus },
@@ -98,6 +110,7 @@ const DEFAULTS = {
   additionalLiveLoad: "0",
   designCode: "EC2",
   analysisMethod: "limit_state",
+  buildingUse: "office",
   serviceabilityCheck: true,
   exposureClass: "XC3",
   crackWidthLimit: "0.3",
@@ -306,6 +319,10 @@ const StructuralInput = () => {
                   <div>
                     <label className={LABEL}>Analysis Method</label>
                     <Dropdown value={formData.analysisMethod} onChange={(e) => set({ analysisMethod: e.target.value })} options={ANALYSIS_METHODS} />
+                  </div>
+                  <div>
+                    <label className={LABEL}>Building Use</label>
+                    <Dropdown value={formData.buildingUse} onChange={(e) => set({ buildingUse: e.target.value })} options={BUILDING_USES} />
                   </div>
                   <div>
                     <label className={LABEL}>Serviceability Check</label>

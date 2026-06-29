@@ -1,6 +1,7 @@
 // src/pages/StructuralResults.jsx
 import React, { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import DetailedReport from "../components/DetailedReport";
 import {
   FiHome, FiChevronRight, FiFilePlus, FiFolder, FiSave, FiMoreVertical,
   FiArrowLeft, FiArrowRight, FiCheck, FiDownload, FiFileText,
@@ -105,6 +106,18 @@ const StructuralResults = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [tab, setTab] = useState("Overview");
+  const [reportOpen, setReportOpen] = useState(false);
+  const { workspaceId, projectId } = useParams();
+
+  // Workspace-aware back navigation: return to the scoped slab input when we
+  // have workspace/project context, otherwise just go back to wherever we came from.
+  const goToInput = () => {
+    if (workspaceId && projectId) {
+      navigate(`/workspace/${workspaceId}/projects/${projectId}/slab-input`);
+    } else {
+      navigate(-1);
+    }
+  };
 
   const rawData = location.state?.designResult;
 
@@ -115,7 +128,7 @@ const StructuralResults = () => {
           <FiAlertTriangle className="text-6xl text-yellow-500 mx-auto mb-4" />
           <h2 className={`text-xl font-bold ${TXT_MAIN} mb-2`}>No Design Results</h2>
           <p className={`${TXT_SUB} mb-6`}>Please run a design optimisation first.</p>
-          <button onClick={() => navigate("/structural-input")} className="px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors">
+          <button onClick={() => goToInput()} className="px-6 py-2 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors">
             <FiArrowLeft className="inline mr-2" /> Back to Design
           </button>
         </div>
@@ -151,7 +164,7 @@ const StructuralResults = () => {
           </nav>
         </div>
         <div className="flex items-center gap-1">
-          <TopBtn icon={FiFilePlus} label="New" onClick={() => navigate("/structural-input")} />
+          <TopBtn icon={FiFilePlus} label="New" onClick={() => goToInput()} />
           <TopBtn icon={FiFolder} label="Open" />
           <TopBtn icon={FiSave} label="Save" />
           <button className={`ml-1 rounded-md p-1.5 ${TXT_SUB} hover:bg-[#f1f5f9] dark:hover:bg-[#1f2937]`}><FiMoreVertical size={16} /></button>
@@ -166,7 +179,7 @@ const StructuralResults = () => {
             <p className={`text-[13px] ${TXT_SUB}`}>{summary.slab_type || "Slab"} • {summary.continuity || ""} • EN 1992-1-1 (EC2)</p>
           </div>
           <div className="flex gap-2">
-            <OutlineBtn icon={FiFileText} label="Export PDF" />
+            <button onClick={() => setReportOpen(true)} className={`flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] dark:border-[#1f2937] bg-white dark:bg-[#0f172a] px-3 py-1.5 text-[13px] font-medium ${TXT_MAIN} hover:bg-[#f1f5f9] dark:hover:bg-[#1f2937]`}><FiFileText size={15} /> Detailed Report</button>
             <button className="flex items-center gap-1.5 rounded-lg bg-[#0A2F44] px-3 py-1.5 text-[13px] font-medium text-white hover:bg-[#082636] transition-colors">
               <FiDownload size={15} /> Export Excel
             </button>
@@ -193,7 +206,7 @@ const StructuralResults = () => {
 
         {/* footer */}
         <div className="mt-5 flex items-center justify-between border-t border-[#e2e8f0] dark:border-[#1f2937] pt-4">
-          <button onClick={() => navigate("/structural-input")} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium ${TXT_SUB} hover:bg-[#f1f5f9] dark:hover:bg-[#1f2937]`}>
+          <button onClick={() => goToInput()} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium ${TXT_SUB} hover:bg-[#f1f5f9] dark:hover:bg-[#1f2937]`}>
             <FiArrowLeft size={15} /> Back to Input
           </button>
           <div className="flex gap-2">
@@ -202,6 +215,15 @@ const StructuralResults = () => {
           </div>
         </div>
       </main>
+
+      {reportOpen && (
+        <DetailedReport
+          report={rawData.report || []}
+          heading="Slab — Detailed Calculation Report"
+          subtitle={`${summary.slab_type || "Slab"} · ${summary.concrete_grade || ""}`}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </div>
   );
 };

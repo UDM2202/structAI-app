@@ -1,10 +1,10 @@
 // src/components/layout/MainLayout.jsx
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  FiGrid, FiLayers, FiBarChart2, FiColumns, FiSquare, 
+import {
+  FiGrid, FiLayers, FiBarChart2, FiColumns, FiSquare,
   FiTriangle, FiWind, FiDroplet, FiSettings, FiHelpCircle,
-  FiSun, FiMoon, FiUser, FiLogOut, FiMenu, FiChevronLeft,
+  FiSun, FiMoon, FiUser, FiLogOut, FiMenu, FiChevronLeft, FiChevronDown,
   FiSave, FiDownload, FiShare2, FiArrowLeft, FiBell
 } from 'react-icons/fi';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,10 +17,17 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
   const location = useLocation();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [openMenus, setOpenMenus] = useState({ slab: true });
 
-  // Navigation items - Engineering Tools Only (NO Dashboard, NO User info)
+  // Navigation items - Engineering Tools Only
   const navItems = [
-    { id: 'slab', name: 'Slab', icon: FiLayers, path: '/structural-input' },
+    {
+      id: 'slab', name: 'Slab', icon: FiLayers, path: '/structural-input',
+      children: [
+        { name: 'One-Way / Two-Way', path: '/structural-input' },
+        { name: 'Continuous Slab', path: '/continuous-slab' },
+      ],
+    },
     { id: 'beam', name: 'Beam', icon: FiBarChart2, path: '/beam' },
     { id: 'column', name: 'Column', icon: FiColumns, path: '/column-design' },
     { id: 'foundation', name: 'Foundation', icon: FiSquare, path: '/foundation-design' },
@@ -47,13 +54,14 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
     navigate(-1);
   };
 
+  const toggleMenu = (id) => setOpenMenus((m) => ({ ...m, [id]: !m[id] }));
+  const childActive = (path) => location.pathname === path || location.pathname.startsWith(path + '-');
+
   return (
     <div className="min-h-screen bg-[#f3f4f6] dark:bg-[#111827] flex transition-colors duration-300">
-      
-      {/* ============================================================ */}
-      {/* LEFT SIDEBAR - FIXED ENGINEERING TOOLBAR (NO USER INFO) */}
-      {/* ============================================================ */}
-      <div 
+
+      {/* LEFT SIDEBAR */}
+      <div
         className={`hidden md:flex bg-white dark:bg-[#1f2937] border-r border-[#e5e7eb] dark:border-[#374151] flex-col h-screen sticky top-0 transition-all duration-300 ${
           isSidebarCollapsed ? 'w-20' : 'w-64'
         }`}
@@ -70,36 +78,61 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
           </div>
         </div>
 
-        {/* Primary Navigation - Engineering Tools Only */}
+        {/* Primary Navigation */}
         <nav className="flex-1 p-3 overflow-y-auto">
           <div className="space-y-1">
             {navItems.map((item) => {
               const isActive = currentModule === item.id || location.pathname.includes(item.id);
+              const hasChildren = !!item.children && !isSidebarCollapsed;
+              const expanded = openMenus[item.id];
               return (
-                <Link
-                  key={item.id}
-                  to={item.path}
-                  className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all cursor-pointer group ${
-                    isActive
-                      ? 'bg-[#0A2F44] text-white shadow-md'
-                      : 'text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] hover:text-[#0A2F44] dark:hover:text-[#cce1eb]'
-                  } ${isSidebarCollapsed ? 'justify-center' : ''}`}
-                  title={isSidebarCollapsed ? item.name : ''}
-                >
-                  <item.icon className={`text-xl flex-shrink-0 transition-colors ${isActive ? 'text-white' : 'group-hover:text-[#0A2F44] dark:group-hover:text-[#66a4c2]'}`} />
-                  {!isSidebarCollapsed && (
-                    <span className="text-sm font-medium">{item.name}</span>
+                <div key={item.id}>
+                  <div
+                    className={`flex items-center rounded-lg transition-all ${
+                      isActive
+                        ? 'bg-[#0A2F44] text-white shadow-md'
+                        : 'text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151] hover:text-[#0A2F44] dark:hover:text-[#cce1eb]'
+                    }`}
+                  >
+                    <Link
+                      to={item.path}
+                      className={`flex flex-1 items-center space-x-3 px-3 py-2.5 cursor-pointer group ${isSidebarCollapsed ? 'justify-center' : ''}`}
+                      title={isSidebarCollapsed ? item.name : ''}
+                    >
+                      <item.icon className={`text-xl flex-shrink-0 transition-colors ${isActive ? 'text-white' : 'group-hover:text-[#0A2F44] dark:group-hover:text-[#66a4c2]'}`} />
+                      {!isSidebarCollapsed && <span className="text-sm font-medium">{item.name}</span>}
+                    </Link>
+                    {hasChildren && (
+                      <button onClick={() => toggleMenu(item.id)} className="px-2 py-2.5" title="Toggle submenu">
+                        <FiChevronDown className={`text-sm transition-transform ${expanded ? 'rotate-180' : ''} ${isActive ? 'text-white' : 'text-[#9ca3af]'}`} />
+                      </button>
+                    )}
+                  </div>
+                  {hasChildren && expanded && (
+                    <div className="ml-8 mt-1 space-y-1 border-l border-[#e5e7eb] dark:border-[#374151] pl-3">
+                      {item.children.map((c) => {
+                        const ca = childActive(c.path);
+                        return (
+                          <Link
+                            key={c.path}
+                            to={c.path}
+                            className={`block rounded-md px-2 py-1.5 text-[13px] transition-colors ${
+                              ca ? 'text-[#0A2F44] dark:text-[#66a4c2] font-semibold' : 'text-[#6b7280] dark:text-[#9ca3af] hover:text-[#0A2F44] dark:hover:text-[#cce1eb]'
+                            }`}
+                          >
+                            {c.name}
+                          </Link>
+                        );
+                      })}
+                    </div>
                   )}
-                  {isActive && !isSidebarCollapsed && (
-                    <div className="ml-auto w-1 h-5 bg-white rounded-full"></div>
-                  )}
-                </Link>
+                </div>
               );
             })}
           </div>
         </nav>
 
-        {/* Bottom section with collapse button */}
+        {/* Collapse button */}
         <div className="p-4 border-t border-[#e5e7eb] dark:border-[#374151]">
           <button
             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -118,13 +151,11 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
         </div>
       </div>
 
-      {/* Floating Toggle Button - Visible when sidebar is collapsed */}
+      {/* Floating Toggle Button */}
       <button
         onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         className="hidden md:flex fixed left-5 top-[84px] z-30 w-6 h-6 bg-white dark:bg-[#1f2937] border border-[#e5e7eb] dark:border-[#374151] rounded-full shadow-md hover:shadow-lg transition-all items-center justify-center cursor-pointer"
-        style={{ 
-          left: isSidebarCollapsed ? 'calc(5rem - 12px)' : 'calc(16rem - 12px)'
-        }}
+        style={{ left: isSidebarCollapsed ? 'calc(5rem - 12px)' : 'calc(16rem - 12px)' }}
         title={isSidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
       >
         {isSidebarCollapsed ? (
@@ -134,7 +165,7 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
         )}
       </button>
 
-      {/* Mobile Sidebar - Same structure */}
+      {/* Mobile Sidebar */}
       {isMobileMenuOpen && (
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} />
@@ -154,19 +185,36 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
               <nav className="flex-1 p-3 overflow-y-auto">
                 <div className="space-y-1">
                   {navItems.map((item) => (
-                    <Link
-                      key={item.id}
-                      to={item.path}
-                      onClick={() => setIsMobileMenuOpen(false)}
-                      className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all cursor-pointer ${
-                        currentModule === item.id
-                          ? 'bg-[#0A2F44] text-white'
-                          : 'text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151]'
-                      }`}
-                    >
-                      <item.icon className="text-xl flex-shrink-0" />
-                      <span className="text-sm font-medium">{item.name}</span>
-                    </Link>
+                    <div key={item.id}>
+                      <Link
+                        to={item.path}
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all cursor-pointer ${
+                          currentModule === item.id
+                            ? 'bg-[#0A2F44] text-white'
+                            : 'text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#374151]'
+                        }`}
+                      >
+                        <item.icon className="text-xl flex-shrink-0" />
+                        <span className="text-sm font-medium">{item.name}</span>
+                      </Link>
+                      {item.children && (
+                        <div className="ml-8 mt-1 space-y-1 border-l border-[#e5e7eb] dark:border-[#374151] pl-3">
+                          {item.children.map((c) => (
+                            <Link
+                              key={c.path}
+                              to={c.path}
+                              onClick={() => setIsMobileMenuOpen(false)}
+                              className={`block rounded-md px-2 py-1.5 text-[13px] ${
+                                childActive(c.path) ? 'text-[#0A2F44] dark:text-[#66a4c2] font-semibold' : 'text-[#6b7280] dark:text-[#9ca3af]'
+                              }`}
+                            >
+                              {c.name}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </nav>
@@ -175,29 +223,19 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
         </>
       )}
 
-      {/* ============================================================ */}
-      {/* MAIN CONTENT AREA */}
-      {/* ============================================================ */}
+      {/* MAIN CONTENT */}
       <div className="flex-1 overflow-auto">
-        
-        {/* SINGLE TOP BAR - Only one header */}
         <div className="bg-white dark:bg-[#1f2937] border-b border-[#e5e7eb] dark:border-[#374151] sticky top-0 z-20">
           <div className="px-4 sm:px-6 lg:px-8 py-3">
             <div className="flex items-center justify-between">
-              {/* Left: Back + Breadcrumb */}
               <div className="flex items-center space-x-4">
-                <button
-                  onClick={() => setIsMobileMenuOpen(true)}
-                  className="md:hidden p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer"
-                >
+                <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">
                   <FiMenu className="text-lg text-[#6b7280]" />
                 </button>
-                
                 <button onClick={handleBack} className="flex items-center space-x-1 text-sm text-[#6b7280] dark:text-[#9ca3af] hover:text-[#0A2F44] transition-colors cursor-pointer">
                   <FiArrowLeft className="text-sm" />
                   <span>Back to Project</span>
                 </button>
-                
                 {breadcrumb && (
                   <div className="hidden md:flex items-center space-x-2 text-sm">
                     <span className="text-[#9ca3af]">/</span>
@@ -205,8 +243,6 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
                   </div>
                 )}
               </div>
-              
-              {/* Right: Actions - NO USER TEXT, only icons */}
               <div className="flex items-center space-x-2">
                 <button className="p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer" title="Save">
                   <FiSave className="text-sm text-[#6b7280]" />
@@ -221,7 +257,6 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
                 <button onClick={toggleDarkMode} className="p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">
                   {isDarkMode ? <FiSun className="text-sm text-yellow-500" /> : <FiMoon className="text-sm text-[#0A2F44]" />}
                 </button>
-                {/* User Avatar ONLY - NO name/email text */}
                 <div className="w-7 h-7 bg-[#0A2F44] rounded-full flex items-center justify-center text-white text-xs font-medium">
                   {getUserInitials()}
                 </div>
@@ -230,7 +265,7 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
           </div>
         </div>
 
-        {/* ENGINEERING CONTEXT STRIP - Sticky under header */}
+        {/* CONTEXT STRIP */}
         <div className="bg-[#f9fafb] dark:bg-[#374151] border-b border-[#e5e7eb] dark:border-[#374151] sticky top-[57px] z-10">
           <div className="px-4 sm:px-6 lg:px-8 py-2">
             <div className="flex flex-wrap items-center gap-4 text-xs">
@@ -262,7 +297,6 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode = "EC2", a
           </div>
         </div>
 
-        {/* Page Content - NO duplicate headers inside */}
         <div className="px-4 sm:px-6 lg:px-8 py-6">
           {children}
         </div>
