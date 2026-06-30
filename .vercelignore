@@ -1,0 +1,16 @@
+# Keep Vercel (frontend build) from seeing the Python backend.
+# Without this, Vercel detects requirements.txt and tries to pip-install
+# pydantic etc., which fails the build.
+
+backend/
+requirements.txt
+*.py
+__pycache__/
+.venv/
+venv/
+
+# engine / model files (Python)
+engine/
+models/
+services/
+routers/
