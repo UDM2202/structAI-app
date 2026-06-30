@@ -1,16 +1,17 @@
 # Keep Vercel (frontend build) from seeing the Python backend.
-# Without this, Vercel detects requirements.txt and tries to pip-install
-# pydantic etc., which fails the build.
+# Patterns are ANCHORED to repo root with a leading slash so they
+# never match anything under src/ (e.g. src/services/ stays included).
 
-backend/
-requirements.txt
-*.py
-__pycache__/
-.venv/
-venv/
+/backend/
+/requirements.txt
+/engine/
+/models/
+/routers/
+/utils/
+/__pycache__/
+/.venv/
+/venv/
 
-# engine / model files (Python)
-engine/
-models/
-services/
-routers/
+# stray root-level python files (NOT anything under src/)
+/server.py
+/*.py
