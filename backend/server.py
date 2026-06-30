@@ -16,7 +16,7 @@ app = FastAPI(
 # CORS - Allow React frontend to communicate
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://struct-ai-app.*\.vercel\.app",
+    allow_origin_regex=r"https://struct-ai-app.vercel.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
