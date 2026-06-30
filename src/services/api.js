@@ -1,5 +1,5 @@
 // src/services/api.js
-const API_BASE = 'https://structdh.onrender.com';
+const API_BASE = 'https://structdh-1.onrender.com';
 
 export const slabAPI = {
   startDesign: async (formData) => {
