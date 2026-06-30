@@ -184,6 +184,11 @@ const StructuralInput = () => {
   };
 
   const handleOptimise = async () => {
+    const lx = parseFloat(formData.spanLx), ly = parseFloat(formData.spanLy);
+  if (!(lx > 0) || !(ly > 0)) {
+    setError("Enter valid span dimensions (mm).");
+    return;
+  }
     setIsOptimising(true);
     setError(null);
     setProgress(20);

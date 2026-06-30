@@ -7,8 +7,8 @@ export const slabAPI = {
       slab_type: formData.slabType === 'one-way' ? 'one_way' : 'two_way',
       continuity: formData.continuity,
       geometry: {
-        span_lx: parseFloat(formData.spanLx),
-        span_ly: parseFloat(formData.spanLy),
+  span_lx: parseFloat(formData.spanLx) / 1000,
+  span_ly: parseFloat(formData.spanLy) / 1000,
         thickness: parseFloat(formData.thickness),
         effective_depth: parseFloat(formData.effectiveDepth),
         clear_cover: parseFloat(formData.clearCover)
