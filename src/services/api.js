@@ -1,5 +1,5 @@
 // src/services/api.js
-const API_BASE = 'https://structdh-1.onrender.com';
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://structdh-1.onrender.com';
 
 export const slabAPI = {
   startDesign: async (formData) => {
@@ -7,8 +7,8 @@ export const slabAPI = {
       slab_type: formData.slabType === 'one-way' ? 'one_way' : 'two_way',
       continuity: formData.continuity,
       geometry: {
-  span_lx: parseFloat(formData.spanLx) / 1000,
-  span_ly: parseFloat(formData.spanLy) / 1000,
+        span_lx: parseFloat(formData.spanLx) / 1000,
+        span_ly: parseFloat(formData.spanLy) / 1000,
         thickness: parseFloat(formData.thickness),
         effective_depth: parseFloat(formData.effectiveDepth),
         clear_cover: parseFloat(formData.clearCover)
@@ -45,13 +45,13 @@ export const slabAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request)
     });
-    
+
     if (!response.ok) {
-  const error = await response.json();
-  console.error("422 DETAIL →", JSON.stringify(error.detail, null, 2));
-  throw new Error(typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail));
-}
-    
+      const error = await response.json();
+      console.error("422 DETAIL →", JSON.stringify(error.detail, null, 2));
+      throw new Error(typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail));
+    }
+
     return response.json();
   },
 
@@ -62,18 +62,77 @@ export const slabAPI = {
   }
 };
 
+export const columnAPI = {
+  startDesign: async (formData) => {
+    const request = {
+      column_id: formData.columnId,
+      storey: formData.storey,
+      grid: formData.grid,
+      description: formData.description,
+
+      loading_type: formData.loadingType,
+      bracing: formData.bracing,
+      slenderness_class: formData.slendernessClass,
+
+      section_shape: formData.sectionShape,
+      width: parseFloat(formData.width),
+      depth: parseFloat(formData.depth),
+      cover: parseFloat(formData.cover),
+      link_dia: parseFloat(formData.linkDia),
+      n_bars_per_face: parseInt(formData.nBarsPerFace),
+      bar_dia: parseFloat(formData.barDia),
+
+      concrete_grade: formData.concreteGrade,
+      steel_grade: formData.steelGrade,
+      gamma_c: parseFloat(formData.gammaC),
+      gamma_s: parseFloat(formData.gammaS),
+
+      ky: parseFloat(formData.ky),
+      ly: parseFloat(formData.ly),
+      kz: parseFloat(formData.kz),
+      lz: parseFloat(formData.lz),
+
+      ned: parseFloat(formData.ned),
+      medy: parseFloat(formData.medy),
+      medz: parseFloat(formData.medz),
+
+      analysis_method: formData.analysisMethod,
+      consider_imperfections: !!formData.considerImperfections,
+      alpha_i: parseFloat(formData.alphaI),
+      use_min_ecc: !!formData.useMinEcc,
+    };
+
+    const response = await fetch(`${API_BASE}/api/column/design/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(
+        typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail || "Design failed")
+      );
+    }
+    return response.json();
+  },
+};
+
 export const beamAPI = {
   startDesign: async (formData) => {
     const request = {
       beam_id: formData.beamId || "B1",
-      design_code: formData.designCode,                 // EC2 | BS8110 | ACI318
-      support_condition: formData.supportCondition,     // e.g. both_ends_simply_supported
-      top_restraint: formData.topRestraint,             // continuous | one_end_discontinuous | both_ends_discontinuous
+      design_code: formData.designCode,
+      support_condition: formData.supportCondition,
+      top_restraint: formData.topRestraint,
       geometry: {
-        span: parseFloat(formData.span),                // mm
-        width: parseFloat(formData.width),              // mm
-        depth: parseFloat(formData.depth),              // mm
+        span: parseFloat(formData.span),
+        width: parseFloat(formData.width),
+        depth: parseFloat(formData.depth),
         effective_cover: parseFloat(formData.effectiveCover),
+        left_adjacent_spacing: parseFloat(formData.leftAdjacentSpacing) || 0,
+        right_adjacent_spacing: parseFloat(formData.rightAdjacentSpacing) || 0,
+        slab_thickness: parseFloat(formData.slabThickness) || 0,
       },
       materials: {
         concrete_grade: formData.concreteGrade,
@@ -108,7 +167,6 @@ export const beamAPI = {
     return res.json();
   },
 };
-
 
 export const continuousBeamAPI = {
   startDesign: async (form) => {
@@ -206,4 +264,38 @@ export const continuousSlabAPI = {
     }
     return res.json();
   },
+};
+
+export const foundationAPI = {
+  designPad: async (payload) => {
+    // payload already carries engine fields; strip the display-only _meta
+    const { _meta, ...request } = payload;
+    const res = await fetch(`${API_BASE}/api/foundation/pad/design/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || "Design failed")
+      );
+    }
+    return res.json();
+  },
+   designCombined: async (payload) => {
+    const res = await fetch(`${API_BASE}/api/foundation/combined/design/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || "Design failed")
+      );
+    }
+    return res.json();
+  },
+ 
 };

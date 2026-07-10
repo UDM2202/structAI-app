@@ -1,8 +1,8 @@
-// src/pages/ContinuousBeamResults.jsx — renders inside MainLayout
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { exportElementToPdf } from "../utils/exportPdf";
 import {
-  FiArrowLeft, FiAlertTriangle, FiCheckCircle, FiXCircle, FiFileText,
+  FiArrowLeft, FiAlertTriangle, FiInfo, FiCheckCircle, FiXCircle, FiFileText,
   FiDownload, FiX, FiLayers, FiGrid, FiActivity, FiBox, FiZap, FiBarChart2,
 } from "react-icons/fi";
 
@@ -18,6 +18,7 @@ export default function ContinuousBeamResults() {
   const location = useLocation();
   const data = location.state?.designResult;
   const [reportOpen, setReportOpen] = useState(false);
+  const sheetRef = useRef(null);
 
   if (!data) {
     return (
@@ -51,7 +52,7 @@ export default function ContinuousBeamResults() {
   ];
 
   return (
-    <div className="flex flex-col">
+    <div ref={sheetRef} className="flex flex-col">
       {/* title */}
       <div className="cb-no-print mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -63,7 +64,7 @@ export default function ContinuousBeamResults() {
             {pass ? <FiCheckCircle /> : <FiXCircle />} {pass ? "SAFE" : "CHECK"}
           </span>
           <button onClick={() => setReportOpen(true)} className="flex items-center gap-2 rounded-lg border border-[#0A2F44] dark:border-[#66a4c2] px-3 py-1.5 text-sm font-medium text-[#0A2F44] dark:text-[#66a4c2] hover:bg-[#e6f0f5] dark:hover:bg-[#1e3a4a]"><FiFileText size={15} /> Detailed Report</button>
-          <button onClick={() => window.print()} className="flex items-center gap-2 rounded-lg bg-[#0A2F44] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#082636]"><FiDownload size={15} /> Download</button>
+          <button onClick={() => exportElementToPdf(sheetRef.current, `ContinuousBeam-${summary.beam_id || "report"}`)} className="flex items-center gap-2 rounded-lg bg-[#0A2F44] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#082636]"><FiDownload size={15} /> Download</button>
         </div>
       </div>
 
@@ -77,11 +78,11 @@ export default function ContinuousBeamResults() {
         ))}
       </div>
 
-      {/* warnings */}
+      {/* analysis notes */}
       {warnings?.length > 0 && (
-        <div className="cb-no-print mb-5 rounded-lg border border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 p-4">
-          <div className="mb-1 flex items-center gap-2 font-semibold text-yellow-800 dark:text-yellow-300"><FiAlertTriangle /> Coefficient-method assumptions</div>
-          <ul className="ml-6 list-disc space-y-1 text-sm text-yellow-800 dark:text-yellow-300">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        <div className="cb-no-print mb-5 rounded-lg border border-[#e2e8f0] dark:border-[#334155] bg-[#f8fafc] dark:bg-[#0b0f19] p-4">
+          <div className="mb-1 flex items-center gap-2 font-semibold text-[#0A2F44] dark:text-[#66a4c2]"><FiInfo /> Analysis notes</div>
+          <ul className="ml-6 list-disc space-y-1 text-sm text-[#475569] dark:text-[#94a3b8]">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
         </div>
       )}
 

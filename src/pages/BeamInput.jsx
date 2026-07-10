@@ -60,6 +60,7 @@ const DEFAULTS = {
   supportCondition: "both_ends_simply_supported",
   topRestraint: "continuous",
   span: "6000", width: "300", depth: "500", effectiveCover: "25",
+  leftAdjacentSpacing: "0", rightAdjacentSpacing: "0", slabThickness: "0",
   concreteGrade: "M25", steelGrade: "Fe500",
   unitWeightConcrete: "25", unitWeightSteel: "78.5",
   selfWeightAuto: true,
@@ -206,7 +207,13 @@ const BeamInput = () => {
                   <Field label="Width (b)" unit="mm" value={f.width} onChange={(v) => set({ width: v })} step="25" />
                   <Field label="Overall Depth (D)" unit="mm" value={f.depth} onChange={(v) => set({ depth: v })} step="25" />
                   <Field label="Effective Cover (c_c)" unit="mm" value={f.effectiveCover} onChange={(v) => set({ effectiveCover: v })} step="5" />
+                  <Field label="Slab Thickness (flange)" unit="mm" value={f.slabThickness} onChange={(v) => set({ slabThickness: v })} step="25" />
+                  <Field label="Left Adjacent Spacing" unit="mm" value={f.leftAdjacentSpacing} onChange={(v) => set({ leftAdjacentSpacing: v })} step="50" />
+                  <Field label="Right Adjacent Spacing" unit="mm" value={f.rightAdjacentSpacing} onChange={(v) => set({ rightAdjacentSpacing: v })} step="50" />
                 </div>
+                <p className="mt-2 text-xs text-[#64748b] dark:text-[#94a3b8]">
+                  Leave adjacent spacings at 0 to design a rectangular section. Enter the centre-to-centre spacing of adjacent beams to design as a T-beam (EC2 Cl. 5.3.2.1).
+                </p>
               </Section>
 
               {/* 4. MATERIALS */}

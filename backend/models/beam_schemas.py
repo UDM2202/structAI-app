@@ -21,6 +21,9 @@ class BeamGeometry(BaseModel):
     width: float = Field(..., gt=0, description="mm")
     depth: float = Field(..., gt=0, description="mm")
     effective_cover: float = Field(25, gt=0, description="mm")
+    slab_thickness: float = Field(0, ge=0, description="mm (flange thickness for T-beam; 0 = rectangular)")   # (+)
+    left_adjacent_spacing: float = Field(0, ge=0, description="mm (c/c to adjacent beam, left; 0 = no flange)")   # (+)
+    right_adjacent_spacing: float = Field(0, ge=0, description="mm (c/c to adjacent beam, right; 0 = no flange)")  # (+)
 
 class BeamMaterials(BaseModel):
     concrete_grade: str = "C25/30"

@@ -14,15 +14,15 @@ def _enum(v):
 
 
 def parse_fck(grade):
-    g = str(grade).upper().replace("C", "").replace("M", "")
     try:
+        g = grade.replace("C", "")
         return float(g.split("/")[0])
-    except (ValueError, IndexError):
+    except Exception:
         return 25.0
 
 
 def parse_fy(grade):
-    m = re.search(r"(\d{3})", str(grade))
+    m = re.search(r"(\d+)", grade)
     return float(m.group(1)) if m else 500.0
 
 
@@ -36,7 +36,7 @@ SUPPORT_COEFFS = {
 
 
 def pick_bars(as_req, dias):
-    """Choose bar count/diameter for a beam (prefers 2–6 bars)."""
+    """Choose bar count/diameter for a beam (prefers 2-6 bars)."""
     fallback = None
     for dia in sorted(dias):
         area = PI / 4 * dia ** 2
@@ -47,6 +47,19 @@ def pick_bars(as_req, dias):
         if 2 <= n <= 6:
             return opt
     return fallback
+
+
+def _effective_flange_width(g, L_m, bw_mm):
+    """EC2 Cl. 5.3.2.1 effective flange width for a simply-supported T-beam.
+    Returns bw when no adjacent spacings are supplied (rectangular fallback)."""
+    left = getattr(g, "left_adjacent_spacing", 0) or 0
+    right = getattr(g, "right_adjacent_spacing", 0) or 0
+    if left <= 0 and right <= 0:
+        return bw_mm, False                       # rectangular (unchanged behaviour)
+    l0 = 0.85 * L_m * 1000.0                       # simply-supported: l0 = 0.85 L (mm)
+    beff1 = min(0.2 * l0, left / 2.0) if left > 0 else 0.0
+    beff2 = min(0.2 * l0, right / 2.0) if right > 0 else 0.0
+    return bw_mm + beff1 + beff2, True
 
 
 def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
@@ -89,12 +102,14 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
     m_ed = cM * w_d * L ** 2   # kNm
     v_ed = cV * w_d * L        # kN
 
-    # ---- flexure ----
+    # ---- effective flange (T-beam) -- beff = bw when no spacings given ----
+    beff, is_tbeam = _effective_flange_width(g, L, b)
+
+    # ---- flexure (user's script method: K/0.9 lever arm, 0.87 fyk) ----
     d0 = h - cover - link - 10  # first guess (assume 20mm bar)
     if is_bs:
         fcu = fck
-        K = m_ed * 1e6 / (b * d0 ** 2 * fcu)
-        K = min(K, 0.156)
+        K = min(m_ed * 1e6 / (beff * d0 ** 2 * fcu), 0.156)
         z = min(d0 * (0.5 + (max(0.25 - K / 0.9, 0)) ** 0.5), 0.95 * d0)
         as_req = m_ed * 1e6 / (0.95 * fy * z)
         fcd = 0.45 * fcu
@@ -102,11 +117,11 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
     else:
         fcd = fck / 1.5
         fyd = fy / 1.15
-        K = m_ed * 1e6 / (b * d0 ** 2 * fck)
-        z = min(d0 * (0.5 + (max(0.25 - K / 1.134, 0)) ** 0.5), 0.95 * d0)
-        as_req = m_ed * 1e6 / (fyd * z)
+        K = m_ed * 1e6 / (beff * d0 ** 2 * fck)
+        z = min(d0 * (0.5 + (max(0.25 - K / 0.9, 0)) ** 0.5), 0.95 * d0)   # K/0.9 per script
+        as_req = m_ed * 1e6 / (0.87 * fy * z)                              # 0.87 fyk per script
 
-    # min/max steel
+    # min/max steel (min based on web width bw, per script)
     if is_bs:
         as_min = 0.0013 * b * h
     else:
@@ -116,22 +131,22 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
 
     bars = pick_bars(as_req, request.bar_diameters)
     d = h - cover - link - bars["bar_diameter"] / 2  # refined effective depth
-    # recompute z & resistance with refined d
+    # recompute z & resistance with refined d (on beff)
     if is_bs:
-        K = min(m_ed * 1e6 / (b * d ** 2 * fck), 0.156)
+        K = min(m_ed * 1e6 / (beff * d ** 2 * fck), 0.156)
         z = min(d * (0.5 + (max(0.25 - K / 0.9, 0)) ** 0.5), 0.95 * d)
         m_rd = 0.95 * fy * bars["area_provided"] * z / 1e6
     else:
-        K = m_ed * 1e6 / (b * d ** 2 * fck)
-        z = min(d * (0.5 + (max(0.25 - K / 1.134, 0)) ** 0.5), 0.95 * d)
-        m_rd = fyd * bars["area_provided"] * z / 1e6
+        K = m_ed * 1e6 / (beff * d ** 2 * fck)
+        z = min(d * (0.5 + (max(0.25 - K / 0.9, 0)) ** 0.5), 0.95 * d)
+        m_rd = 0.87 * fy * bars["area_provided"] * z / 1e6
     util_bend = m_ed / m_rd if m_rd else 0
 
-    # nominal compression / hanger steel: 2 × smallest bar
+    # nominal compression / hanger steel: 2 x smallest bar
     comp_dia = min(request.bar_diameters)
     comp_area = 2 * PI / 4 * comp_dia ** 2
 
-    # ---- shear ----
+    # ---- shear (unchanged; web width bw) ----
     as_prov = bars["area_provided"]
     rho = min(as_prov / (b * d), 0.02 if not is_bs else 0.03)
     v_ed_n = v_ed * 1000.0  # N
@@ -145,17 +160,16 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
         v_rdc = max(0.12 * kf * (100 * rho * fck) ** (1 / 3), v_min) * b * d  # N
     util_shear = v_ed_n / v_rdc if v_rdc else 0
 
-    # links: minimum if within concrete capacity, else design spacing
     asw = 2 * PI / 4 * link ** 2  # 2-leg area
     if v_ed_n <= v_rdc:
         link_spacing = int(min(0.75 * d, 300) // 25 * 25)
     else:
         fywd = (0.95 * fy) if is_bs else (fy / 1.15)
-        s = asw * z * fywd / (v_ed_n)  # cotθ = 1
+        s = asw * z * fywd / (v_ed_n)  # cot(theta) = 1
         link_spacing = max(75, int(min(s, 0.75 * d, 300) // 25 * 25))
 
-    # ---- SLS: deflection (short-term, gross section) ----
-    Ecm = 22000 * ((fck + 8) / 10) ** 0.3 if not is_bs else 24000  # N/mm²
+    # ---- SLS: deflection (short-term, gross section) -- unchanged ----
+    Ecm = 22000 * ((fck + 8) / 10) ** 0.3 if not is_bs else 24000  # N/mm^2
     I_gross = b * h ** 3 / 12.0
     w_sls = service  # N/mm  (1 kN/m == 1 N/mm)
     span_mm = g.span
@@ -168,7 +182,7 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
     defl_limit = span_mm / 250.0
     defl_status = "PASS" if defl <= defl_limit else "FAIL"
 
-    # ---- SLS: crack width (simplified EC2 7.3.4) ----
+    # ---- SLS: crack width (simplified EC2 7.3.4) -- unchanged ----
     Es = 200000.0
     psi2 = 0.3
     m_qp = cM * (gk + psi2 * qk) * L ** 2  # quasi-permanent moment, kNm
@@ -187,11 +201,18 @@ def calculate_beam_design(request: BeamDesignRequest) -> BeamDesignResult:
     overall = "PASS" if (util_bend <= 1 and util_shear <= 1 and defl_status == "PASS" and crack_status == "PASS") else "FAIL"
     code_label = "BS 8110:1997" if is_bs else ("ACI 318" if code == "ACI318" else "EN 1992-1-1 (EC2)")
 
+    section_note = (
+        f"Flexure designed as T-beam: beff = {round(beff)} mm (EC2 Cl. 5.3.2.1)."
+        if is_tbeam else
+        "Flexure designed as rectangular section (no adjacent spacings entered)."
+    )
     notes = [
         f"Design in accordance with {code_label}.",
+        section_note,
+        "Lever arm z = d[0.5 + sqrt(0.25 - K/0.9)]; As = M/(0.87 fyk z).",
         "Design UDL includes beam self-weight." if request.loads.self_weight_auto else "Self-weight excluded by user.",
         "Deflection is short-term on the gross (uncracked) section; long-term values will be higher.",
-        "Crack width is a simplified EC2 7.3.4 estimate (quasi-permanent, ψ2 = 0.3).",
+        "Crack width is a simplified EC2 7.3.4 estimate (quasi-permanent, psi2 = 0.3).",
         "Dimensions in mm; forces in kN and kNm.",
     ]
 

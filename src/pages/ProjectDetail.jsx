@@ -24,8 +24,8 @@ const ProjectDetail = () => {
     loadProjects, 
     updateProject, 
     deleteProject,
-    setCurrentProjectByProjectId,  // Add this
-    currentProject  // Add this to get current project
+    setCurrentProjectByProjectId,    
+    currentProject  
   } = useWorkspace();
   const [project, setProject] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');

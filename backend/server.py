@@ -6,7 +6,9 @@ from routers import continuous_beam
 from routers import continuous_slab
 import os
 import uvicorn
-
+from routers import column
+from routers import foundation
+  
 app = FastAPI(
     title="StructAI Design Engine",
     description="AI-driven structural design optimization for reinforced concrete slabs",
@@ -28,7 +30,8 @@ app.include_router(rates.router, prefix="/api/rates", tags=["Material Rates"])
 app.include_router(beam.router, prefix="/api/beam")
 app.include_router(continuous_beam.router, prefix="/api/continuous-beam")
 app.include_router(continuous_slab.router, prefix="/api/continuous-slab")
-
+app.include_router(column.router, prefix="/api/column")
+app.include_router(foundation.router, prefix="/api/foundation")
 
 @app.get("/")
 async def root():

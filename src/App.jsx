@@ -35,6 +35,12 @@ import ContinuousBeamInput from './pages/ContinuousBeamInput';
 import ContinuousBeamResults from './pages/ContinuousBeamResults';
 import ContinuousSlabInput from './pages/ContinuousSlabInput';
 import ContinuousSlabResults from './pages/ContinuousSlabResults';
+import ColumnInput from './pages/ColumnInput';
+import ColumnResults from './pages/ColumnResults';
+import FoundationInput from './pages/FoundationInput';
+import FoundationResults from './pages/FoundationResults';
+import CombinedFootingInput from './pages/CombinedFootingInput';
+import CombinedFootingResults from './pages/CombinedFootingResults';
 
 function App() {
   return (
@@ -200,6 +206,62 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
+                                      <Route path="/column-input" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="column" breadcrumb="Column Design > Input">
+                        <ColumnInput />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/column-results" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="column" breadcrumb="Column Design > Results">
+                        <ColumnResults />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/foundation-input" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Input">
+                        <FoundationInput />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/foundation-results" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Results">
+                        <FoundationResults />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/foundation-input" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Input">
+                        <FoundationInput />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/foundation-results" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Results">
+                        <FoundationResults />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/combined-input" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Input">
+                       <CombinedFootingInput />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/combined-results" element={
+                    <ProtectedRoute>
+                      <MainLayout currentModule="foundation" breadcrumb="Foundation Design > Results">
+                        <CombinedFootingResults />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  } />
 
                     <Route path="/workspace/:workspaceId/projects/:projectId/results" element={<ResultsDashboard />} />
 
