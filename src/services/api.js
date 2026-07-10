@@ -1,5 +1,5 @@
 // src/services/api.js
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://structdh-1.onrender.com';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export const slabAPI = {
   startDesign: async (formData) => {
