@@ -14,6 +14,11 @@ try:
 except ImportError:
     from continuous_one_way_slab_engine import design_continuous_slab, ContinuousInput
 
+try:
+    from engine.slab_detailed_report import SlabReportInput, build_detailed_slab_report
+except ImportError:
+    from slab_detailed_report import SlabReportInput, build_detailed_slab_report
+
 
 def _enum(v):
     return v.value if hasattr(v, "value") else v
@@ -162,7 +167,42 @@ def calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlabR
         sfd=[round(v, 2) for v in res.sfd_kN],
     )
 
-    report = _build_report(request, res)
+    if len(request.span_lengths) == 1:
+        report = build_detailed_slab_report(detailed_inp)
+    else:
+        report = _build_report(request, res)
+    mats = request.materials
+    loads = request.loads
+
+    def _parse_fck(g):
+        try:
+            return float(str(g).replace("C", "").split("/")[0])
+        except Exception:
+            return 25.0
+
+    def _parse_fy(g):
+        import re
+        m = re.search(r"(\d+)", str(g))
+        return float(m.group(1)) if m else 500.0
+
+    detailed_inp = SlabReportInput(
+        Lx_m=request.span_lengths[0],
+        h_mm=request.geometry_thickness,
+        clear_cover_mm=request.clear_cover,
+        cover_tol_mm=getattr(request, "cover_tolerance", 5.0),
+        bar_dia_mm=getattr(request, "main_bar_dia", 12),
+        fck=_parse_fck(mats.concrete_grade),
+        fyk=_parse_fy(mats.steel_grade),
+        unit_weight_conc=mats.unit_weight_concrete,
+        finishes=loads.floor_finish or 0.0,
+        partition=loads.dead_load or 0.0,
+        extra_dead=loads.additional_dead_load or 0.0,
+        imposed_qk=(loads.live_load or 0.0),
+        extra_live=loads.additional_live_load or 0.0,
+        occupancy=getattr(request, "occupancy", "office"),
+        support="simply_supported",
+    )
+    report = build_detailed_slab_report(detailed_inp)
 
     return ContinuousSlabResult(
         task_id="completed", status="completed", summary=summary, envelope=envelope,

@@ -250,6 +250,9 @@ export const continuousSlabAPI = {
         deflection_limit: parseInt(form.deflectionLimit) || 250,
       },
       bar_diameters: form.barDiameters || [10, 12, 16],
+      cover_tolerance: parseFloat(form.coverTolerance) || 5,
+      occupancy: form.occupancy || "office",
+      main_bar_dia: parseInt(form.mainBarDia) || 12,
       region: form.region || "Nigeria",
     };
 

@@ -205,6 +205,9 @@ class ContinuousSlabRequest(BaseModel):
     loads: LoadInput
     design_params: DesignParameters
     bar_diameters: Optional[List[int]] = Field([10, 12, 16])
+    cover_tolerance: float = Field(5, ge=0, description="Cover tolerance in mm (detailing allowance)")   # (+)
+    occupancy: str = Field("office", description="Occupancy class driving default imposed load")
+    main_bar_dia: int = Field(12, gt=0, description="Assumed main bar diameter (mm)")   
     region: str = Field("UK")
 
     @model_validator(mode="after")

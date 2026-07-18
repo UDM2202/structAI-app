@@ -1,90 +1,73 @@
 // src/utils/exportPdf.js
-// Reusable "download as PDF" for the structural results pages.
-// Uses jsPDF + html2canvas. Install once:  npm install jspdf html2canvas
+// Browser print-to-PDF. No dependencies, no html2canvas — so no oklch/Tailwind-v4
+// issue, and nothing gets truncated (the browser paginates the whole sheet).
 //
 // Usage in a results page:
 //   import { exportElementToPdf } from "../utils/exportPdf";
-//   const ref = useRef(null);
-//   <div ref={ref}> ...page content... </div>
-//   <button onClick={() => exportElementToPdf(ref.current, "Beam-B1")}>Download Report</button>
+//   <button onClick={() => exportElementToPdf(sheetRef.current, "Beam-B1")}>Download PDF</button>
 //
-// Notes / known limits (by design):
-//  - Dark mode: we force a light snapshot so the PDF is always a clean white sheet.
-//  - Plotly 3D (WebGL) panels may not rasterize; Recharts/SVG capture fine. Any
-//    element marked data-pdf-skip is replaced by a placeholder line in the PDF.
-//  - Long pages are sliced across A4 pages so nothing is clipped.
+// The element passed in is marked as the print root; a print stylesheet (below,
+// injected once) hides everything else and prints only that element at full length.
+// The user gets the browser's native "Save as PDF" dialog.
 
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+let styleInjected = false;
 
-export async function exportElementToPdf(el, filename = "report", opts = {}) {
-  if (!el) return;
-  const {
-    marginMm = 10,           // page margin
-    scale = 2,               // capture resolution (2 = crisp)
-    background = "#ffffff",
-  } = opts;
-
-  // 1) Force light theme for the capture (restore afterwards)
-  const root = document.documentElement;
-  const wasDark = root.classList.contains("dark");
-  if (wasDark) root.classList.remove("dark");
-
-  // 2) Let Plotly panels export themselves to static images where possible,
-  //    otherwise they're captured as-is (may be blank for WebGL surfaces).
-  //    Panels the caller marked with data-pdf-skip get a placeholder.
-  const skipped = Array.from(el.querySelectorAll("[data-pdf-skip]"));
-  const restores = skipped.map((node) => {
-    const ph = document.createElement("div");
-    ph.style.cssText =
-      "border:1px dashed #cbd5e1;border-radius:8px;padding:16px;text-align:center;" +
-      "font:12px sans-serif;color:#64748b;background:#f8fafc;";
-    ph.textContent = node.getAttribute("data-pdf-skip") || "3D view omitted in PDF — view interactively in the app.";
-    node.parentNode.insertBefore(ph, node);
-    const prevDisplay = node.style.display;
-    node.style.display = "none";
-    return () => { node.style.display = prevDisplay; ph.remove(); };
-  });
-
-  try {
-    // small delay so layout settles after theme swap
-    await new Promise((r) => setTimeout(r, 60));
-
-    const canvas = await html2canvas(el, {
-      scale,
-      backgroundColor: background,
-      useCORS: true,
-      logging: false,
-      windowWidth: el.scrollWidth,
-    });
-
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const usableW = pageW - marginMm * 2;
-    const usableH = pageH - marginMm * 2;
-
-    // scale image to usable width; slice vertically across pages
-    const imgW = usableW;
-    const imgH = (canvas.height * imgW) / canvas.width;
-
-    let heightLeft = imgH;
-    let position = marginMm;
-    const imgData = canvas.toDataURL("image/png");
-
-    pdf.addImage(imgData, "PNG", marginMm, position, imgW, imgH, undefined, "FAST");
-    heightLeft -= usableH;
-
-    while (heightLeft > 0) {
-      pdf.addPage();
-      position = marginMm - (imgH - heightLeft);
-      pdf.addImage(imgData, "PNG", marginMm, position, imgW, imgH, undefined, "FAST");
-      heightLeft -= usableH;
-    }
-
-    pdf.save(`${filename}.pdf`);
-  } finally {
-    restores.forEach((fn) => fn());
-    if (wasDark) root.classList.add("dark");
+function injectPrintStyle() {
+  if (styleInjected) return;
+  styleInjected = true;
+  const css = `
+@media print {
+  /* hide everything, then reveal only the print root and its descendants */
+  body * { visibility: hidden !important; }
+  #__print_root, #__print_root * { visibility: visible !important; }
+  #__print_root {
+    position: absolute !important; left: 0; top: 0; width: 100% !important;
+    margin: 0 !important; padding: 12px !important; background: #fff !important;
   }
+  /* force light rendering so the PDF is a clean white sheet even in dark mode */
+  #__print_root, #__print_root * {
+    color: #0f172a !important;
+    background-color: #fff !important;
+    border-color: #e2e8f0 !important;
+  }
+  /* keep status colors legible */
+  #__print_root .pdf-pass { color: #16a34a !important; }
+  #__print_root .pdf-fail { color: #ef4444 !important; }
+  /* elements marked no-print (nav, buttons) are removed */
+  .cb-no-print, .pdf-hide { display: none !important; }
+  /* avoid breaking cards across pages where possible */
+  #__print_root section, #__print_root table { break-inside: avoid; }
+  @page { size: A4; margin: 12mm; }
+}`;
+  const el = document.createElement("style");
+  el.setAttribute("data-print-style", "true");
+  el.textContent = css;
+  document.head.appendChild(el);
+}
+
+export function exportElementToPdf(element, filename = "report") {
+  if (!element) return;
+  injectPrintStyle();
+
+  // tag the element as the print root
+  const prevId = element.id;
+  element.id = "__print_root";
+
+  // set the document title so the PDF's default filename is meaningful
+  const prevTitle = document.title;
+  document.title = filename;
+
+  const cleanup = () => {
+    element.id = prevId || "";
+    document.title = prevTitle;
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+
+  // give the style a tick to apply, then print
+  setTimeout(() => {
+    window.print();
+    // Safari sometimes doesn't fire afterprint reliably; restore as a fallback
+    setTimeout(cleanup, 1000);
+  }, 50);
 }

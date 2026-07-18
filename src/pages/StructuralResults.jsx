@@ -42,6 +42,7 @@ function deriveEC2({ summary, forces, reinf, shear, defl }) {
   const h = Number(summary.thickness) || 0;
   const Lx = Number(summary.span_lx) || 0;
   const Ly = Number(summary.span_ly) || 0;
+  const isTwoWay = /two/i.test(summary.slab_type || "") && Ly > 0;
   const spans = [Lx, Ly].filter(Boolean);
   const Lshort = (spans.length ? Math.min(...spans) : 0) * 1000;
 
@@ -482,8 +483,8 @@ function SlabSummaryCard({ summary }) {
     <Card number="1" title="Slab Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
-      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
+      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete" value={summary.concrete_grade || "N/A"} />
@@ -623,8 +624,8 @@ function DesignInputCard({ summary, forces }) {
     <Card number="8" title="Design Input Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
-      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
+      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete Grade" value={summary.concrete_grade || "N/A"} />

@@ -18,6 +18,17 @@ const STEEL = ["B500", "B460"];
 const EXPOSURE = ["XC1", "XC2", "XC3", "XC4"];
 const REGIONS = ["UK", "Nigeria"];
 const BARSETS = [[10, 12, 16], [12, 16, 20], [8, 10, 12]];
+const MAIN_BARS = [8, 10, 12, 16, 20, 25];
+// EN 1991-1-1 (indicative) imposed loads by occupancy — editable after selection
+const OCCUPANCY = [
+  { value: "residential", label: "Residential (1.5)", qk: 1.5 },
+  { value: "office", label: "Office (2.5)", qk: 2.5 },
+  { value: "classroom", label: "Classroom / School (3.0)", qk: 3.0 },
+  { value: "retail", label: "Retail / Shop (4.0)", qk: 4.0 },
+  { value: "assembly", label: "Assembly / Public (5.0)", qk: 5.0 },
+  { value: "parking", label: "Parking (2.5)", qk: 2.5 },
+  { value: "storage", label: "Storage (7.5)", qk: 7.5 },
+];
 
 const DEFAULTS = {
   spanLengths: ["5", "5", "5"],
@@ -32,6 +43,9 @@ const DEFAULTS = {
   deadLoad: "1.0",
   floorFinish: "1.0",
   liveLoad: "3.0",
+  occupancy: "office",
+  mainBarDia: "12",
+  coverTolerance: "5",
   additionalDeadLoad: "0",
   additionalLiveLoad: "0",
   designCode: "EC2",
@@ -147,7 +161,12 @@ export default function ContinuousSlabInput() {
           </header>
           <div className="grid grid-cols-2 gap-3 p-4">
             <div><label className={LABEL}>Thickness (mm)</label><input type="number" className={INPUT} value={form.thickness} onChange={(e) => set({ thickness: e.target.value })} /></div>
-            <div><label className={LABEL}>Clear Cover (mm)</label><input type="number" className={INPUT} value={form.clearCover} onChange={(e) => set({ clearCover: e.target.value })} /></div>
+            <div>
+              <label className={LABEL}>Clear Cover (mm)</label>
+              <input type="number" className={INPUT} value={form.clearCover} onChange={(e) => set({ clearCover: e.target.value })} />
+              <p className={`mt-1 text-[10px] ${SUB}`}>+{form.coverTolerance} mm tolerance \u2192 detail cover \u2248 {(parseFloat(form.clearCover) || 0) + (parseFloat(form.coverTolerance) || 0)} mm</p>
+            </div>
+            <div><label className={LABEL}>Main Bar \u00d8 (mm)</label><Dropdown value={form.mainBarDia} onChange={(v) => set({ mainBarDia: v })} options={MAIN_BARS.map((b) => ({ value: String(b), label: `\u00d8${b}` }))} /></div>
             <div><label className={LABEL}>Concrete</label><Dropdown value={form.concreteGrade} onChange={(v) => set({ concreteGrade: v })} options={CONCRETE} /></div>
             <div><label className={LABEL}>Steel</label><Dropdown value={form.steelGrade} onChange={(v) => set({ steelGrade: v })} options={STEEL} /></div>
             <div><label className={LABEL}>Bar set (mm)</label><Dropdown value={form.barDiameters.join(",")} onChange={(v) => set({ barDiameters: v.split(",").map(Number) })} options={BARSETS.map((b) => ({ value: b.join(","), label: b.join(", ") }))} /></div>
@@ -164,7 +183,14 @@ export default function ContinuousSlabInput() {
             <div><label className={LABEL}>Partition / Dead</label><input type="number" step="0.1" className={INPUT} value={form.deadLoad} onChange={(e) => set({ deadLoad: e.target.value })} /></div>
             <div><label className={LABEL}>Floor Finish</label><input type="number" step="0.1" className={INPUT} value={form.floorFinish} onChange={(e) => set({ floorFinish: e.target.value })} /></div>
             <div><label className={LABEL}>Extra Dead</label><input type="number" step="0.1" className={INPUT} value={form.additionalDeadLoad} onChange={(e) => set({ additionalDeadLoad: e.target.value })} /></div>
-            <div><label className={LABEL}>Live (Imposed)</label><input type="number" step="0.1" className={INPUT} value={form.liveLoad} onChange={(e) => set({ liveLoad: e.target.value })} /></div>
+            <div>
+              <label className={LABEL}>Occupancy</label>
+              <Dropdown value={form.occupancy} onChange={(v) => {
+                const o = OCCUPANCY.find((x) => x.value === v);
+                set({ occupancy: v, ...(o ? { liveLoad: String(o.qk) } : {}) });
+              }} options={OCCUPANCY.map((o) => ({ value: o.value, label: o.label }))} />
+            </div>
+            <div><label className={LABEL}>Live (Imposed)</label><input type="number" step="0.1" className={INPUT} value={form.liveLoad} onChange={(e) => set({ liveLoad: e.target.value })} /><p className={`mt-1 text-[10px] ${SUB}`}>Auto-set by occupancy; edit freely.</p></div>
             <div><label className={LABEL}>Extra Live</label><input type="number" step="0.1" className={INPUT} value={form.additionalLiveLoad} onChange={(e) => set({ additionalLiveLoad: e.target.value })} /></div>
             <div className="flex items-end"><p className={`text-[11px] ${SUB}`}>Self-weight is auto-computed from thickness.</p></div>
           </div>
