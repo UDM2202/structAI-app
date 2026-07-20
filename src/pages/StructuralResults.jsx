@@ -42,7 +42,6 @@ function deriveEC2({ summary, forces, reinf, shear, defl }) {
   const h = Number(summary.thickness) || 0;
   const Lx = Number(summary.span_lx) || 0;
   const Ly = Number(summary.span_ly) || 0;
-  const isTwoWay = /two/i.test(summary.slab_type || "") && Ly > 0;
   const spans = [Lx, Ly].filter(Boolean);
   const Lshort = (spans.length ? Math.min(...spans) : 0) * 1000;
 
@@ -483,8 +482,8 @@ function SlabSummaryCard({ summary }) {
     <Card number="1" title="Slab Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
-      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
+      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete" value={summary.concrete_grade || "N/A"} />
@@ -615,6 +614,13 @@ function LayoutCard({ summary, reinf }) {
           <RebarLayout position="bottom" dia={b.bar_diameter} spacing={b.spacing} span={summary.span_lx} t={summary.thickness} />
         </div>
       </div>
+
+      <div className="mt-6 border-t border-[#f1f5f9] pt-4 dark:border-[#1f2937]">
+        <p className={`mb-1 text-center text-[11px] font-semibold uppercase tracking-wide ${TXT_SUB}`}>
+          Section Through Slab &mdash; Bar Arrangement
+        </p>
+        <RebarSection summary={summary} top={t} bottom={b} />
+      </div>
     </Card>
   );
 }
@@ -624,8 +630,8 @@ function DesignInputCard({ summary, forces }) {
     <Card number="8" title="Design Input Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
-      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
+      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete Grade" value={summary.concrete_grade || "N/A"} />
@@ -832,6 +838,107 @@ function SectionView({ span, t }) {
         <line x1="45" y1="90" x2="315" y2="90" stroke="currentColor" strokeWidth="1" markerStart="url(#arS)" markerEnd="url(#arS)" />
         <text x="180" y="86" fontSize="9" fill="currentColor" textAnchor="middle">{Number(span) || 0} m</text>
         <text x="180" y="104" fontSize="8" fill="currentColor" fillOpacity="0.7" textAnchor="middle">Lx (Span)</text>
+      </svg>
+    </div>
+  );
+}
+
+function RebarSection({ summary = {}, top = {}, bottom = {} }) {
+  const h = Number(summary.thickness) || 150;          // mm
+  const d = Number(summary.effective_depth) || 0;      // mm
+  const botDia = Number(bottom.bar_diameter) || 10;
+  const topDia = Number(top.bar_diameter) || botDia;
+  const botSp = Number(bottom.spacing) || 150;
+  const topSp = Number(top.spacing) || botSp;
+
+  // Prefer the cover the engine actually used; fall back to c = h - d - phi/2
+  // only when the backend hasn't supplied it.
+  const coverFromBackend = Number(summary.clear_cover);
+  const coverDerived = d ? Math.max(Math.round(h - d - botDia / 2), 10) : 25;
+  const cover = Number.isFinite(coverFromBackend) && coverFromBackend > 0 ? coverFromBackend : coverDerived;
+  const coverIsDerived = !(Number.isFinite(coverFromBackend) && coverFromBackend > 0);
+
+  // drawing frame
+  const X0 = 55, X1 = 395, Y0 = 34;
+  const H = 96;                                        // slab depth on screen
+  const Y1 = Y0 + H;
+  const mm2px = H / h;                                 // vertical scale
+  const cPx = Math.min(Math.max(cover * mm2px, 7), 20);
+
+  // TRUE bar count across the 1 m strip (no clamping) — radius adapts so the
+  // drawing stays legible even at tight spacings.
+  const inner = X1 - X0 - 52;
+  const nBot = Math.max(Math.round(1000 / botSp) + 1, 2);
+  const nTop = Math.max(Math.round(1000 / topSp) + 1, 2);
+  const gapBot = inner / (nBot - 1 || 1);
+  const gapTop = inner / (nTop - 1 || 1);
+  const rBot = Math.min(Math.max(botDia * mm2px * 0.9, 2.0), 7, gapBot * 0.38);
+  const rTop = Math.min(Math.max(topDia * mm2px * 0.9, 1.8), 6.5, gapTop * 0.38);
+  const yBot = Y1 - cPx - rBot;
+  const yTop = Y0 + cPx + rTop;
+  const xs = (n) => Array.from({ length: n }, (_, i) => X0 + 26 + (i * inner) / (n - 1 || 1));
+  const botXs = xs(nBot), topXs = xs(nTop);
+
+  return (
+    <div className="text-[#475569] dark:text-[#94a3b8]">
+      <svg viewBox="0 0 460 208" className="w-full">
+        <defs>
+          <marker id="arSec" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
+          </marker>
+          <pattern id="hatchSec" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" strokeWidth="0.6" strokeOpacity="0.45" />
+          </pattern>
+        </defs>
+
+        {/* concrete section */}
+        <rect x={X0} y={Y0} width={X1 - X0} height={H} fill="url(#hatchSec)" stroke="currentColor" strokeWidth="1.3" />
+
+        {/* effective depth line */}
+        <line x1={X0 + 12} y1={Y0} x2={X0 + 12} y2={yBot} stroke="currentColor" strokeWidth="0.9"
+              strokeDasharray="3 2" markerStart="url(#arSec)" markerEnd="url(#arSec)" />
+        <text x={X0 + 17} y={(Y0 + yBot) / 2 + 3} fontSize="8.5" fill="currentColor">d = {d ? Math.round(d) : "—"} mm</text>
+
+        {/* overall thickness */}
+        <line x1={X0 - 16} y1={Y0} x2={X0 - 16} y2={Y1} stroke="currentColor" strokeWidth="1"
+              markerStart="url(#arSec)" markerEnd="url(#arSec)" />
+        <text x={X0 - 20} y={(Y0 + Y1) / 2 + 3} fontSize="9" fill="currentColor" textAnchor="end">h = {h} mm</text>
+
+        {/* cover call-outs */}
+        <line x1={X1 + 14} y1={Y1} x2={X1 + 14} y2={yBot} stroke="#ef4444" strokeWidth="0.9"
+              markerStart="url(#arSec)" markerEnd="url(#arSec)" />
+        <text x={X1 + 18} y={(Y1 + yBot) / 2 + 3} fontSize="8" fill="#ef4444">c = {cover} mm</text>
+
+        {/* bottom bars (tension) */}
+        {botXs.map((x, i) => <circle key={`b${i}`} cx={x} cy={yBot} r={rBot} fill="#ef4444" />)}
+        {/* top bars */}
+        {topXs.map((x, i) => <circle key={`t${i}`} cx={x} cy={yTop} r={rTop} fill="#0A2F44" className="dark:fill-[#66a4c2]" />)}
+
+        {/* spacing dimension between two bottom bars */}
+        {botXs.length > 1 && (
+          <>
+            <line x1={botXs[0]} y1={Y1 + 14} x2={botXs[1]} y2={Y1 + 14} stroke="#ef4444" strokeWidth="0.9"
+                  markerStart="url(#arSec)" markerEnd="url(#arSec)" />
+            <text x={(botXs[0] + botXs[1]) / 2} y={Y1 + 11} fontSize="8" fill="#ef4444" textAnchor="middle">{botSp}</text>
+          </>
+        )}
+
+        {/* labels */}
+        <text x={X0 + 26} y={yTop - rTop - 6} fontSize="9" fill="currentColor" fontWeight="600">
+          Top: Y{topDia} @ {topSp} mm c/c
+        </text>
+        <text x={X0 + 26} y={Y1 + 30} fontSize="9" fill="#ef4444" fontWeight="600">
+          Bottom: Y{botDia} @ {botSp} mm c/c
+        </text>
+
+        {/* strip width note */}
+        <line x1={X0} y1={Y1 + 44} x2={X1} y2={Y1 + 44} stroke="currentColor" strokeWidth="1"
+              markerStart="url(#arSec)" markerEnd="url(#arSec)" />
+        <text x={(X0 + X1) / 2} y={Y1 + 41} fontSize="8.5" fill="currentColor" textAnchor="middle">1000 mm design strip</text>
+        <text x={(X0 + X1) / 2} y={Y1 + 57} fontSize="8" fill="currentColor" fillOpacity="0.7" textAnchor="middle">
+          Section perpendicular to the main span &middot; {nBot} bars per metre bottom, {nTop} top
+          {coverIsDerived ? " \u00b7 cover derived from d" : ""}
+        </text>
       </svg>
     </div>
   );

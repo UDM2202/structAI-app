@@ -1,14 +1,11 @@
 // src/utils/exportPdf.js
-// Browser print-to-PDF. No dependencies, no html2canvas — so no oklch/Tailwind-v4
-// issue, and nothing gets truncated (the browser paginates the whole sheet).
+// Browser print-to-PDF. No dependencies (no html2canvas -> no Tailwind-v4 oklch crash).
 //
-// Usage in a results page:
-//   import { exportElementToPdf } from "../utils/exportPdf";
-//   <button onClick={() => exportElementToPdf(sheetRef.current, "Beam-B1")}>Download PDF</button>
-//
-// The element passed in is marked as the print root; a print stylesheet (below,
-// injected once) hides everything else and prints only that element at full length.
-// The user gets the browser's native "Save as PDF" dialog.
+// Why it CLONES instead of printing in place:
+//   The detailed-report modal is `position: fixed`. Fixed-position elements are
+//   repainted on EVERY printed page, which is what produced 4 identical pages.
+//   So we clone the content into a plain <div> appended directly to <body>
+//   (no fixed/absolute ancestors), print that, then remove it.
 
 let styleInjected = false;
 
@@ -17,26 +14,50 @@ function injectPrintStyle() {
   styleInjected = true;
   const css = `
 @media print {
-  /* hide everything, then reveal only the print root and its descendants */
-  body * { visibility: hidden !important; }
-  #__print_root, #__print_root * { visibility: visible !important; }
-  #__print_root {
-    position: absolute !important; left: 0; top: 0; width: 100% !important;
-    margin: 0 !important; padding: 12px !important; background: #fff !important;
+  /* nothing prints except the cloned sheet */
+  body > *:not(#__print_sheet) { display: none !important; }
+
+  html, body {
+    height: auto !important; overflow: visible !important;
+    margin: 0 !important; padding: 0 !important; background: #fff !important;
   }
-  /* force light rendering so the PDF is a clean white sheet even in dark mode */
-  #__print_root, #__print_root * {
+
+  #__print_sheet {
+    display: block !important;
+    position: static !important;          /* never fixed/absolute -> no repeats */
+    width: 100% !important; max-width: 100% !important;
+    margin: 0 !important; padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  /* neutralise any fixed/absolute/scroll containers inside the clone */
+  #__print_sheet * {
+    position: static !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    box-shadow: none !important;
+  }
+
+  /* force a clean light sheet regardless of dark mode */
+  #__print_sheet, #__print_sheet * {
     color: #0f172a !important;
-    background-color: #fff !important;
-    border-color: #e2e8f0 !important;
+    background-color: transparent !important;
+    border-color: #cbd5e1 !important;
   }
-  /* keep status colors legible */
-  #__print_root .pdf-pass { color: #16a34a !important; }
-  #__print_root .pdf-fail { color: #ef4444 !important; }
-  /* elements marked no-print (nav, buttons) are removed */
-  .cb-no-print, .pdf-hide { display: none !important; }
-  /* avoid breaking cards across pages where possible */
-  #__print_root section, #__print_root table { break-inside: avoid; }
+  #__print_sheet table { background: #fff !important; }
+
+  /* chrome that should never print */
+  #__print_sheet .cb-no-print,
+  #__print_sheet .pdf-hide,
+  #__print_sheet button { display: none !important; }
+
+  /* keep blocks intact across page breaks */
+  #__print_sheet section,
+  #__print_sheet table,
+  #__print_sheet tr { break-inside: avoid; page-break-inside: avoid; }
+
   @page { size: A4; margin: 12mm; }
 }`;
   const el = document.createElement("style");
@@ -49,25 +70,29 @@ export function exportElementToPdf(element, filename = "report") {
   if (!element) return;
   injectPrintStyle();
 
-  // tag the element as the print root
-  const prevId = element.id;
-  element.id = "__print_root";
+  // remove any stale sheet
+  const stale = document.getElementById("__print_sheet");
+  if (stale) stale.remove();
 
-  // set the document title so the PDF's default filename is meaningful
+  // clone the content into a plain container on <body>
+  const sheet = document.createElement("div");
+  sheet.id = "__print_sheet";
+  sheet.innerHTML = element.innerHTML;
+  document.body.appendChild(sheet);
+
   const prevTitle = document.title;
-  document.title = filename;
+  document.title = filename;          // becomes the default PDF filename
 
   const cleanup = () => {
-    element.id = prevId || "";
+    const s = document.getElementById("__print_sheet");
+    if (s) s.remove();
     document.title = prevTitle;
     window.removeEventListener("afterprint", cleanup);
   };
   window.addEventListener("afterprint", cleanup);
 
-  // give the style a tick to apply, then print
   setTimeout(() => {
     window.print();
-    // Safari sometimes doesn't fire afterprint reliably; restore as a fallback
-    setTimeout(cleanup, 1000);
-  }, 50);
+    setTimeout(cleanup, 1500);        // fallback for browsers that skip afterprint
+  }, 60);
 }

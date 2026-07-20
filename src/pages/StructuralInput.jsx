@@ -69,15 +69,24 @@ const ANALYSIS_METHODS = [
 ];
 
 // Values map to the engine's classify_occupancy() keys (anything else → office).
+// qk = indicative imposed load, EN 1991-1-1 Table 6.2 — applied to the Live Load
+// field on selection, but the user can still edit it freely afterwards.
 const BUILDING_USES = [
-  { value: "office", label: "Office" },
-  { value: "residential", label: "Residential" },
-  { value: "hotel", label: "Hotel" },
-  { value: "education", label: "Education / School" },
-  { value: "retail", label: "Retail" },
-  { value: "shopping_mall", label: "Shopping Mall" },
-  { value: "healthcare", label: "Healthcare" },
-  { value: "hospital_ward", label: "Hospital — Ward" },
+  { value: "office", label: "Office", qk: 2.5 },
+  { value: "residential", label: "Residential", qk: 1.5 },
+  { value: "hotel", label: "Hotel", qk: 2.0 },
+  { value: "education", label: "Education / School", qk: 3.0 },
+  { value: "retail", label: "Retail", qk: 4.0 },
+  { value: "shopping_mall", label: "Shopping Mall", qk: 5.0 },
+  { value: "healthcare", label: "Healthcare", qk: 3.0 },
+  { value: "hospital_ward", label: "Hospital — Ward", qk: 2.0 },
+];
+
+// Main bar diameters offered for the slab (mm)
+const MAIN_BARS = [
+  { value: "8", label: "\u00d88" }, { value: "10", label: "\u00d810" },
+  { value: "12", label: "\u00d812" }, { value: "16", label: "\u00d816" },
+  { value: "20", label: "\u00d820" },
 ];
 
 const NAV = [
@@ -99,6 +108,8 @@ const DEFAULTS = {
   thickness: "175", // mm
   effectiveDepth: "150", // mm
   clearCover: "25", // mm
+  coverTolerance: "5", // mm detailing allowance
+  mainBarDia: "12", // mm assumed main bar
   concreteGrade: "C30/37",
   steelGrade: "B500",
   unitWeightConcrete: "25",
@@ -155,7 +166,9 @@ const StructuralInput = () => {
   const dl = parseFloat(formData.deadLoad) || 0;
   const ff = parseFloat(formData.floorFinish) || 0;
   const ll = parseFloat(formData.liveLoad) || 0;
-  const totalLoad = dl + ff + ll;
+  const adl = parseFloat(formData.additionalDeadLoad) || 0;
+  const all_ = parseFloat(formData.additionalLiveLoad) || 0;
+  const totalLoad = dl + ff + ll + adl + all_;
 
   const handleReset = () => {
     if (window.confirm("Reset all fields to defaults?")) {
@@ -278,7 +291,18 @@ const StructuralInput = () => {
                   <Field label={twoWay ? "Short Span (Lx)" : "Span (L)"} unit="mm" value={formData.spanLx} onChange={(v) => set({ spanLx: v })} step="50" />
                   <Field label="Thickness (t)" unit="mm" value={formData.thickness} onChange={(v) => set({ thickness: v })} step="5" />
                   <Field label="Effective Depth (d)" unit="mm" value={formData.effectiveDepth} onChange={(v) => set({ effectiveDepth: v })} step="5" />
-                  <Field label="Clear Cover" unit="mm" value={formData.clearCover} onChange={(v) => set({ clearCover: v })} step="5" />
+                  <div>
+                    <Field label="Clear Cover" unit="mm" value={formData.clearCover} onChange={(v) => set({ clearCover: v })} step="5" />
+                    <p className={`mt-1 text-[10px] ${SUB}`}>
+                      +{formData.coverTolerance} mm fixing tolerance &rarr; detail at {(parseFloat(formData.clearCover) || 0) + (parseFloat(formData.coverTolerance) || 0)} mm
+                    </p>
+                  </div>
+                  <Field label="Cover Tolerance" unit="mm" value={formData.coverTolerance} onChange={(v) => set({ coverTolerance: v })} step="5" />
+                  <div>
+                    <label className={LABEL}>Main Bar &Oslash; <span className="text-[#94a3b8]">(mm)</span></label>
+                    <Dropdown value={formData.mainBarDia} onChange={(e) => set({ mainBarDia: e.target.value })} options={MAIN_BARS} />
+                    <p className={`mt-1 text-[10px] ${SUB}`}>Used for d = h &minus; c &minus; &phi;/2</p>
+                  </div>
                 </div>
               </Section>
 
@@ -303,7 +327,12 @@ const StructuralInput = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Dead Load (DL)" unit="kN/m²" value={formData.deadLoad} onChange={(v) => set({ deadLoad: v })} step="0.5" />
                   <Field label="Floor Finish / Additional DL" unit="kN/m²" value={formData.floorFinish} onChange={(v) => set({ floorFinish: v })} step="0.5" />
-                  <Field label="Live Load (LL)" unit="kN/m²" value={formData.liveLoad} onChange={(v) => set({ liveLoad: v })} step="0.5" />
+                  <div>
+                    <Field label="Live Load (LL)" unit="kN/m²" value={formData.liveLoad} onChange={(v) => set({ liveLoad: v })} step="0.5" />
+                    <p className={`mt-1 text-[10px] ${SUB}`}>Auto-set from Building Use (EN 1991-1-1 Table 6.2) &mdash; edit freely.</p>
+                  </div>
+                  <Field label="Extra Dead Load" unit="kN/m²" value={formData.additionalDeadLoad} onChange={(v) => set({ additionalDeadLoad: v })} step="0.5" />
+                  <Field label="Extra Live Load" unit="kN/m²" value={formData.additionalLiveLoad} onChange={(v) => set({ additionalLiveLoad: v })} step="0.5" />
                   <div>
                     <label className={LABEL}>Total Load (DL + LL)</label>
                     <div className="flex items-center justify-between rounded-lg border border-[#e2e8f0] dark:border-[#475569] bg-[#f1f5f9] dark:bg-[#334155] px-3 py-2">
@@ -327,7 +356,10 @@ const StructuralInput = () => {
                   </div>
                   <div>
                     <label className={LABEL}>Building Use</label>
-                    <Dropdown value={formData.buildingUse} onChange={(e) => set({ buildingUse: e.target.value })} options={BUILDING_USES} />
+                    <Dropdown value={formData.buildingUse} onChange={(e) => {
+                      const u = BUILDING_USES.find((o) => o.value === e.target.value);
+                      set({ buildingUse: e.target.value, ...(u && u.qk != null ? { liveLoad: String(u.qk) } : {}) });
+                    }} options={BUILDING_USES} />
                   </div>
                   <div>
                     <label className={LABEL}>Serviceability Check</label>

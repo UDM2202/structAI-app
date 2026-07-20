@@ -11,7 +11,8 @@ export const slabAPI = {
         span_ly: parseFloat(formData.spanLy) / 1000,
         thickness: parseFloat(formData.thickness),
         effective_depth: parseFloat(formData.effectiveDepth),
-        clear_cover: parseFloat(formData.clearCover)
+        clear_cover: parseFloat(formData.clearCover),
+        cover_tolerance: parseFloat(formData.coverTolerance) || 5
       },
       materials: {
         concrete_grade: formData.concreteGrade,
@@ -34,7 +35,10 @@ export const slabAPI = {
         crack_width_limit: parseFloat(formData.crackWidthLimit),
         deflection_limit: parseInt(formData.deflectionLimit)
       },
-      bar_diameters: [10, 12, 16],
+      bar_diameters: (() => {
+        const main = parseInt(formData.mainBarDia) || 12;
+        return [main, ...[10, 12, 16, 20].filter((d) => d !== main)];
+      })(),
       use_ai: false,
       region: "Nigeria",
       building_use: formData.buildingUse || "office"

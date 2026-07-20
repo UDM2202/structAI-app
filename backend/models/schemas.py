@@ -43,6 +43,7 @@ class GeometryInput(BaseModel):
     thickness: float = Field(..., gt=0, description="Slab thickness in mm")
     effective_depth: Optional[float] = Field(None, gt=0, description="Effective depth in mm")
     clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
+    cover_tolerance: float = Field(5, ge=0, description="Detailing/fixing tolerance in mm")
 
 class MaterialInput(BaseModel):
     concrete_grade: str = Field(..., description="e.g., C30/37")
@@ -105,6 +106,9 @@ class DesignSummary(BaseModel):
     span_ly: float
     thickness: float
     effective_depth: float
+    concrete_grade: str
+    effective_depth: float
+    clear_cover: float = 25.0          # (+) mm — nominal cover actually used
     concrete_grade: str
     steel_grade: str
     selected_bar_diameter: int
