@@ -4,6 +4,7 @@ import os
 import re
 import json
 import math
+import inspect
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'engine'))
 
@@ -98,6 +99,18 @@ def _interp(ratio, ys, xs=BS8110_RATIOS):
 # ======================================================================
 # Helpers
 # ======================================================================
+def _supported_kwargs(cls, candidate: dict):
+    """Split candidate kwargs into those the constructor accepts and those it
+    does not, so a newer service never breaks an older engine."""
+    try:
+        names = set(inspect.signature(cls).parameters.keys())
+    except (TypeError, ValueError):
+        return candidate, {}
+    accepted = {k: v for k, v in candidate.items() if k in names}
+    ignored = {k: v for k, v in candidate.items() if k not in names}
+    return accepted, ignored
+
+
 def _enum(v):
     return v.value if hasattr(v, "value") else v
 
@@ -722,12 +735,15 @@ def _build_two_way_report(inp, res, fck, v_ed_kn, v_rdc, shear_status):
 # ======================================================================
 # One-way EC2 adapter: SlabDesignRequest -> one_way_slab_engine -> SlabDesignResult
 # ======================================================================
-def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
+def _build_one_way_input(request):
+    """Map EVERY user input onto the engine. Values the engine does not declare
+    are returned in `ignored` so the report can say so instead of pretending."""
     g = request.geometry
     mats = request.materials
     loads = request.loads
+    dp = request.design_params
 
-    inp = _OWInput(
+    base = dict(
         span_m=g.span_lx,
         continuity=_enum(request.continuity),
         thickness_mm=g.thickness,
@@ -743,6 +759,28 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
         gamma_concrete=mats.unit_weight_concrete or 25.0,
     )
 
+    # previously collected on the form and thrown away — the user's choice wins
+    extra = dict(
+        effective_depth_mm=g.effective_depth,
+        cover_tolerance_mm=getattr(g, "cover_tolerance", None),
+        deflection_limit=dp.deflection_limit,
+        exposure_class=_enum(dp.exposure_class),
+        crack_width_limit=dp.crack_width_limit,
+        fire_rating=dp.fire_rating,
+        gamma_steel=mats.unit_weight_steel or 78.5,
+    )
+    extra = {k: v for k, v in extra.items() if v is not None}
+
+    accepted, ignored = _supported_kwargs(_OWInput, {**base, **extra})
+    return _OWInput(**accepted), ignored
+
+
+def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
+    g = request.geometry
+    mats = request.materials
+    loads = request.loads
+
+    inp, ignored_inputs = _build_one_way_input(request)
     res = _ow_design(inp)
     sf, pf = res.span_face, res.support_face
     b = 1000.0
@@ -767,7 +805,7 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     cost_steel = steel_weight * steel_rate / 1000
     cost_formwork = 1.0 * formwork_rate
     total_cost = cost_concrete + cost_steel + cost_formwork
-    slab_area = g.span_lx * g.span_ly
+    slab_area = g.span_lx * (g.span_ly or 1.0)   # per metre width for a one-way strip
 
     bx = sf.bar.bar_dia if sf.bar else 0
     sx = sf.bar.spacing if sf.bar else 0
@@ -775,7 +813,8 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     summary = DesignSummary(
         status=res.overall_status, slab_type="One-Way Slab",
         continuity=_enum(request.continuity).replace("_", " ").title(),
-        span_lx=g.span_lx, span_ly=g.span_ly, thickness=request.geometry.thickness,
+        span_lx=g.span_lx, span_ly=0.0,   # one-way spans in ONE direction: no Ly
+        thickness=request.geometry.thickness,
         effective_depth=round(res.d_mm, 1), clear_cover=round(res.cover_mm, 1),
         concrete_grade=mats.concrete_grade, steel_grade=mats.steel_grade,
         selected_bar_diameter=bx, selected_spacing=sx,
@@ -844,18 +883,68 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
         cost=round(total_cost * slab_area, 2), status=res.overall_status, utilization_ratio=round(util, 2),
     )]
 
-    report = _build_one_way_report(request, res, inp)
+    report = _build_one_way_report(request, res, inp, ignored_inputs)
+
+    # Warnings the user must SEE: their input was obeyed, but it breaches a code
+    # minimum or is geometrically impossible. Surfaced on the results page.
+    warnings = [n for n in res.notes
+                if n.strip().upper().startswith(("WARNING", "ERROR"))]
 
     return SlabDesignResult(
         task_id="completed", status="completed", summary=summary, design_forces=design_forces,
         reinforcement=reinforcement, deflection=deflection, shear=shear, compliance=compliance,
         cost_breakdown=cost_breakdown, optimization_options=optimization_options, report=report,
+        warnings=warnings,
     )
 
 
 
 
-def _build_one_way_report(request, res, inp):
+def _design_inputs_section(request, res, inp, ignored_inputs=None):
+    """States, per input, that the user's value governed the design — and says
+    plainly when the engine could not use one."""
+    R = lambda ref, calc, out: {"reference": ref, "calculation": calc, "output": out}
+    g = request.geometry
+    dp = request.design_params
+    ignored = ignored_inputs or {}
+    phi = inp.bar_diameters[0] if inp.bar_diameters else 12
+
+    def status(key, shown):
+        return f"{shown}  \u2014 not supported by this engine version" if key in ignored else shown
+
+    d_user = g.effective_depth
+    d_used = res.d_mm
+    d_src = getattr(res, "d_source", None)
+    d_derived = getattr(res, "d_derived_mm", g.thickness - res.cover_mm - phi / 2.0)
+    if d_user and "effective_depth_mm" not in ignored:
+        d_row = R("Effective depth",
+                  f"entered d = {d_user:.0f} mm ; derived h \u2212 c \u2212 \u03c6/2 = {d_derived:.0f} mm",
+                  f"d = {d_used:.0f} mm ({d_src or 'user-specified'})")
+    elif d_user:
+        d_row = R("Effective depth", f"entered d = {d_user:.0f} mm",
+                  f"NOT USED \u2014 engine derived d = {d_used:.0f} mm")
+    else:
+        d_row = R("Effective depth", "not entered \u2192 d = h \u2212 c \u2212 \u03c6/2",
+                  f"d = {d_used:.0f} mm (derived)")
+
+    return {"title": "Design Inputs Used", "rows": [
+        R("Geometry", f"span = {g.span_lx:.2f} m ; thickness h = {g.thickness:.0f} mm", "as entered"),
+        d_row,
+        R("Cover", f"clear cover entered = {g.clear_cover:.0f} mm",
+          f"c_nom = {res.cover_mm:.0f} mm ({getattr(res, 'cover_source', 'as entered')})"),
+        R("Main bar", f"\u03c6 = {phi:.0f} mm (user selection)", "governs d and bar spacing"),
+        R("Deflection limit", status("deflection_limit", f"L/{dp.deflection_limit} (user selection)"),
+          f"L/{dp.deflection_limit}"),
+        R("Exposure class", status("exposure_class", f"{_enum(dp.exposure_class)} (user selection)"),
+          _enum(dp.exposure_class)),
+        R("Crack width limit", status("crack_width_limit", f"w_max = {dp.crack_width_limit:.2f} mm (user selection)"),
+          f"{dp.crack_width_limit:.2f} mm"),
+        R("Fire rating", status("fire_rating", f"REI {dp.fire_rating} (user selection)"),
+          f"{dp.fire_rating} min"),
+    ]}
+
+
+def _build_one_way_report(request, res, inp, ignored_inputs=None):
     R = lambda ref, calc, out: {"reference": ref, "calculation": calc, "output": out}
     sf, pf = res.span_face, res.support_face
     cont = _enum(request.continuity).replace("_", " ").title()
@@ -892,13 +981,21 @@ def _build_one_way_report(request, res, inp):
     sec.append({"title": "2. Geometry, Cover and Materials", "rows": [
         R("Geometry", f"span L = {L:.2f} m ; overall thickness h = {h:.0f} mm", f"h = {h:.0f} mm"),
         R("EC2 \u00a74.4.1.2", f"nominal cover c_nom = c_min + \u0394c_dev  (exposure {exposure})", f"c_nom = {cover:.0f} mm"),
-        R("Detailing", f"clear cover specified = {g.clear_cover:.0f} mm  (+5 mm fixing tolerance \u2192 detail at {g.clear_cover + 5:.0f} mm)", f"c = {g.clear_cover:.0f} mm"),
+        R("Detailing", f"clear cover specified = {g.clear_cover:.0f} mm  (+{getattr(g, 'cover_tolerance', 5):.0f} mm fixing tolerance \u2192 detail at {g.clear_cover + getattr(g, 'cover_tolerance', 5):.0f} mm)", f"c = {g.clear_cover:.0f} mm"),
         R("Bar assumed", f"main bar \u03c6 = {phi:.0f} mm  \u2192  \u03c6/2 = {phi/2:.1f} mm", f"\u03c6 = {phi:.0f} mm"),
-        R("EC2 \u00a76.1", f"d = h \u2212 c_nom \u2212 \u03c6/2 = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f}", f"d = {d:.0f} mm"),
+        R("EC2 \u00a76.1",
+          (f"d entered by user = {g.effective_depth:.0f} mm (governs); for reference "
+           f"h \u2212 c_nom \u2212 \u03c6/2 = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f} = {h - cover - phi/2:.0f} mm"
+           if getattr(res, "d_source", "").startswith("user")
+           else f"d = h \u2212 c_nom \u2212 \u03c6/2 = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f}"),
+          f"d = {d:.0f} mm"),
         R("EC2 Table 3.1", f"f_ctm = 0.30 \u00b7 f_ck^(2/3) = 0.30 \u00d7 {fck:.0f}^(2/3) = 0.30 \u00d7 {fck**(2/3):.3f}", f"f_ctm = {fctm:.2f} MPa"),
         R("EC2 \u00a73.1.6", f"f_cd = f_ck/\u03b3_c = {fck:.0f}/1.50", f"f_cd = {fcd:.2f} MPa"),
         R("EC2 \u00a73.2.7", f"f_yd = f_yk/\u03b3_s = {fyk:.0f}/1.15", f"f_yd = {fyd:.1f} MPa"),
     ]})
+
+    # ---------------- Design inputs actually used ----------------
+    sec.append(_design_inputs_section(request, res, inp, ignored_inputs))
  
     # ---------------- 3. Loads ----------------
     sw = res.self_weight
@@ -944,7 +1041,7 @@ def _build_one_way_report(request, res, inp):
         R("EC2 \u00a76.1", f"K = M_Ed/(f_ck\u00b7b\u00b7d\u00b2) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/({fck:.0f} \u00d7 {b:.0f} \u00d7 {d:.0f}\u00b2) = ({sf.M_kNm*1e6:.4g})/({fck*b*d**2:.4g})", f"K = {sf.k:.4f}"),
         R("Compression steel", f"K = {sf.k:.4f} {'<' if sf.singly else '\u2265'} K' = 0.167", "singly reinforced \u2014 no compression steel required" if sf.singly else "compression reinforcement required"),
         R("EC2 \u00a76.1", f"z = d[0.5 + \u221a(0.25 \u2212 K/1.134)] = {d:.0f}[0.5 + \u221a(0.25 \u2212 {sf.k:.4f}/1.134)] = {d:.0f}[0.5 + \u221a{root:.4f}] = {d:.0f} \u00d7 {0.5 + math.sqrt(root):.4f}", f"z = {sf.z_mm:.1f} mm"),
-        R("Cap", f"z \u2264 0.95d = 0.95 \u00d7 {d:.0f} = {0.95*d:.1f} mm \u2192 adopt z = min({d*(0.5+math.sqrt(root)):.1f} , {0.95*d:.1f})", f"z = {sf.z_mm:.1f} mm"),
+        R("Cap", f"z \u2264 0.9d = 0.9 \u00d7 {d:.0f} = {0.9*d:.1f} mm \u2192 adopt z = min({d*(0.5+math.sqrt(root)):.1f} , {0.9*d:.1f})", f"z = {sf.z_mm:.1f} mm"),
         R("Check vs 0.9d", f"simplified lever arm 0.9d = 0.9 \u00d7 {d:.0f} = {0.9*d:.1f} mm ; computed z/d = {sf.z_mm:.1f}/{d:.0f} = {sf.z_mm/d:.3f}",
           f"z {'\u2265' if sf.z_mm >= 0.9*d else '<'} 0.9d \u2014 {'consistent with the 0.9d approximation' if sf.z_mm >= 0.9*d else 'below 0.9d, review'}"),
         R("EC2 \u00a76.1", f"A_s = M_Ed/(0.87\u00b7f_yk\u00b7z) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {sf.z_mm:.1f}) = ({sf.M_kNm*1e6:.4g})/({0.87*fyk*sf.z_mm:.5g})", f"A_s = {sf.As:.0f} mm\u00b2/m"),
@@ -981,7 +1078,7 @@ def _build_one_way_report(request, res, inp):
     if pf.M_kNm > 0:
         rows = [
             R("EC2 \u00a76.1", f"K = M_hog/(f_ck\u00b7b\u00b7d\u00b2) = ({pf.M_kNm:.2f} \u00d7 10\u2076)/({fck:.0f} \u00d7 {b:.0f} \u00d7 {d:.0f}\u00b2)", f"K = {pf.k:.4f}"),
-            R("Lever arm", f"z = d[0.5 + \u221a(0.25 \u2212 {pf.k:.4f}/1.134)] \u2264 0.95d = {0.95*d:.1f} mm", f"z = {pf.z_mm:.1f} mm"),
+            R("Lever arm", f"z = d[0.5 + \u221a(0.25 \u2212 {pf.k:.4f}/1.134)] \u2264 0.9d = {0.9*d:.1f} mm", f"z = {pf.z_mm:.1f} mm"),
             R("Check vs 0.9d", f"0.9d = 0.9 \u00d7 {d:.0f} = {0.9*d:.1f} mm ; z/d = {pf.z_mm:.1f}/{d:.0f} = {pf.z_mm/d if d else 0:.3f}",
               f"z {'\u2265' if pf.z_mm >= 0.9*d else '<'} 0.9d"),
             R("EC2 \u00a76.1", f"A_s = M_hog/(0.87\u00b7f_yk\u00b7z) = ({pf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {pf.z_mm:.1f})", f"A_s = {pf.As:.0f} mm\u00b2/m"),
@@ -1062,4 +1159,3 @@ def _build_one_way_report(request, res, inp):
             t = t.split(". ", 1)[-1]
         renumbered.append({"title": f"{i}. {t}", "rows": s["rows"]})
     return renumbered
- 

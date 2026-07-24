@@ -42,6 +42,7 @@ function deriveEC2({ summary, forces, reinf, shear, defl }) {
   const h = Number(summary.thickness) || 0;
   const Lx = Number(summary.span_lx) || 0;
   const Ly = Number(summary.span_ly) || 0;
+  const isTwoWay = /two/i.test(summary.slab_type || "") && Ly > 0;
   const spans = [Lx, Ly].filter(Boolean);
   const Lshort = (spans.length ? Math.min(...spans) : 0) * 1000;
 
@@ -143,6 +144,7 @@ const StructuralResults = () => {
   const shear = rawData.shear || {};
   const compliance = rawData.compliance || [];
   const cost = rawData.cost_breakdown || {};
+  const warnings = rawData.warnings || [];
   const D = deriveEC2({ summary, forces, reinf, shear, defl });
   const isPass = summary.status === "PASS" || !summary.status;
 
@@ -185,6 +187,33 @@ const StructuralResults = () => {
             </button>
           </div>
         </div>
+
+        {/* input warnings — the design used YOUR values; these need review */}
+        {warnings.length > 0 && (
+          <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
+            <div className="mb-2 flex items-center gap-2">
+              <FiAlertTriangle className="text-amber-600 dark:text-amber-400" size={18} />
+              <span className="text-[13px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                Input warnings &mdash; your values were used as entered
+              </span>
+            </div>
+            <ul className="ml-6 list-disc space-y-1.5">
+              {warnings.map((w, i) => {
+                const isError = String(w).trim().toUpperCase().startsWith("ERROR");
+                return (
+                  <li key={i} className={`text-[12px] ${isError
+                    ? "font-semibold text-red-700 dark:text-red-400"
+                    : "text-amber-800 dark:text-amber-300"}`}>
+                    {String(w).replace(/^(WARNING|ERROR):\s*/i, "")}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">
+              The design has been carried out with the values you entered. Review these points before construction.
+            </p>
+          </div>
+        )}
 
         {/* tabs */}
         <div className="mb-5 flex gap-6 overflow-x-auto border-b border-[#e2e8f0] dark:border-[#1f2937]">
@@ -482,8 +511,8 @@ function SlabSummaryCard({ summary }) {
     <Card number="1" title="Slab Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
-      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
+      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete" value={summary.concrete_grade || "N/A"} />
@@ -630,8 +659,8 @@ function DesignInputCard({ summary, forces }) {
     <Card number="8" title="Design Input Summary">
       <Row label="Slab Type" value={summary.slab_type || "N/A"} />
       <Row label="Continuity" value={summary.continuity || "N/A"} />
-      <Row label="Span Lx" value={`${summary.span_lx ?? 0} m`} />
-      {summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
+      <Row label={/two/i.test(summary.slab_type || "") ? "Span Lx" : "Span (L)"} value={`${summary.span_lx ?? 0} m`} />
+      {/two/i.test(summary.slab_type || "") && summary.span_ly ? <Row label="Span Ly" value={`${summary.span_ly} m`} /> : null}
       <Row label="Thickness" value={`${summary.thickness ?? 0} mm`} />
       <Row label="Effective Depth" value={`${summary.effective_depth ?? 0} mm`} />
       <Row label="Concrete Grade" value={summary.concrete_grade || "N/A"} />

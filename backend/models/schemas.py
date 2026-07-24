@@ -43,7 +43,7 @@ class GeometryInput(BaseModel):
     thickness: float = Field(..., gt=0, description="Slab thickness in mm")
     effective_depth: Optional[float] = Field(None, gt=0, description="Effective depth in mm")
     clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
-    cover_tolerance: float = Field(5, ge=0, description="Detailing/fixing tolerance in mm")
+    cover_tolerance: float = Field(5, ge=0, description="Fixing tolerance in mm")
 
 class MaterialInput(BaseModel):
     concrete_grade: str = Field(..., description="e.g., C30/37")
@@ -106,9 +106,7 @@ class DesignSummary(BaseModel):
     span_ly: float
     thickness: float
     effective_depth: float
-    concrete_grade: str
-    effective_depth: float
-    clear_cover: float = 25.0          # (+) mm — nominal cover actually used
+    clear_cover: float = 25.0
     concrete_grade: str
     steel_grade: str
     selected_bar_diameter: int
@@ -184,6 +182,7 @@ class SlabDesignResult(BaseModel):
     cost_breakdown: CostBreakdown
     optimization_options: List[OptimizationOption]
     report: List[ReportSection] = []
+    warnings: List[str] = []
 
 class TaskStatusResponse(BaseModel):
     task_id: str
@@ -209,9 +208,6 @@ class ContinuousSlabRequest(BaseModel):
     loads: LoadInput
     design_params: DesignParameters
     bar_diameters: Optional[List[int]] = Field([10, 12, 16])
-    cover_tolerance: float = Field(5, ge=0, description="Cover tolerance in mm (detailing allowance)")   # (+)
-    occupancy: str = Field("office", description="Occupancy class driving default imposed load")
-    main_bar_dia: int = Field(12, gt=0, description="Assumed main bar diameter (mm)")   
     region: str = Field("UK")
 
     @model_validator(mode="after")
