@@ -163,12 +163,11 @@ const StructuralInput = () => {
     set({ slabType: type, continuity: type === "two-way" ? "all_edges_continuous" : "simply_supported" });
 
   // derived loads
-  const dl = parseFloat(formData.deadLoad) || 0;
   const ff = parseFloat(formData.floorFinish) || 0;
   const ll = parseFloat(formData.liveLoad) || 0;
   const adl = parseFloat(formData.additionalDeadLoad) || 0;
   const all_ = parseFloat(formData.additionalLiveLoad) || 0;
-  const totalLoad = dl + ff + ll + adl + all_;
+  const totalLoad = ff + ll + adl + all_;   // self-weight added on the backend
 
   const handleReset = () => {
     if (window.confirm("Reset all fields to defaults?")) {
@@ -290,14 +289,12 @@ const StructuralInput = () => {
                   )}
                   <Field label={twoWay ? "Short Span (Lx)" : "Span (L)"} unit="mm" value={formData.spanLx} onChange={(v) => set({ spanLx: v })} step="50" />
                   <Field label="Thickness (t)" unit="mm" value={formData.thickness} onChange={(v) => set({ thickness: v })} step="5" />
-                  <Field label="Effective Depth (d)" unit="mm" value={formData.effectiveDepth} onChange={(v) => set({ effectiveDepth: v })} step="5" />
                   <div>
                     <Field label="Clear Cover" unit="mm" value={formData.clearCover} onChange={(v) => set({ clearCover: v })} step="5" />
                     <p className={`mt-1 text-[10px] ${SUB}`}>
-                      +{formData.coverTolerance} mm fixing tolerance &rarr; detail at {(parseFloat(formData.clearCover) || 0) + (parseFloat(formData.coverTolerance) || 0)} mm
+                      +5 mm fixing tolerance (fixed) &rarr; detail at {(parseFloat(formData.clearCover) || 0) + 5} mm
                     </p>
                   </div>
-                  <Field label="Cover Tolerance" unit="mm" value={formData.coverTolerance} onChange={(v) => set({ coverTolerance: v })} step="5" />
                   <div>
                     <label className={LABEL}>Main Bar &Oslash; <span className="text-[#94a3b8]">(mm)</span></label>
                     <Dropdown value={formData.mainBarDia} onChange={(e) => set({ mainBarDia: e.target.value })} options={MAIN_BARS} />
@@ -325,7 +322,6 @@ const StructuralInput = () => {
               {/* 5. LOADS */}
               <Section n="5" title="Loads" info>
                 <div className="grid grid-cols-2 gap-4">
-                  <Field label="Dead Load (DL)" unit="kN/m²" value={formData.deadLoad} onChange={(v) => set({ deadLoad: v })} step="0.5" />
                   <Field label="Floor Finish / Additional DL" unit="kN/m²" value={formData.floorFinish} onChange={(v) => set({ floorFinish: v })} step="0.5" />
                   <div>
                     <Field label="Live Load (LL)" unit="kN/m²" value={formData.liveLoad} onChange={(v) => set({ liveLoad: v })} step="0.5" />
@@ -392,10 +388,8 @@ const StructuralInput = () => {
                     {twoWay && <SumRow label="Long Span (Ly)" value={`${formData.spanLy} mm`} />}
                     <SumRow label={twoWay ? "Short Span (Lx)" : "Span (L)"} value={`${formData.spanLx} mm`} />
                     <SumRow label="Thickness (t)" value={`${formData.thickness} mm`} />
-                    <SumRow label="Effective Depth (d)" value={`${formData.effectiveDepth} mm`} />
                     <SumRow label="Concrete Grade" value={formData.concreteGrade} />
                     <SumRow label="Steel Grade" value={formData.steelGrade} />
-                    <SumRow label="Dead Load (DL)" value={`${dl.toFixed(2)} kN/m²`} />
                     <SumRow label="Floor Finish / Additional DL" value={`${ff.toFixed(2)} kN/m²`} />
                     <SumRow label="Live Load (LL)" value={`${ll.toFixed(2)} kN/m²`} />
                     <SumRow label="Total Load (DL + LL)" value={`${totalLoad.toFixed(2)} kN/m²`} strong />

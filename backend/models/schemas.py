@@ -41,9 +41,8 @@ class GeometryInput(BaseModel):
     span_lx: float = Field(..., gt=0, description="Short span in meters")
     span_ly: float = Field(..., gt=0, description="Long span in meters")
     thickness: float = Field(..., gt=0, description="Slab thickness in mm")
-    effective_depth: Optional[float] = Field(None, gt=0, description="Effective depth in mm")
+    effective_depth: Optional[float] = Field(None, description="Deprecated: derived from geometry (bar + cover)")
     clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
-    cover_tolerance: float = Field(5, ge=0, description="Fixing tolerance in mm")
 
 class MaterialInput(BaseModel):
     concrete_grade: str = Field(..., description="e.g., C30/37")
@@ -105,8 +104,7 @@ class DesignSummary(BaseModel):
     span_lx: float
     span_ly: float
     thickness: float
-    effective_depth: float
-    clear_cover: float = 25.0
+    effective_depth: Optional[float] = None
     concrete_grade: str
     steel_grade: str
     selected_bar_diameter: int
@@ -182,7 +180,6 @@ class SlabDesignResult(BaseModel):
     cost_breakdown: CostBreakdown
     optimization_options: List[OptimizationOption]
     report: List[ReportSection] = []
-    warnings: List[str] = []
 
 class TaskStatusResponse(BaseModel):
     task_id: str
@@ -245,9 +242,9 @@ class EnvelopeOut(BaseModel):
     service_load: float
 
 class DiagramOut(BaseModel):
-    x: List[float]                   # metres along beam
-    bmd: List[float]                 # kNm/m
-    sfd: List[float]                 # kN/m
+    x: List[float]                   
+    bmd: List[float]                 
+    sfd: List[float]                 
 
 class ContinuousSlabResult(BaseModel):
     task_id: str

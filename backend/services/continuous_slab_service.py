@@ -14,11 +14,6 @@ try:
 except ImportError:
     from continuous_one_way_slab_engine import design_continuous_slab, ContinuousInput
 
-try:
-    from engine.slab_detailed_report import SlabReportInput, build_detailed_slab_report
-except ImportError:
-    from slab_detailed_report import SlabReportInput, build_detailed_slab_report
-
 
 def _enum(v):
     return v.value if hasattr(v, "value") else v
@@ -167,42 +162,7 @@ def calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlabR
         sfd=[round(v, 2) for v in res.sfd_kN],
     )
 
-    if len(request.span_lengths) == 1:
-        report = build_detailed_slab_report(detailed_inp)
-    else:
-        report = _build_report(request, res)
-    mats = request.materials
-    loads = request.loads
-
-    def _parse_fck(g):
-        try:
-            return float(str(g).replace("C", "").split("/")[0])
-        except Exception:
-            return 25.0
-
-    def _parse_fy(g):
-        import re
-        m = re.search(r"(\d+)", str(g))
-        return float(m.group(1)) if m else 500.0
-
-    detailed_inp = SlabReportInput(
-        Lx_m=request.span_lengths[0],
-        h_mm=request.geometry_thickness,
-        clear_cover_mm=request.clear_cover,
-        cover_tol_mm=getattr(request, "cover_tolerance", 5.0),
-        bar_dia_mm=getattr(request, "main_bar_dia", 12),
-        fck=_parse_fck(mats.concrete_grade),
-        fyk=_parse_fy(mats.steel_grade),
-        unit_weight_conc=mats.unit_weight_concrete,
-        finishes=loads.floor_finish or 0.0,
-        partition=loads.dead_load or 0.0,
-        extra_dead=loads.additional_dead_load or 0.0,
-        imposed_qk=(loads.live_load or 0.0),
-        extra_live=loads.additional_live_load or 0.0,
-        occupancy=getattr(request, "occupancy", "office"),
-        support="simply_supported",
-    )
-    report = build_detailed_slab_report(detailed_inp)
+    report = _build_report(request, res)
 
     return ContinuousSlabResult(
         task_id="completed", status="completed", summary=summary, envelope=envelope,
@@ -225,16 +185,29 @@ def _build_report(request, res):
         R("Variable", "Q_k = live + additional live", f"Q_k = {res.q_k:.2f} kN/m²"),
         R("EN 1990", f"w_Ed = 1.35×{res.g_k:.2f} + 1.50×{res.q_k:.2f}", f"w_Ed = {res.w_ed:.2f} kN/m²"),
     ]})
-    sec.append({"title": "3. Analysis (continuous FEM)", "rows": [
-        R("Stiffness method", "beam-element FEM, banded LDLᵀ solver", f"{res.n_spans} elements"),
-        R("Recovery", "BM(x) = -Mi + Vi·x - wx²/2", "validated vs textbook"),
-        R("Envelope", f"max span {res.env_sag_kNm:.2f} / max support {res.env_hog_kNm:.2f} kNm/m", f"V_max {res.env_shear_kN:.2f} kN/m"),
-    ]})
-    span_rows = []
+    # ---- 3. FEM trace (rotations, node moments, element forces) ----
+    fem_rows = [
+        R("Section", f"b·h³/12 = 1000 × {request.geometry_thickness:.0f}³/12", f"I_g = {res.Ig_mm4:.3e} mm⁴"),
+        R("Rigidity", f"EI = E·I_g = 33000 × {res.Ig_mm4:.3e}", f"EI = {res.EI_Nmm2:.3e} N·mm²"),
+        R("Element stiffness", "k = (EI/L³)[[12,6L,−12,6L],[6L,4L²,−6L,2L²],[−12,−6L,12,−6L],[6L,2L²,−6L,4L²]]", f"{res.n_spans} elements"),
+        R("Fixed-end (UDL)", "f = [wL/2, wL²/12, wL/2, −wL²/12] per element", "assembled into global F"),
+        R("Solve", "K·θ = F  (all vertical DOFs restrained; solve nodal rotations)", f"{len(res.rotations_rad)} nodes"),
+    ]
+    for i, th in enumerate(res.rotations_rad):
+        fem_rows.append(R(f"θ node {i}", "nodal rotation", f"{th:+.6e} rad"))
+    sec.append({"title": "3. Continuous Analysis — FEM Trace", "rows": fem_rows})
+
+    # ---- 3b. Support moments recovered from the FEM (these MATCH the reference) ----
+    nm_rows = []
+    for i, m in enumerate(res.node_moments_kNm):
+        tag = "end support (pinned) → 0" if (i == 0 or i == len(res.node_moments_kNm) - 1) else "interior support (hogging)"
+        nm_rows.append(R(f"Node {i}", tag, f"M = {m:+.2f} kNm/m"))
+    sec.append({"title": "3b. Support Moments from FEM", "rows": nm_rows})
+    span_rows = [R("Status", "span-sagging recovery method under review with the design engineer", "PENDING CONFIRMATION")]
     for s in res.spans:
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
         span_rows.append(R(f"Span {s.index} (L={s.length_m:.2f} m)", f"M_sag = {s.M_sag_kNm:.2f} kNm/m → A_s,req = {s.As_req:.0f}", f"{bar} ({s.status})"))
-    sec.append({"title": "4. Span (Sagging) Reinforcement", "rows": span_rows})
+    sec.append({"title": "4. Span (Sagging) Reinforcement — provisional", "rows": span_rows})
     sup_rows = []
     for s in res.supports:
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
@@ -243,9 +216,14 @@ def _build_report(request, res):
     sec.append({"title": "6. Deflection (governing span)", "rows": [
         R("EC2 §7.4.2", f"actual L/d = {res.actual_slenderness:.1f}", f"limit {res.slenderness_limit:.1f} ({res.deflection_status})"),
     ]})
-    sec.append({"title": "7. Shear (EC2 6.2.2)", "rows": [
-        R("EC2 §6.2.2", f"v_Ed = {res.v_ed:.3f} ; v_Rd,c = {res.v_rdc:.3f} N/mm²", res.shear_status),
-    ]})
+    shear_rows = [
+        R("EC2 §6.2.1(8)", f"critical section at distance d = {res.d_mm:.0f} mm from the support face; V_Ed = V_face − w·d", "reduction applied"),
+    ]
+    for sp in res.supports:
+        if getattr(sp, "shear_reduced_kN", None) is not None and sp.shear_kN:
+            shear_rows.append(R(sp.position, f"V_face = {sp.shear_kN:.2f} kN → V_Ed = {sp.shear_reduced_kN:.2f} kN", ""))
+    shear_rows.append(R("EC2 §6.2.2", f"v_Ed = {res.v_ed:.3f} ; v_Rd,c = {res.v_rdc:.3f} N/mm²", res.shear_status))
+    sec.append({"title": "7. Shear (EC2 6.2.2, with reduction at support)", "rows": shear_rows})
     sec.append({"title": "8. Checks & Notes", "rows": [R("System", "overall", res.overall_status)] +
                 [R("Note", n, "") for n in res.notes]})
     return sec

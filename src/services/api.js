@@ -10,9 +10,7 @@ export const slabAPI = {
         span_lx: parseFloat(formData.spanLx) / 1000,
         span_ly: parseFloat(formData.spanLy) / 1000,
         thickness: parseFloat(formData.thickness),
-        effective_depth: parseFloat(formData.effectiveDepth),
-        clear_cover: parseFloat(formData.clearCover),
-        cover_tolerance: parseFloat(formData.coverTolerance) || 5
+        clear_cover: parseFloat(formData.clearCover)
       },
       materials: {
         concrete_grade: formData.concreteGrade,
@@ -21,7 +19,6 @@ export const slabAPI = {
         unit_weight_steel: parseFloat(formData.unitWeightSteel)
       },
       loads: {
-        dead_load: parseFloat(formData.deadLoad),
         floor_finish: parseFloat(formData.floorFinish),
         live_load: parseFloat(formData.liveLoad),
         additional_dead_load: parseFloat(formData.additionalDeadLoad),
