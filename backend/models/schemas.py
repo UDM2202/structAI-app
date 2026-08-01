@@ -227,7 +227,8 @@ class SupportDesignOut(BaseModel):
     index: int
     position: str
     hogging_moment: float            # kNm/m (magnitude)
-    shear: float                     # kN/m (design shear at support)
+    shear: float                     # kN/m (peak shear at the support face)
+    shear_reduced: float = 0.0       # kN/m (design shear at d from face, EC2 6.2.1(8))
     area_required: float
     area_provided: float
     bar_diameter: int
@@ -242,9 +243,9 @@ class EnvelopeOut(BaseModel):
     service_load: float
 
 class DiagramOut(BaseModel):
-    x: List[float]                   
-    bmd: List[float]                 
-    sfd: List[float]                 
+    x: List[float]                   # metres along beam
+    bmd: List[float]                 # kNm/m
+    sfd: List[float]                 # kN/m
 
 class ContinuousSlabResult(BaseModel):
     task_id: str

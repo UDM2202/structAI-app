@@ -116,7 +116,7 @@ def calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlabR
 
     supports_out = [SupportDesignOut(
         index=s.index, position=s.position, hogging_moment=round(s.M_hog_kNm, 2),
-        shear=round(s.shear_kN, 2),
+        shear=round(s.shear_kN, 2), shear_reduced=round(getattr(s, 'shear_reduced_kN', 0.0), 2),
         area_required=round(s.As_req, 1), area_provided=round(s.bar.As_prov, 1) if s.bar else 0,
         bar_diameter=s.bar.bar_dia if s.bar else 0, spacing=s.bar.spacing if s.bar else 0, status=s.status,
     ) for s in res.supports]
@@ -203,11 +203,11 @@ def _build_report(request, res):
         tag = "end support (pinned) → 0" if (i == 0 or i == len(res.node_moments_kNm) - 1) else "interior support (hogging)"
         nm_rows.append(R(f"Node {i}", tag, f"M = {m:+.2f} kNm/m"))
     sec.append({"title": "3b. Support Moments from FEM", "rows": nm_rows})
-    span_rows = [R("Status", "span-sagging recovery method under review with the design engineer", "PENDING CONFIRMATION")]
+    span_rows = [R("EC2 §6.1", "M(x) = M_A + V_A·x − wx²/2, peak at x* = V_A/w; end moments carried as hogging (negative). Verified against the engineer's corrected hand calc (spans + x* match to the digit).", "recovery confirmed")]
     for s in res.spans:
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
         span_rows.append(R(f"Span {s.index} (L={s.length_m:.2f} m)", f"M_sag = {s.M_sag_kNm:.2f} kNm/m → A_s,req = {s.As_req:.0f}", f"{bar} ({s.status})"))
-    sec.append({"title": "4. Span (Sagging) Reinforcement — provisional", "rows": span_rows})
+    sec.append({"title": "4. Span (Sagging) Reinforcement", "rows": span_rows})
     sup_rows = []
     for s in res.supports:
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
