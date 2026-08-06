@@ -770,6 +770,14 @@ function MomentDiagram({ sagging = 0, hogging = 0 }) {
   const scale = 55 / peak;
   const hog = hogging * scale;
   const sag = sagging * scale;
+  // FIX: hogging is passed in as a non-negative magnitude (Math.abs'd upstream
+  // in deriveEC2). The old code hardcoded a literal "-" in front of it
+  // regardless of value, so a genuinely zero hogging moment (e.g. a simply
+  // supported single span) rendered as the literal string "-0.00" -- not a
+  // floating point artifact, just string concatenation ignoring the actual
+  // value. Only show the minus sign when hogging is actually greater than
+  // zero; zero has no sign.
+  const hogLabel = hogging > 0 ? `-${f(hogging)}` : f(hogging);
   return (
     <div className="text-[#475569] dark:text-[#94a3b8]">
       <svg viewBox="0 0 520 180" className="w-full">
@@ -778,8 +786,8 @@ function MomentDiagram({ sagging = 0, hogging = 0 }) {
           d={`M${x0},${base} L${x0},${base - hog} Q${(x0 + x1) / 2},${base + 2 * sag} ${x1},${base - hog} L${x1},${base} Z`}
           fill="#ef4444" fillOpacity="0.12" stroke="#ef4444" strokeWidth="1.6"
         />
-        <text x={x0} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">-{f(hogging)}</text>
-        <text x={x1} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">-{f(hogging)}</text>
+        <text x={x0} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabel}</text>
+        <text x={x1} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabel}</text>
         <text x={(x0 + x1) / 2} y={base + 2 * sag + 16} fontSize="10" fill="#0ea5e9" textAnchor="middle">+{f(sagging)}</text>
         <text x={x0 - 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="end">A</text>
         <text x={x1 + 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="start">B</text>

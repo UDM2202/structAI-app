@@ -42,7 +42,7 @@ class GeometryInput(BaseModel):
     span_ly: float = Field(..., gt=0, description="Long span in meters")
     thickness: float = Field(..., gt=0, description="Slab thickness in mm")
     effective_depth: Optional[float] = Field(None, description="Deprecated: derived from geometry (bar + cover)")
-    clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
+    clear_cover: float = Field(25, ge=0, description="Clear cover in mm (0 is valid -- a fixed 5mm detailing tolerance is always added on top)")
 
 class MaterialInput(BaseModel):
     concrete_grade: str = Field(..., description="e.g., C30/37")
@@ -102,7 +102,7 @@ class DesignSummary(BaseModel):
     slab_type: str
     continuity: str
     span_lx: float
-    span_ly: float
+    span_ly: Optional[float] = None  # one-way slabs have no meaningful Ly -- omit it in the output
     thickness: float
     effective_depth: Optional[float] = None
     concrete_grade: str
@@ -200,7 +200,7 @@ class ContinuousSlabRequest(BaseModel):
     start_support: SupportType = SupportType.PINNED
     end_support: SupportType = SupportType.PINNED
     geometry_thickness: float = Field(..., gt=0, description="Slab thickness in mm")
-    clear_cover: float = Field(25, gt=0, description="Clear cover in mm")
+    clear_cover: float = Field(25, ge=0, description="Clear cover in mm (0 is valid -- a fixed 5mm detailing tolerance is always added on top)")
     materials: MaterialInput
     loads: LoadInput
     design_params: DesignParameters

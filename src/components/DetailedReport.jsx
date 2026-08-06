@@ -61,14 +61,14 @@ export default function DetailedReport({
           </div>
 
           {report.map((sec, si) => (
-            <div key={si}>
+            <div key={si} className="dr-section">
               <div className="mt-4 mb-1 text-[13px] font-bold uppercase tracking-wide text-[#0A2F44] dark:text-[#66a4c2]">
                 {sec.title}
               </div>
               {sec.rows.map((r, ri) => (
                 <div
                   key={ri}
-                  className="grid grid-cols-[170px_1fr_190px] gap-4 border-b border-[#f1f5f9] py-3 text-[13px] dark:border-white/5"
+                  className="dr-row grid grid-cols-[170px_1fr_190px] gap-4 border-b border-[#f1f5f9] py-3 text-[13px] dark:border-white/5"
                 >
                   <div className="font-mono text-[12px] text-[#64748b] dark:text-slate-400">{r.reference}</div>
                   <div className="whitespace-pre-line font-mono leading-relaxed text-[#334155] dark:text-slate-200">{r.calculation}</div>

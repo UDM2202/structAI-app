@@ -6,6 +6,20 @@
 //   repainted on EVERY printed page, which is what produced 4 identical pages.
 //   So we clone the content into a plain <div> appended directly to <body>
 //   (no fixed/absolute ancestors), print that, then remove it.
+//
+// PRINT-PAGINATION FIX (rows silently disappearing, e.g. the Deflection
+// section): the previous rule tried to prevent breaking inside <section>,
+// <table>, and <tr> -- none of which exist in DetailedReport.jsx (it's all
+// <div>s), so that rule was a no-op. The REAL bug is that CSS Grid rows
+// (display: grid) that straddle a print page boundary get silently dropped
+// by Chrome/WebKit's print engine -- this is a documented browser
+// limitation, not just a visual artifact. Longer sections (like Deflection,
+// with the most rows) are the most likely to land across a page break, which
+// is exactly the symptom reported. Flexbox and table layouts paginate
+// correctly, so on print we force every `.dr-row` from grid to flex, and
+// mark rows (not whole sections) as break-inside: avoid so a single row's
+// three columns can't split apart while the section as a whole still flows
+// across pages normally.
 
 let styleInjected = false;
 
@@ -53,10 +67,32 @@ function injectPrintStyle() {
   #__print_sheet .pdf-hide,
   #__print_sheet button { display: none !important; }
 
-  /* keep blocks intact across page breaks */
-  #__print_sheet section,
-  #__print_sheet table,
-  #__print_sheet tr { break-inside: avoid; page-break-inside: avoid; }
+  /* --- pagination fix ---
+     CSS Grid rows that straddle a page break can be dropped entirely in
+     print. Force each report row to flexbox (which paginates reliably) and
+     recreate the same 3-column layout with fixed widths, matching the
+     on-screen grid-cols-[170px_1fr_190px]. */
+  #__print_sheet .dr-row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: flex-start !important;
+    gap: 1rem !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  #__print_sheet .dr-row > div:nth-child(1) { flex: 0 0 170px !important; width: 170px !important; }
+  #__print_sheet .dr-row > div:nth-child(2) { flex: 1 1 auto !important; min-width: 0 !important; }
+  #__print_sheet .dr-row > div:nth-child(3) { flex: 0 0 190px !important; width: 190px !important; }
+
+  /* let a whole section flow across pages -- only individual rows are
+     protected from splitting, not the entire (possibly page-length) block */
+  #__print_sheet .dr-section { break-inside: auto !important; page-break-inside: auto !important; }
+
+  /* avoid starting a section title at the very bottom of a page, orphaned
+     from its first row */
+  #__print_sheet .dr-section > div:first-child {
+    break-after: avoid !important; page-break-after: avoid !important;
+  }
 
   @page { size: A4; margin: 12mm; }
 }`;

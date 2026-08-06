@@ -106,15 +106,15 @@ const DEFAULTS = {
   spanLx: "4000",   // mm  (short span)
   spanLy: "5000",   // mm  (long span)
   thickness: "175", // mm
-  effectiveDepth: "150", // mm
-  clearCover: "25", // mm
-  coverTolerance: "5", // mm detailing allowance
+  clearCover: "25", // mm — backend always adds a fixed +5mm detailing tolerance on top of this; not user-configurable
   mainBarDia: "12", // mm assumed main bar
   concreteGrade: "C30/37",
   steelGrade: "B500",
   unitWeightConcrete: "25",
   unitWeightSteel: "78.5",
-  deadLoad: "1.5",
+  // NOTE: no standalone "dead load" / "permanent load" field on purpose —
+  // the backend derives permanent load (self-weight) from thickness x unit
+  // weight automatically. Only extra/superimposed loads are entered here.
   floorFinish: "1.0",
   liveLoad: "3.0",
   additionalDeadLoad: "0",
@@ -189,7 +189,9 @@ const StructuralInput = () => {
       if (twoWay && lx > ly) return setError("Lx (short span) must be less than or equal to Ly (long span).");
       if (t < 100) return setError("Slab thickness must be at least 100 mm.");
       if (cover < 15) return setError("Clear cover must be at least 15 mm.");
-      const ratio = lx / (t - cover - 10);
+      const barGuess = parseFloat(formData.mainBarDia) || 12;
+      const d = t - (cover + 5) - barGuess / 2;   // matches backend: cover + fixed 5mm tolerance, minus half the bar
+      const ratio = lx / d;
       if (ratio > 40) return setError(`Span/depth ratio (${ratio.toFixed(1)}) exceeds 40. Increase thickness.`);
       window.alert("Validation passed. All inputs are within acceptable ranges.");
     }, 400);

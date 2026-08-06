@@ -774,7 +774,7 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     summary = DesignSummary(
         status=res.overall_status, slab_type="One-Way Slab",
         continuity=_enum(request.continuity).replace("_", " ").title(),
-        span_lx=g.span_lx, span_ly=g.span_ly, thickness=request.geometry.thickness,
+        span_lx=g.span_lx, span_ly=None, thickness=request.geometry.thickness,
         effective_depth=round(res.d_mm, 1), clear_cover=round(res.cover_mm, 1),
         concrete_grade=mats.concrete_grade, steel_grade=mats.steel_grade,
         selected_bar_diameter=bx, selected_spacing=sx,
@@ -783,7 +783,7 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
 
     design_forces = DesignForces(
         max_sagging_moment=round(sf.M_kNm, 2),
-        max_hogging_moment=round(-pf.M_kNm, 2),
+        max_hogging_moment=round(-pf.M_kNm, 2) if pf.M_kNm else 0.0,
         max_shear_force=round(res.V_ed_kN, 2),
         ultimate_load=round(res.w_ed, 2),
         service_load=round(res.g_k + res.q_k, 2),
@@ -858,7 +858,7 @@ def _build_one_way_report(request, res, inp):
     R = lambda ref, calc, out: {"reference": ref, "calculation": calc, "output": out}
     sf, pf = res.span_face, res.support_face
     cont = _enum(request.continuity).replace("_", " ").title()
- 
+
     g = request.geometry
     mats = request.materials
     b = 1000.0
@@ -874,9 +874,9 @@ def _build_one_way_report(request, res, inp):
     phi = sf.bar.bar_dia if sf.bar else (inp.bar_diameters[0] if inp.bar_diameters else 12)
     exposure = _enum(request.design_params.exposure_class)
     L = inp.span_m
- 
+
     sec = []
- 
+
     # ---------------- 1. Design basis ----------------
     sec.append({"title": "1. Design Basis and References", "rows": [
         R("EN 1990", "Basis of structural design \u2014 ULS combination Eq. 6.10", "adopted"),
@@ -884,85 +884,85 @@ def _build_one_way_report(request, res, inp):
         R("EN 1992-1-1", "Concrete design \u2014 \u00a76.1 flexure, \u00a76.2.2 shear, \u00a77.4.2 deflection, \u00a79.2.1.1 min steel", "adopted"),
         R("UK NA", "National Annex to EN 1992-1-1", "adopted"),
         R("Design strip", "one-way slab designed as a 1 m wide strip spanning one direction", f"b = {b:.0f} mm"),
-        R("Support", f"continuity = {cont}", f"L = {L:.2f} m"),
+        R("Support", f"continuity = {cont}", f"Lx = {L:.2f} m"),
     ]})
- 
+
     # ---------------- 2. Geometry, cover & materials ----------------
     sec.append({"title": "2. Geometry, Cover and Materials", "rows": [
-        R("Geometry", f"span L = {L:.2f} m ; overall thickness h = {h:.0f} mm", f"h = {h:.0f} mm"),
-        R("EC2 \u00a74.4.1.2", f"nominal cover c_nom = c_min + \u0394c_dev  (exposure {exposure})", f"c_nom = {cover:.0f} mm"),
-        R("Detailing", f"clear cover specified = {g.clear_cover:.0f} mm  (+5 mm fixing tolerance \u2192 detail at {g.clear_cover + 5:.0f} mm)", f"c = {g.clear_cover:.0f} mm"),
+        R("Geometry", f"span Lx = {L:.2f} m ; overall thickness h = {h:.0f} mm", f"h = {h:.0f} mm"),
+        R("Cover input", f"clear cover specified by user, Cc = {g.clear_cover:.0f} mm", f"Cc,input = {g.clear_cover:.0f} mm"),
+        R("Tolerance", "a fixed 5 mm fixing/detailing allowance is added to the clear cover specified above -- this is not user-editable", "+5 mm"),
+        R("Cover used", f"Cc,used = Cc,input + 5 mm = {g.clear_cover:.0f} + 5", f"Cc = {cover:.0f} mm"),
         R("Bar assumed", f"main bar \u03c6 = {phi:.0f} mm  \u2192  \u03c6/2 = {phi/2:.1f} mm", f"\u03c6 = {phi:.0f} mm"),
-        R("EC2 \u00a76.1", f"d = h \u2212 c_nom \u2212 \u03c6/2 = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f}", f"d = {d:.0f} mm"),
-        R("EC2 Table 3.1", f"f_ctm = 0.30 \u00b7 f_ck^(2/3) = 0.30 \u00d7 {fck:.0f}^(2/3) = 0.30 \u00d7 {fck**(2/3):.3f}", f"f_ctm = {fctm:.2f} MPa"),
+        R("EC2 \u00a76.1", f"d = h \u2212 Cc \u2212 \u03c6/2 = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f}", f"d = {d:.0f} mm"),
+        R("EC2 Table 3.1", f"f_ctm = 0.30 \u00d7 f_ck^(2/3) = 0.30 \u00d7 {fck:.0f}^(2/3) = 0.30 \u00d7 {fck**(2/3):.3f}", f"f_ctm = {fctm:.2f} MPa"),
         R("EC2 \u00a73.1.6", f"f_cd = f_ck/\u03b3_c = {fck:.0f}/1.50", f"f_cd = {fcd:.2f} MPa"),
         R("EC2 \u00a73.2.7", f"f_yd = f_yk/\u03b3_s = {fyk:.0f}/1.15", f"f_yd = {fyd:.1f} MPa"),
     ]})
- 
-    # ---------------- 3. Loads ----------------
+
+    # ---------------- 3. Permanent loads ----------------
     sw = res.self_weight
-    dl = inp.dead_load or 0.0
     ff = inp.floor_finish or 0.0
-    ad = inp.additional_dead_load or 0.0
+    pa = inp.additional_dead_load or 0.0   # "Partition allowance" -- the extra permanent load input
     ll = inp.live_load or 0.0
     al = inp.additional_live_load or 0.0
-    sec.append({"title": "3. Loads (Load Analysis)", "rows": [
-        R("EN 1991-1-1 \u00a73.2.1", f"self-weight g_k,self = \u03b3_c \u00d7 h = {gamma_c:.0f} kN/m\u00b3 \u00d7 {h/1000:.3f} m", f"{sw:.2f} kN/m\u00b2"),
-        R("Partitions / dead", "g_k,partition (allowance)", f"{dl:.2f} kN/m\u00b2"),
-        R("Finishes", "g_k,finishes (assumed)", f"{ff:.2f} kN/m\u00b2"),
-        R("Additional dead", "g_k,extra (user input)", f"{ad:.2f} kN/m\u00b2"),
-        R("Total permanent", f"G_k = {sw:.2f} + {dl:.2f} + {ff:.2f} + {ad:.2f}", f"G_k = {res.g_k:.2f} kN/m\u00b2"),
-        R("EN 1991-1-1 Table 6.2", f"imposed (leading variable) q_k = {ll:.2f} ; additional = {al:.2f}", f"Q_k = {res.q_k:.2f} kN/m\u00b2"),
+    sec.append({"title": "3. Permanent Loads (Load Analysis)", "rows": [
+        R("EN 1991-1-1 \u00a73.2.1", f"Self-weight of slab = \u03b3_c \u00d7 h = {gamma_c:.0f} kN/m\u00b3 \u00d7 {h/1000:.2f}m", f"{sw:.2f} kN/m\u00b2"),
+        R("User input", "Weight of finishes (assume)", f"{ff:.2f} kN/m\u00b2"),
+        R("User input", "Partition allowance", f"{pa:.2f} kN/m\u00b2"),
+        R("Total dead load", f"G_k = Self-weight + Weight of finishes + Partition allowance = {sw:.2f} + {ff:.2f} + {pa:.2f}", f"G_k = {res.g_k:.2f} kN/m\u00b2"),
     ]})
- 
+
+    # ---------------- 4. Variable loads ----------------
+    sec.append({"title": "4. Variable Load on Slab", "rows": [
+        R("EN 1991-1-1 Table 6.2", f"Leading variable action (imposed load), based on building use", f"{ll:.2f} kN/m\u00b2"),
+        R("User input", "Extra live load", f"{al:.2f} kN/m\u00b2"),
+        R("Total variable load", f"Q_k = imposed + extra live load = {ll:.2f} + {al:.2f}", f"Q_k = {res.q_k:.2f} kN/m\u00b2"),
+    ]})
+
     # ---------------- 4. ULS combination ----------------
     pg, pq = 1.35 * res.g_k, 1.50 * res.q_k
-    sec.append({"title": "4. Ultimate Limit State Load Combination", "rows": [
-        R("EN 1990 Eq. 6.10", "w_Ed = \u03b3_G\u00b7G_k + \u03b3_Q\u00b7Q_k", "combination adopted"),
-        R("Partial factors", "\u03b3_G = 1.35 (permanent, unfavourable) ; \u03b3_Q = 1.50 (variable)", "EN 1990 Table A1.2(B)"),
-        R("Substitution", f"w_Ed = (1.35 \u00d7 {res.g_k:.2f}) + (1.50 \u00d7 {res.q_k:.2f}) = {pg:.2f} + {pq:.2f}", f"w_Ed = {res.w_ed:.2f} kN/m\u00b2"),
+    sec.append({"title": "4. Ultimate Limit State Combination", "rows": [
+        R("EN 1990 Eq. 6.10", "w_u = \u03b3_Gk\u00b7G_k + \u03b3_Qk\u00b7Q_k", "combination adopted"),
+        R("Partial factors", "\u03b3_Gk = 1.35 (permanent) ; \u03b3_Qk = 1.50 (variable)", "EN 1990 Table A1.2(B)"),
+        R("Substitution", f"w_u = (1.35 \u00d7 {res.g_k:.2f}) + (1.50 \u00d7 {res.q_k:.2f}) = {pg:.4f} + {pq:.4f}", f"w_u = {res.w_ed:.4f} kN/m\u00b2"),
         R("Design line load", f"1 m strip: w = {res.w_ed:.2f} kN/m\u00b2 \u00d7 1.00 m", f"w = {res.w_ed:.2f} kN/m"),
     ]})
- 
-    # ---------------- 5. Design moments & shear ----------------
+
+    # ---------------- 5. Design moments & shear (closed form) ----------------
     c_sag = sf.M_kNm / (res.w_ed * L ** 2) if (res.w_ed and L) else 0.0
-    c_hog = pf.M_kNm / (res.w_ed * L ** 2) if (res.w_ed and L) else 0.0
     c_v = res.V_ed_kN / (res.w_ed * L) if (res.w_ed and L) else 0.0
-    sec.append({"title": "5. Design Moments and Shear (Closed-Form)", "rows": [
-        R("EC2 \u00a75.4", f"continuity: {cont} \u2192 span coefficient c = {c_sag:.4f}", f"c = {c_sag:.4f}"),
-        R("Span (sagging)", f"M_sag = c \u00b7 w \u00b7 L\u00b2 = {c_sag:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}\u00b2 = {c_sag:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L**2:.2f}", f"M_sag = {sf.M_kNm:.2f} kNm/m"),
-        R("Equivalent (SS)", f"for simply supported, M = wL\u00b2/8 = ({res.w_ed:.2f} \u00d7 {L**2:.2f})/8 = {res.w_ed*L**2:.2f}/8", f"{res.w_ed*L**2/8:.2f} kNm/m"),
-        R("Support (hogging)", (f"M_hog = {c_hog:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L**2:.2f}" if pf.M_kNm > 0
-                                else "single simply-supported span \u2192 hogging moment = 0"), f"M_hog = {pf.M_kNm:.2f} kNm/m"),
-        R("Shear", f"V_Ed = c_v \u00b7 w \u00b7 L = {c_v:.3f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}   (= wL/2 for SS)", f"V_Ed = {res.V_ed_kN:.2f} kN/m"),
+    sec.append({"title": "5. Design Moments (Closed-Form)", "rows": [
+        R("EC2 \u00a75.4", f"single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; for a simply-supported slab, c = 0.125", f"c = {c_sag:.4f}"),
+        R("Span (sagging)", f"M_Ed = c \u00d7 w \u00d7 Lx\u00b2 = {c_sag:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}\u00b2", f"M_Ed = {sf.M_kNm:.2f} kNm/m"),
+        R("Equivalent form", f"M_Ed = w\u00b7Lx\u00b2/8 = ({res.w_ed:.2f} \u00d7 {L**2:.2f})/8 \u2014 maximum moment at mid-span", f"{res.w_ed*L**2/8:.2f} kNm/m"),
+        R("Hogging", "since it is a single span, there is no need to add a hogging moment -- it will always be zero for a simply-supported single span", f"M_hog = {pf.M_kNm:.2f} kNm/m"),
+        R("Shear", f"V_Ed = c \u00d7 w \u00d7 Lx = {c_v:.3f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}  (c = 0.5 for simply supported, i.e. w\u00b7Lx/2)", f"V_Ed = {res.V_ed_kN:.2f} kN/m"),
     ]})
- 
-    # ---------------- 6. Flexure — span ----------------
+
+    # ---------------- 6. Flexural reinforcement -- span ----------------
     root = max(0.25 - sf.k / 1.134, 0.0)
-    sec.append({"title": "6. Flexural Reinforcement \u2014 Span (Sagging)", "rows": [
-        R("EC2 \u00a76.1", f"K = M_Ed/(f_ck\u00b7b\u00b7d\u00b2) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/({fck:.0f} \u00d7 {b:.0f} \u00d7 {d:.0f}\u00b2) = ({sf.M_kNm*1e6:.4g})/({fck*b*d**2:.4g})", f"K = {sf.k:.4f}"),
-        R("Compression steel", f"K = {sf.k:.4f} {'<' if sf.singly else '\u2265'} K' = 0.167", "singly reinforced \u2014 no compression steel required" if sf.singly else "compression reinforcement required"),
-        R("EC2 \u00a76.1", f"z = d[0.5 + \u221a(0.25 \u2212 K/1.134)] = {d:.0f}[0.5 + \u221a(0.25 \u2212 {sf.k:.4f}/1.134)] = {d:.0f}[0.5 + \u221a{root:.4f}] = {d:.0f} \u00d7 {0.5 + math.sqrt(root):.4f}", f"z = {sf.z_mm:.1f} mm"),
-        R("Cap", f"z \u2264 0.95d = 0.95 \u00d7 {d:.0f} = {0.95*d:.1f} mm \u2192 adopt z = min({d*(0.5+math.sqrt(root)):.1f} , {0.95*d:.1f})", f"z = {sf.z_mm:.1f} mm"),
-        R("Check vs 0.9d", f"simplified lever arm 0.9d = 0.9 \u00d7 {d:.0f} = {0.9*d:.1f} mm ; computed z/d = {sf.z_mm:.1f}/{d:.0f} = {sf.z_mm/d:.3f}",
-          f"z {'\u2265' if sf.z_mm >= 0.9*d else '<'} 0.9d \u2014 {'consistent with the 0.9d approximation' if sf.z_mm >= 0.9*d else 'below 0.9d, review'}"),
-        R("EC2 \u00a76.1", f"A_s = M_Ed/(0.87\u00b7f_yk\u00b7z) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {sf.z_mm:.1f}) = ({sf.M_kNm*1e6:.4g})/({0.87*fyk*sf.z_mm:.5g})", f"A_s = {sf.As:.0f} mm\u00b2/m"),
+    sec.append({"title": "6. Flexural Reinforcement \u2014 Span", "rows": [
+        R("Effective depth", f"d = h \u2212 Cc \u2212 \u03c6/2, assuming \u03c6{phi:.0f}mm bars will be employed", f"d = {h:.0f} \u2212 {cover:.0f} \u2212 {phi/2:.1f} = {d:.0f} mm ; b = {b:.0f} mm"),
+        R("EC2 \u00a76.1", f"K = M_Ed/(f_ck\u00b7b\u00b7d\u00b2) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/({fck:.0f} \u00d7 {b:.0f} \u00d7 {d:.0f}\u00b2) = {sf.M_kNm*1e6:.4g}/{fck*b*d**2:.4g}", f"K = {sf.k:.4f}"),
+        R("Compression steel check", f"K = {sf.k:.4f} {'<' if sf.singly else '\u2265'} 0.167", "K < 0.167 \u2192 singly reinforced, no compression reinforcement required" if sf.singly else "K \u2265 0.167 \u2192 compression reinforcement required"),
+        R("EC2 \u00a76.1", f"Z = d(0.5 + \u221a(0.25 \u2212 K/1.134)) = {d:.0f}(0.5 + \u221a(0.25 \u2212 {sf.k:.4f}/1.134)) = {d:.0f}(0.5 + \u221a{root:.4f})", f"Z = {sf.z_mm:.1f} mm \u2264 0.95d"),
+        R("EC2 \u00a76.1", f"A_s = M_Ed/(0.87\u00b7f_yk\u00b7Z) = ({sf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {sf.z_mm:.1f})", f"A_s = {sf.As:.0f} mm\u00b2/m"),
     ]})
- 
+
     # ---------------- 7. Minimum reinforcement ----------------
     bd = b * d
     t1 = 0.26 * fctm / fyk * bd
     t2 = 0.0013 * bd
-    gov = "0.26\u00b7f_ctm/f_yk\u00b7b\u00b7d" if t1 >= t2 else "0.0013\u00b7b\u00b7d"
+    gov = "concrete tensile strength basis" if t1 >= t2 else "0.13% minimum basis"
     sec.append({"title": "7. Minimum Reinforcement Check", "rows": [
-        R("EC2 \u00a79.2.1.1", "A_s,min = max( 0.26\u00b7f_ctm/f_yk\u00b7b\u00b7d , 0.0013\u00b7b\u00b7d )", "formula"),
-        R("Section area", f"b\u00b7d = {b:.0f} \u00d7 {d:.0f}", f"b\u00b7d = {bd:.0f} mm\u00b2"),
-        R("Term 1", f"0.26 \u00d7 f_ctm/f_yk \u00d7 b\u00b7d = 0.26 \u00d7 {fctm:.2f}/{fyk:.0f} \u00d7 {bd:.0f} = {0.26*fctm/fyk:.6f} \u00d7 {bd:.0f}", f"{t1:.0f} mm\u00b2/m"),
-        R("Term 2", f"0.0013 \u00d7 b\u00b7d = 0.0013 \u00d7 {bd:.0f}", f"{t2:.0f} mm\u00b2/m"),
+        R("EC2 \u00a79.2.1.1", "A_s,min = max( 0.26\u00b7f_ctm/f_yk\u00b7b\u00b7d , 0.0013\u00b7b\u00b7d )  \u2014 formula used strictly, with f_ctm from EC2 Table 3.1", "As,min formula"),
+        R("Basis 1 \u2014 concrete tensile strength", f"0.26 \u00d7 f_ctm/f_yk \u00d7 b\u00b7d = 0.26 \u00d7 {fctm:.2f}/{fyk:.0f} \u00d7 {bd:.0f}", f"{t1:.0f} mm\u00b2/m"),
+        R("Basis 2 \u2014 0.13% of section", f"0.0013 \u00d7 b\u00b7d = 0.0013 \u00d7 {bd:.0f}", f"{t2:.0f} mm\u00b2/m"),
         R("Governing", f"A_s,min = max({t1:.0f} , {t2:.0f})  \u2190 {gov} governs", f"A_s,min = {sf.As_min:.0f} mm\u00b2/m"),
         R("Required", f"A_s,req = max(A_s , A_s,min) = max({sf.As:.0f} , {sf.As_min:.0f})  \u2192 {'bending governs' if sf.As >= sf.As_min else 'minimum steel governs'}", f"A_s,req = {sf.As_req:.0f} mm\u00b2/m"),
     ]})
- 
+
     # ---------------- 8. Bar selection ----------------
     if sf.bar:
         Ab = math.pi * sf.bar.bar_dia ** 2 / 4.0
@@ -970,50 +970,47 @@ def _build_one_way_report(request, res, inp):
         sec.append({"title": "8. Bar Selection \u2014 Span", "rows": [
             R("Bar area", f"A_bar = \u03c0\u03c6\u00b2/4 = \u03c0 \u00d7 {sf.bar.bar_dia:.0f}\u00b2/4", f"A_bar = {Ab:.1f} mm\u00b2"),
             R("Spacing required", f"s \u2264 A_bar \u00d7 1000/A_s,req = {Ab:.1f} \u00d7 1000/{sf.As_req:.0f} = {Ab*1000/sf.As_req if sf.As_req else 0:.0f} mm", f"adopt s = {sf.bar.spacing:.0f} mm"),
-            R("Provided", f"A_s,prov = A_bar \u00d7 (1000/s) = {Ab:.1f} \u00d7 (1000/{sf.bar.spacing:.0f}) = {Ab:.1f} \u00d7 {1000/sf.bar.spacing:.3f}", f"A_s,prov = {sf.bar.As_prov:.0f} mm\u00b2/m"),
+            R("Provided", f"A_s,prov = A_bar \u00d7 (1000/s) = {Ab:.1f} \u00d7 (1000/{sf.bar.spacing:.0f})", f"A_s,prov = {sf.bar.As_prov:.0f} mm\u00b2/m"),
             R("Check", f"A_s,prov \u2265 A_s,req \u2192 {sf.bar.As_prov:.0f} \u2265 {sf.As_req:.0f}", "OK" if sf.bar.As_prov >= sf.As_req else "INCREASE STEEL"),
             R("EC2 \u00a79.3.1.1", f"max spacing = min(3h , 400) = min({3*h:.0f} , 400) = {s_max:.0f} mm ; provided {sf.bar.spacing:.0f} mm", "OK" if sf.bar.spacing <= s_max else "SPACING TOO WIDE"),
             R("Provide", f"\u03c6{sf.bar.bar_dia:.0f} @ {sf.bar.spacing:.0f} mm c/c (bottom, main direction)", f"T{sf.bar.bar_dia:.0f} @ {sf.bar.spacing:.0f}"),
         ]})
- 
-    # ---------------- 9. Support reinforcement ----------------
+
+    # ---------------- 9. Support reinforcement (only if hogging is non-zero) ----------------
     if pf.M_kNm > 0:
         rows = [
             R("EC2 \u00a76.1", f"K = M_hog/(f_ck\u00b7b\u00b7d\u00b2) = ({pf.M_kNm:.2f} \u00d7 10\u2076)/({fck:.0f} \u00d7 {b:.0f} \u00d7 {d:.0f}\u00b2)", f"K = {pf.k:.4f}"),
-            R("Lever arm", f"z = d[0.5 + \u221a(0.25 \u2212 {pf.k:.4f}/1.134)] \u2264 0.95d = {0.95*d:.1f} mm", f"z = {pf.z_mm:.1f} mm"),
-            R("Check vs 0.9d", f"0.9d = 0.9 \u00d7 {d:.0f} = {0.9*d:.1f} mm ; z/d = {pf.z_mm:.1f}/{d:.0f} = {pf.z_mm/d if d else 0:.3f}",
-              f"z {'\u2265' if pf.z_mm >= 0.9*d else '<'} 0.9d"),
-            R("EC2 \u00a76.1", f"A_s = M_hog/(0.87\u00b7f_yk\u00b7z) = ({pf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {pf.z_mm:.1f})", f"A_s = {pf.As:.0f} mm\u00b2/m"),
+            R("Lever arm", f"Z = d(0.5 + \u221a(0.25 \u2212 {pf.k:.4f}/1.134)) \u2264 0.95d", f"Z = {pf.z_mm:.1f} mm"),
+            R("EC2 \u00a76.1", f"A_s = M_hog/(0.87\u00b7f_yk\u00b7Z) = ({pf.M_kNm:.2f} \u00d7 10\u2076)/(0.87 \u00d7 {fyk:.0f} \u00d7 {pf.z_mm:.1f})", f"A_s = {pf.As:.0f} mm\u00b2/m"),
             R("Required", f"A_s,req = max({pf.As:.0f} , A_s,min {pf.As_min:.0f})", f"A_s,req = {pf.As_req:.0f} mm\u00b2/m"),
         ]
         if pf.bar:
             rows.append(R("Provide", f"\u03c6{pf.bar.bar_dia:.0f} @ {pf.bar.spacing:.0f} mm c/c (top, over support)", f"A_s,prov = {pf.bar.As_prov:.0f} mm\u00b2/m"))
         sec.append({"title": "9. Flexural Reinforcement \u2014 Support (Hogging)", "rows": rows})
- 
-    # ---------------- 10. Deflection ----------------
+
+    # ---------------- 10. Deflection check ----------------
     As_prov_span = sf.bar.As_prov if sf.bar else 0.0
-    rho = As_prov_span / bd if bd else 0.0
-    rho0 = 1e-3 * math.sqrt(fck)
-    F3 = min(As_prov_span / sf.As_req, 1.5) if sf.As_req else 1.0
-    basic = res.slenderness_limit / F3 if F3 else res.slenderness_limit
-    K_sys = {"simply_supported": 1.0, "one_end_continuous": 1.3,
-             "both_ends_continuous": 1.5, "cantilever": 0.4}.get(_enum(request.continuity), 1.0)
-    sec.append({"title": "10. Deflection Check (EC2 \u00a77.4.2 / UK NA)", "rows": [
-        R("Structural system", f"{cont}: K = 1.0 (SS) / 1.3 (end span) / 1.5 (interior) / 0.4 (cantilever)", f"K = {K_sys:.2f}"),
-        R("Steel ratio", f"\u03c1 = A_s,prov/(b\u00b7d) = {As_prov_span:.0f}/{bd:.0f}", f"\u03c1 = {rho:.5f}"),
-        R("Reference ratio", f"\u03c1\u2080 = 10\u207b\u00b3\u00b7\u221af_ck = 10\u207b\u00b3 \u00d7 \u221a{fck:.0f} = 10\u207b\u00b3 \u00d7 {math.sqrt(fck):.4f}", f"\u03c1\u2080 = {rho0:.5f}"),
-        R("Branch", f"\u03c1 = {rho:.5f} vs \u03c1\u2080 = {rho0:.5f}",
-          "\u03c1 \u2264 \u03c1\u2080 \u2192 lightly reinforced branch" if rho <= rho0 else "\u03c1 > \u03c1\u2080 \u2192 heavily reinforced branch"),
-        R("EC2 \u00a77.4.2", ("(L/d)_basic = K[11 + 1.5\u221af_ck(\u03c1\u2080/\u03c1) + 3.2\u221af_ck(\u03c1\u2080/\u03c1 \u2212 1)^1.5]" if rho <= rho0
-                              else "(L/d)_basic = K[11 + 1.5\u221af_ck\u00b7\u03c1\u2080/(\u03c1\u2212\u03c1') + \u221af_ck/12\u00b7\u221a(\u03c1'/\u03c1\u2080)]"), f"(L/d)_basic \u2248 {basic:.2f}"),
-        R("Steel modification", f"F3 = A_s,prov/A_s,req = {As_prov_span:.0f}/{sf.As_req:.0f} = {As_prov_span/sf.As_req if sf.As_req else 0:.3f}  (\u2264 1.5)", f"F3 = {F3:.3f}"),
-        R("Allowable", f"(L/d)_allow = (L/d)_basic \u00d7 F3 = {basic:.2f} \u00d7 {F3:.3f}", f"{res.slenderness_limit:.2f}"),
-        R("Actual", f"(L/d)_actual = L/d = {L*1000:.0f}/{d:.0f}", f"{res.actual_slenderness:.2f}"),
-        R("Verdict", f"{res.actual_slenderness:.2f} {'\u2264' if res.deflection_status == 'PASS' else '>'} {res.slenderness_limit:.2f}",
-          "Deflection OK" if res.deflection_status == "PASS" else "Deflection NOT OK \u2014 increase depth or steel"),
+    K_note = "K = 1.0 (simply supported) / 1.5 (interior span) / 1.3 (end span) / 0.4 (cantilever)"
+    sec.append({"title": "10. Check for Deflection", "rows": [
+        R("Note", "for slabs, most especially two-way spanning slabs, checks are carried out based on the shorter span", ""),
+        R("Note", K_note, f"K = {res.K_sys:.2f} ({cont})"),
+        R("Note", "compression reinforcement \u03c1' is taken as 0", "\u03c1' = 0"),
+        R("Basic span/depth ratio", f"\u03c1 = A_s,provided/(b\u00b7d) = {As_prov_span:.0f}/{bd:.0f}", f"\u03c1 = {res.rho:.5f}"),
+        R("Basic span/depth ratio", f"\u03c1\u2080 = 10\u207b\u00b3 \u00d7 \u221af_ck = 10\u207b\u00b3 \u00d7 \u221a{fck:.0f}", f"\u03c1\u2080 = {res.rho0:.5f}"),
+        R("Branch", f"\u03c1 = {res.rho:.5f} vs \u03c1\u2080 = {res.rho0:.5f}",
+          "\u03c1 < \u03c1\u2080 \u2192 use lightly-reinforced formula" if res.rho <= res.rho0 else "\u03c1 > \u03c1\u2080 \u2192 use heavily-reinforced formula"),
+        R("EC2 \u00a77.4.2", ("(L/d) = K[11 + 1.5\u221af_ck\u00b7(\u03c1\u2080/\u03c1) + 3.2\u221af_ck\u00b7(\u03c1\u2080/\u03c1 \u2212 1)^(3/2)]" if res.rho <= res.rho0
+                             else "(L/d) = K[11 + 1.5\u221af_ck\u00b7\u03c1\u2080/(\u03c1 \u2212 \u03c1') + \u221af_ck/12\u00b7\u221a(\u03c1'/\u03c1\u2080)]  , \u03c1' = 0"),
+          f"(L/d) = {res.ld_basic:.2f}"),
+        R("Modification factor", f"\u03b4s = (310 \u00d7 f_yk \u00d7 A_s,required)/(500 \u00d7 A_s,provided) = (310 \u00d7 {fyk:.0f} \u00d7 {sf.As_req:.0f})/(500 \u00d7 {As_prov_span:.0f})", f"\u03b4s = {res.delta_s:.3f}"),
+        R("Modification factor", f"\u03b2s = 310/\u03b4s = 310/{res.delta_s:.3f}  (\u2264 2.0)", f"\u03b2s = {res.beta_s:.3f}"),
+        R("Allowable Span/Depth ratio", f"allowable (L/d) = \u03b2s \u00d7 (L/d)lim = {res.beta_s:.3f} \u00d7 {res.ld_basic:.2f}", f"{res.slenderness_limit:.2f}"),
+        R("Actual deflection", f"(L/d)actual = Lx/d = {L*1000:.0f}/{d:.0f}", f"{res.actual_slenderness:.2f}"),
+        R("Verdict", f"(L/d)actual {'<' if res.deflection_status == 'PASS' else '>'} [\u03b2s \u00d7 (L/d)lim]  \u2192  {res.actual_slenderness:.2f} {'<' if res.deflection_status == 'PASS' else '>'} {res.slenderness_limit:.2f}",
+          "Deflection is okay" if res.deflection_status == "PASS" else "Deflection is NOT okay \u2014 increase depth or steel"),
     ]})
- 
-    # ---------------- 11. Shear ----------------
+
+    # ---------------- 11. Shear verification ----------------
     rho_l = min(As_prov_span / bd, 0.02) if bd else 0.0
     k_raw = 1 + math.sqrt(200 / d) if d else 1.0
     k_sh = min(k_raw, 2.0)
@@ -1022,27 +1019,28 @@ def _build_one_way_report(request, res, inp):
     v_main = C_Rdc * k_sh * inner ** (1 / 3)
     v_min = 0.035 * k_sh ** 1.5 * math.sqrt(fck)
     VRdc_kN = res.v_rdc * b * d / 1000.0
-    sec.append({"title": "11. Shear Verification (EC2 \u00a76.2.2)", "rows": [
-        R("Design shear", f"V_Ed = {res.V_ed_kN:.2f} kN/m  \u2192  v_Ed = V_Ed/(b\u00b7d) = ({res.V_ed_kN:.2f} \u00d7 10\u00b3)/({b:.0f} \u00d7 {d:.0f})", f"v_Ed = {res.v_ed:.3f} MPa"),
-        R("Steel ratio", f"\u03c1\u2097 = A_s,prov/(b\u00b7d) = {As_prov_span:.0f}/{bd:.0f} = {As_prov_span/bd if bd else 0:.5f}  (limit 0.02)", f"\u03c1\u2097 = {rho_l:.5f}"),
-        R("Size factor", f"k = 1 + \u221a(200/d) = 1 + \u221a(200/{d:.0f}) = 1 + {math.sqrt(200/d) if d else 0:.3f} = {k_raw:.3f}  (\u2264 2.0)", f"k = {k_sh:.3f}"),
+    sec.append({"title": "11. Shear Verification", "rows": [
+        R("Maximum shear at support", f"V_Ed = \u03b2s \u00d7 n \u00d7 Lx = 0.5 \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}  (or n\u00b7Lx/2)", f"V_Ed = {res.V_ed_kN:.2f} kN/m"),
+        R("v_Ed", f"v_Ed = V_Ed/(b\u00b7d) = ({res.V_ed_kN:.2f} \u00d7 10\u00b3)/({b:.0f} \u00d7 {d:.0f})", f"v_Ed = {res.v_ed:.3f} MPa"),
+        R("Steel ratio", f"\u03c1_i = A_s,provided/(b\u00b7d) = {As_prov_span:.0f}/{bd:.0f}  (\u2264 0.02)", f"\u03c1_i = {rho_l:.5f}"),
+        R("Size factor", f"k = 1 + \u221a(200/d) = 1 + \u221a(200/{d:.0f})  (\u2264 2.0)", f"k = {k_sh:.3f}"),
         R("EC2 \u00a76.2.2", f"C_Rd,c = 0.18/\u03b3_c = 0.18/1.50", f"C_Rd,c = {C_Rdc:.3f}"),
-        R("Axial stress", f"\u03c3_cp = N_Ed/A_c = 0/({b:.0f} \u00d7 {h:.0f}) \u2014 no axial force in the slab (N_Ed = 0), and \u03c3_cp \u2264 0.2\u00b7f_cd = {0.2*fcd:.2f} MPa", f"\u03c3_cp = 0.000 MPa"),
-        R("Axial factor", "k_i = 0.15 (EC2 recommended value); the k_i\u00b7\u03c3_cp contribution = 0.15 \u00d7 0.000", f"k_i\u00b7\u03c3_cp = 0.000 MPa"),
-        R("Full expression", "v_Rd,c = [C_Rd,c\u00b7k\u00b7(100\u00b7\u03c1\u2097\u00b7f_ck)^(1/3) + k_i\u00b7\u03c3_cp]  \u2265  (v_min + k_i\u00b7\u03c3_cp)", "EC2 Eq. 6.2a / 6.2b"),
-        R("Main term", f"C_Rd,c\u00b7k\u00b7(100\u00b7\u03c1\u2097\u00b7f_ck)^(1/3) + k_i\u00b7\u03c3_cp = {C_Rdc:.3f} \u00d7 {k_sh:.3f} \u00d7 (100 \u00d7 {rho_l:.5f} \u00d7 {fck:.0f})^(1/3) + 0.000 = {C_Rdc:.3f} \u00d7 {k_sh:.3f} \u00d7 {inner:.3f}^(1/3)", f"{v_main:.3f} MPa"),
-        R("Minimum", f"v_min + k_i\u00b7\u03c3_cp = 0.035\u00b7k^1.5\u00b7\u221af_ck + 0.000 = 0.035 \u00d7 {k_sh:.3f}^1.5 \u00d7 \u221a{fck:.0f}", f"{v_min:.3f} MPa"),
+        R("Axial stress", "\u03c3_cp = N_Ed/A_c ; take N_Ed = 0 for a slab (\u2264 0.2\u00b7f_cd)", "\u03c3_cp = 0.000 MPa"),
+        R("Axial factor", "k_i = 0.15", "k_i\u00b7\u03c3_cp = 0.000 MPa"),
+        R("EC2 \u00a76.2.2", "V_Rd,c = [C_Rd,c\u00b7k\u00b7(100\u00b7\u03c1_i\u00b7f_ck)^(1/3) + k_i\u00b7\u03c3_cp]\u00b7bw\u00b7d  \u2265  (v_min + k_i\u00b7\u03c3_cp)\u00b7bw\u00b7d", "governing expression"),
+        R("Main term", f"C_Rd,c\u00b7k\u00b7(100\u00b7\u03c1_i\u00b7f_ck)^(1/3) = {C_Rdc:.3f} \u00d7 {k_sh:.3f} \u00d7 (100 \u00d7 {rho_l:.5f} \u00d7 {fck:.0f})^(1/3)", f"{v_main:.3f} MPa"),
+        R("v_min", f"v_min = 0.035\u00b7k^(3/2)\u00b7f_ck^(1/2) = 0.035 \u00d7 {k_sh:.3f}^1.5 \u00d7 \u221a{fck:.0f}", f"{v_min:.3f} MPa"),
         R("Governing", f"v_Rd,c = max({v_main:.3f} , {v_min:.3f})", f"v_Rd,c = {res.v_rdc:.3f} MPa"),
         R("Resistance", f"V_Rd,c = v_Rd,c \u00b7 b \u00b7 d = {res.v_rdc:.3f} \u00d7 {b:.0f} \u00d7 {d:.0f} / 10\u00b3", f"V_Rd,c = {VRdc_kN:.2f} kN/m"),
-        R("Verdict", f"v_Ed = {res.v_ed:.3f} vs v_Rd,c = {res.v_rdc:.3f} MPa", res.shear_status + (" \u2014 no shear reinforcement required" if res.shear_status == "PASS" else " \u2014 shear reinforcement required")),
-        R("Note", "Shear reinforcement is rarely required in solid slabs supported by beams (EC2 \u00a79.3.2).", ""),
+        R("Verdict", f"if V_Rd,c > V_Ed, no shear reinforcement is required  \u2192  {VRdc_kN:.2f} {'>' if res.shear_status == 'PASS' else '\u2264'} {res.V_ed_kN:.2f}", res.shear_status),
+        R("Note", "shear reinforcement is rarely required in solid slabs supported by beams; no further shear checks are performed on slabs", ""),
     ]})
- 
+
     # ---------------- 12. Summary ----------------
     rows = [
-        R("Section", f"h = {h:.0f} mm ; d = {d:.0f} mm ; cover = {cover:.0f} mm", f"{h:.0f} mm slab"),
-        R("Loading", f"G_k = {res.g_k:.2f} ; Q_k = {res.q_k:.2f} \u2192 w_Ed = {res.w_ed:.2f} kN/m\u00b2", f"w_Ed = {res.w_ed:.2f} kN/m\u00b2"),
-        R("Actions", f"M_sag = {sf.M_kNm:.2f} kNm/m ; M_hog = {pf.M_kNm:.2f} kNm/m ; V_Ed = {res.V_ed_kN:.2f} kN/m", "ULS"),
+        R("Section", f"h = {h:.0f} mm ; d = {d:.0f} mm ; cover used = {cover:.0f} mm", f"{h:.0f} mm slab"),
+        R("Loading", f"G_k = {res.g_k:.2f} ; Q_k = {res.q_k:.2f} \u2192 w_u = {res.w_ed:.2f} kN/m\u00b2", f"w_u = {res.w_ed:.2f} kN/m\u00b2"),
+        R("Actions", f"M_Ed = {sf.M_kNm:.2f} kNm/m ; M_hog = {pf.M_kNm:.2f} kNm/m ; V_Ed = {res.V_ed_kN:.2f} kN/m", "ULS"),
         R("Span steel", f"A_s,req = {sf.As_req:.0f} mm\u00b2/m \u2192 provided {sf.bar.As_prov:.0f} mm\u00b2/m" if sf.bar else f"A_s,req = {sf.As_req:.0f} mm\u00b2/m",
           f"T{sf.bar.bar_dia:.0f} @ {sf.bar.spacing:.0f}" if sf.bar else "-"),
         R("Deflection", f"actual {res.actual_slenderness:.2f} vs allowable {res.slenderness_limit:.2f}", res.deflection_status),
@@ -1051,9 +1049,8 @@ def _build_one_way_report(request, res, inp):
     ]
     rows += [R("Note", n, "") for n in res.notes]
     sec.append({"title": "12. Design Summary", "rows": rows})
- 
-    # sections 9 (support steel) and 8 (bar selection) are conditional, so
-    # renumber consecutively before returning
+
+    # sections 9 (support steel) is conditional, so renumber consecutively before returning
     renumbered = []
     for i, s in enumerate(sec, start=1):
         t = s["title"]
