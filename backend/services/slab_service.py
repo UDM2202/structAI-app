@@ -931,14 +931,44 @@ def _build_one_way_report(request, res, inp):
 
     # ---------------- 5. Design moments & shear (closed form) ----------------
     c_sag = sf.M_kNm / (res.w_ed * L ** 2) if (res.w_ed and L) else 0.0
+    c_hog = pf.M_kNm / (res.w_ed * L ** 2) if (res.w_ed and L) else 0.0
     c_v = res.V_ed_kN / (res.w_ed * L) if (res.w_ed and L) else 0.0
-    sec.append({"title": "5. Design Moments (Closed-Form)", "rows": [
-        R("EC2 \u00a75.4", f"single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; for a simply-supported slab, c = 0.125", f"c = {c_sag:.4f}"),
-        R("Span (sagging)", f"M_Ed = c \u00d7 w \u00d7 Lx\u00b2 = {c_sag:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}\u00b2", f"M_Ed = {sf.M_kNm:.2f} kNm/m"),
-        R("Equivalent form", f"M_Ed = w\u00b7Lx\u00b2/8 = ({res.w_ed:.2f} \u00d7 {L**2:.2f})/8 \u2014 maximum moment at mid-span", f"{res.w_ed*L**2/8:.2f} kNm/m"),
-        R("Hogging", "since it is a single span, there is no need to add a hogging moment -- it will always be zero for a simply-supported single span", f"M_hog = {pf.M_kNm:.2f} kNm/m"),
-        R("Shear", f"V_Ed = c \u00d7 w \u00d7 Lx = {c_v:.3f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}  (c = 0.5 for simply supported, i.e. w\u00b7Lx/2)", f"V_Ed = {res.V_ed_kN:.2f} kN/m"),
-    ]})
+    continuity_val = _enum(request.continuity)
+
+    span_captions = {
+        "simply_supported": "single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; for a simply-supported slab, c = 0.125",
+        "one_end_continuous": "single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; one end continuous, one end simply supported, c = 9/128",
+        "both_ends_continuous": "single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; both ends continuous, c = 1/24",
+        "cantilever": "single coefficient span: M_Ed = c \u00d7 w \u00d7 Lx\u00b2 ; cantilever has no midspan sagging, c = 0",
+    }
+    hogging_captions = {
+        "simply_supported": "since it is a single span, there is no need to add a hogging moment -- it will always be zero for a simply-supported single span",
+        "one_end_continuous": "one end continuous: hogging develops at the continuous support only, c = 1/8",
+        "both_ends_continuous": "both ends continuous: hogging develops at both supports, c = 1/12",
+        "cantilever": "cantilever: hogging (fixed-end moment) governs, there is no sagging span moment to report, c = 1/2",
+    }
+    shear_captions = {
+        "simply_supported": "c = 0.5 for simply supported, i.e. w\u00b7Lx/2",
+        "one_end_continuous": "c = 0.625 for one end continuous (peak shear occurs at the continuous end)",
+        "both_ends_continuous": "c = 0.5 for both ends continuous, i.e. w\u00b7Lx/2",
+        "cantilever": "c = 1.0 for a cantilever, full reaction is taken at the fixed end",
+    }
+
+    span_row = R("EC2 \u00a75.4", span_captions.get(continuity_val, span_captions["simply_supported"]), f"c = {c_sag:.4f}")
+    hog_row = R("Hogging", hogging_captions.get(continuity_val, hogging_captions["simply_supported"]), f"M_hog = {pf.M_kNm:.2f} kNm/m")
+    shear_row = R("Shear", f"V_Ed = c \u00d7 w \u00d7 Lx = {c_v:.3f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}  ({shear_captions.get(continuity_val, shear_captions['simply_supported'])})", f"V_Ed = {res.V_ed_kN:.2f} kN/m")
+
+    moment_rows = [span_row]
+    if continuity_val == "cantilever":
+        moment_rows.append(R("Span (sagging)", "cantilever: no midspan sagging moment", f"M_Ed = {sf.M_kNm:.2f} kNm/m"))
+    else:
+        moment_rows.append(R("Span (sagging)", f"M_Ed = c \u00d7 w \u00d7 Lx\u00b2 = {c_sag:.4f} \u00d7 {res.w_ed:.2f} \u00d7 {L:.2f}\u00b2", f"M_Ed = {sf.M_kNm:.2f} kNm/m"))
+        if continuity_val == "simply_supported":
+            moment_rows.append(R("Equivalent form", f"M_Ed = w\u00b7Lx\u00b2/8 = ({res.w_ed:.2f} \u00d7 {L**2:.2f})/8 \u2014 maximum moment at mid-span", f"{res.w_ed*L**2/8:.2f} kNm/m"))
+    moment_rows.append(hog_row)
+    moment_rows.append(shear_row)
+
+    sec.append({"title": "5. Design Moments (Closed-Form)", "rows": moment_rows})
 
     # ---------------- 6. Flexural reinforcement -- span ----------------
     root = max(0.25 - sf.k / 1.134, 0.0)
@@ -990,25 +1020,37 @@ def _build_one_way_report(request, res, inp):
 
     # ---------------- 10. Deflection check ----------------
     As_prov_span = sf.bar.As_prov if sf.bar else 0.0
+    As_req_span = sf.As_req
     K_note = "K = 1.0 (simply supported) / 1.5 (interior span) / 1.3 (end span) / 0.4 (cantilever)"
-    sec.append({"title": "10. Check for Deflection", "rows": [
+    deflection_rows = [
         R("Note", "for slabs, most especially two-way spanning slabs, checks are carried out based on the shorter span", ""),
         R("Note", K_note, f"K = {res.K_sys:.2f} ({cont})"),
         R("Note", "compression reinforcement \u03c1' is taken as 0", "\u03c1' = 0"),
-        R("Basic span/depth ratio", f"\u03c1 = A_s,provided/(b\u00b7d) = {As_prov_span:.0f}/{bd:.0f}", f"\u03c1 = {res.rho:.5f}"),
+        R("Basic span/depth ratio", f"\u03c1 = A_s,required/(b\u00b7d) = {As_req_span:.0f}/{bd:.0f}", f"\u03c1 = {res.rho:.5f}"),
         R("Basic span/depth ratio", f"\u03c1\u2080 = 10\u207b\u00b3 \u00d7 \u221af_ck = 10\u207b\u00b3 \u00d7 \u221a{fck:.0f}", f"\u03c1\u2080 = {res.rho0:.5f}"),
         R("Branch", f"\u03c1 = {res.rho:.5f} vs \u03c1\u2080 = {res.rho0:.5f}",
           "\u03c1 < \u03c1\u2080 \u2192 use lightly-reinforced formula" if res.rho <= res.rho0 else "\u03c1 > \u03c1\u2080 \u2192 use heavily-reinforced formula"),
         R("EC2 \u00a77.4.2", ("(L/d) = K[11 + 1.5\u221af_ck\u00b7(\u03c1\u2080/\u03c1) + 3.2\u221af_ck\u00b7(\u03c1\u2080/\u03c1 \u2212 1)^(3/2)]" if res.rho <= res.rho0
                              else "(L/d) = K[11 + 1.5\u221af_ck\u00b7\u03c1\u2080/(\u03c1 \u2212 \u03c1') + \u221af_ck/12\u00b7\u221a(\u03c1'/\u03c1\u2080)]  , \u03c1' = 0"),
           f"(L/d) = {res.ld_basic:.2f}"),
-        R("Modification factor", f"\u03b4s = (310 \u00d7 f_yk \u00d7 A_s,required)/(500 \u00d7 A_s,provided) = (310 \u00d7 {fyk:.0f} \u00d7 {sf.As_req:.0f})/(500 \u00d7 {As_prov_span:.0f})", f"\u03b4s = {res.delta_s:.3f}"),
-        R("Modification factor", f"\u03b2s = 310/\u03b4s = 310/{res.delta_s:.3f}  (\u2264 2.0)", f"\u03b2s = {res.beta_s:.3f}"),
-        R("Allowable Span/Depth ratio", f"allowable (L/d) = \u03b2s \u00d7 (L/d)lim = {res.beta_s:.3f} \u00d7 {res.ld_basic:.2f}", f"{res.slenderness_limit:.2f}"),
+        R("Base check", f"(L/d)actual {'\u2264' if res.deflection_base_status == 'PASS' else '>'} (L/d)basic \u2192 {res.actual_slenderness:.2f} {'\u2264' if res.deflection_base_status == 'PASS' else '>'} {res.ld_basic:.2f}",
+          res.deflection_base_status),
+    ]
+    if res.deflection_enhanced:
+        deflection_rows += [
+            R("Enhancement factor", f"F3 = A_s,prov/A_s,req = {As_prov_span:.0f}/{As_req_span:.0f}  (\u2264 1.5)", f"F3 = {res.beta_s:.3f}"),
+            R("Allowable Span/Depth ratio", f"allowable (L/d) = F3 \u00d7 (L/d)basic = {res.beta_s:.3f} \u00d7 {res.ld_basic:.2f}", f"{res.slenderness_limit:.2f}"),
+        ]
+    else:
+        deflection_rows.append(
+            R("Enhancement factor", "base check already passes \u2014 F3 not required", "F3 not applied")
+        )
+    deflection_rows += [
         R("Actual deflection", f"(L/d)actual = Lx/d = {L*1000:.0f}/{d:.0f}", f"{res.actual_slenderness:.2f}"),
-        R("Verdict", f"(L/d)actual {'<' if res.deflection_status == 'PASS' else '>'} [\u03b2s \u00d7 (L/d)lim]  \u2192  {res.actual_slenderness:.2f} {'<' if res.deflection_status == 'PASS' else '>'} {res.slenderness_limit:.2f}",
+        R("Verdict", f"(L/d)actual {'<' if res.deflection_status == 'PASS' else '>'} allowable (L/d)  \u2192  {res.actual_slenderness:.2f} {'<' if res.deflection_status == 'PASS' else '>'} {res.slenderness_limit:.2f}",
           "Deflection is okay" if res.deflection_status == "PASS" else "Deflection is NOT okay \u2014 increase depth or steel"),
-    ]})
+    ]
+    sec.append({"title": "10. Check for Deflection", "rows": deflection_rows})
 
     # ---------------- 11. Shear verification ----------------
     rho_l = min(As_prov_span / bd, 0.02) if bd else 0.0

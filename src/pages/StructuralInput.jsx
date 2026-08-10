@@ -9,6 +9,8 @@ import {
 } from "react-icons/fi";
 import { slabAPI } from "../services/api";
 
+const INPUT_DRAFT_KEY = "structuralInputDraft";
+
 /* ================================================================== */
 /*  SHARED CLASS TOKENS  (your existing light/dark palette)           */
 /* ================================================================== */
@@ -134,11 +136,27 @@ const DEFAULTS = {
 /* ================================================================== */
 const StructuralInput = () => {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState(DEFAULTS);
+  const [formData, setFormData] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(INPUT_DRAFT_KEY);
+      return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : DEFAULTS;
+    } catch {
+      return DEFAULTS;
+    }
+  });
   const [isValidating, setIsValidating] = useState(false);
   const [isOptimising, setIsOptimising] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
+
+  // Persist every change so navigating to /slab-results and back restores it.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(INPUT_DRAFT_KEY, JSON.stringify(formData));
+    } catch {
+      // sessionStorage unavailable (e.g. private browsing) -- draft just won't persist
+    }
+  }, [formData]);
 
   const set = (patch) => setFormData((prev) => ({ ...prev, ...patch }));
   const twoWay = formData.slabType === "two-way";
@@ -173,6 +191,11 @@ const StructuralInput = () => {
     if (window.confirm("Reset all fields to defaults?")) {
       setFormData(DEFAULTS);
       setError(null);
+      try {
+        sessionStorage.removeItem(INPUT_DRAFT_KEY);
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -211,7 +234,7 @@ const StructuralInput = () => {
       const result = await slabAPI.startDesign(formData);
       setProgress(100);
       setIsOptimising(false);
-      navigate("/slab-results", { state: { designResult: result } });
+      navigate("/slab-results", { state: { designResult: result, formData } });
     } catch (e) {
       setIsOptimising(false);
       setProgress(0);

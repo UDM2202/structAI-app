@@ -8,6 +8,9 @@ import {
   FiHome, FiBriefcase, FiUsers, FiLayers as FiLayersIcon 
 } from 'react-icons/fi';
 import { useTheme } from '../contexts/ThemeContext';
+import { slabAPI } from '../services/api';
+
+const DRAFT_KEY = 'slabInputFormDraft';
 
 const SlabInput = () => {
   const { workspaceId, projectId } = useParams();
@@ -16,6 +19,7 @@ const SlabInput = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [isOptimising, setIsOptimising] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   
   // Warning state for overridden fields
   const [overriddenFields, setOverriddenFields] = useState({});
@@ -25,8 +29,9 @@ const SlabInput = () => {
   const [openDropdown, setOpenDropdown] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Form state
-  const [formData, setFormData] = useState({
+  // Form state -- restored from sessionStorage if the user came back from
+  // the results page (or refreshed), otherwise falls back to defaults.
+  const defaultFormData = {
     // Slab Geometry
     slabType: 'one-way',
     supportCondition: 'ss',
@@ -68,7 +73,25 @@ const SlabInput = () => {
     candidateDiameters: ['8', '10', '12', '16'],
     minSpacing: '100',
     maxSpacing: '300',
+  };
+
+  const [formData, setFormData] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(DRAFT_KEY);
+      return saved ? { ...defaultFormData, ...JSON.parse(saved) } : defaultFormData;
+    } catch {
+      return defaultFormData;
+    }
   });
+
+  // Persist every change so navigating away (results page) and back restores it.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(formData));
+    } catch {
+      // sessionStorage unavailable (e.g. private browsing) -- draft just won't persist
+    }
+  }, [formData]);
 
   // Auto-generated values (these will be computed)
   const [autoValues, setAutoValues] = useState({
@@ -113,6 +136,67 @@ useEffect(() => {
   });
   
 }, [formData.spanX, formData.exposureClass, formData.fireRating, formData.thickness]); // Make sure this array is correct
+
+  // Continuous multi-span (continuousSpans/endFixityLeft/Right) and two-way
+  // continuity are NOT wired here -- they need continuousSlabAPI and a
+  // results page that can render that shape, which StructuralResults.jsx
+  // doesn't currently do. This handles one-way, simply-supported only.
+  const handleRunOptimisation = async () => {
+    setSubmitError('');
+
+    if (formData.supportCondition === 'continuous') {
+      setSubmitError('Continuous (multi-span) submission isn\'t wired yet -- switch to Simply Supported for now.');
+      return;
+    }
+    if (formData.slabType === 'two-way') {
+      setSubmitError('Two-way slab continuity isn\'t collected in this form yet -- one-way only for now.');
+      return;
+    }
+
+    // partition load: permanent partitions are dead load, movable ("variable")
+    // partitions are treated as live load per EC2 practice
+    const partitionVal = parseFloat(formData.partition) || 0;
+    const partitionAsDead = formData.partitionMode === 'permanent' ? partitionVal : 0;
+    const partitionAsLive = formData.partitionMode === 'variable' ? partitionVal : 0;
+
+    const apiFormData = {
+      slabType: formData.slabType,
+      continuity: 'simply_supported',
+      spanLx: formData.spanX,
+      spanLy: formData.spanY,
+      thickness: formData.thickness,
+      clearCover: formData.cover,
+      concreteGrade: formData.concreteGrade,
+      steelGrade: formData.steelGrade,
+      unitWeightConcrete: '25',
+      unitWeightSteel: '78.5',
+      floorFinish: formData.finishes,
+      liveLoad: (parseFloat(formData.liveLoad) || 0) + partitionAsLive,
+      additionalDeadLoad: (parseFloat(formData.deadLoad) || 0) + partitionAsDead,
+      additionalLiveLoad: '0',
+      designCode: 'EC2',
+      analysisMethod: 'limit_state',
+      exposureClass: formData.exposureClass,
+      fireRating: formData.fireRating,
+      crackWidthLimit: formData.crackWidthLimit,
+      deflectionLimit: formData.deflectionLimit,
+      mainBarDia: formData.mainBarDiameter,
+      buildingUse: 'office',
+    };
+
+    setIsOptimising(true);
+    try {
+      const result = await slabAPI.startDesign(apiFormData);
+      const resultsPath = workspaceId && projectId
+        ? `/workspace/${workspaceId}/projects/${projectId}/slab-results`
+        : '/slab-results';
+      navigate(resultsPath, { state: { designResult: result, formData: apiFormData } });
+    } catch (e) {
+      setSubmitError(e.message || 'Design failed.');
+    } finally {
+      setIsOptimising(false);
+    }
+  };
 
   // Check if field has been overridden
   const isOverridden = (field) => {
@@ -999,6 +1083,11 @@ useEffect(() => {
           </div>
 
           {/* Action Buttons */}
+          {submitError && (
+            <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300">
+              {submitError}
+            </div>
+          )}
           <div className="mt-8 flex justify-end space-x-4">
             <button
               onClick={() => setIsValidating(true)}
@@ -1008,7 +1097,7 @@ useEffect(() => {
               {isValidating ? 'Validating...' : 'Validate Slab'}
             </button>
             <button
-              onClick={() => setIsOptimising(true)}
+              onClick={handleRunOptimisation}
               disabled={isOptimising}
               className="px-6 py-3 bg-[#0A2F44] text-white rounded-lg hover:bg-[#082636] transition-colors disabled:opacity-50 cursor-pointer"
             >

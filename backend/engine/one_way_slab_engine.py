@@ -31,6 +31,22 @@ Fixes applied (per engineer's review of the deployed app):
    finish + additional dead load. Callers should stop sending a separate
    "permanent load" value; only extra/superimposed dead load belongs in
    `additional_dead_load`.
+
+6. Deflection basic span/depth ratio now uses rho computed from As,required,
+   not As,provided (EC2 7.4.2 / Concrete Centre guidance: the basic ratio and
+   its ρ/ρ0 branch are entered with the REQUIRED tension steel ratio; provided
+   steel only enters later, in the enhancement factor).
+   Using As,provided for rho here previously understated (L/d)lim whenever
+   As,provided exceeded As,required by more than a token margin.
+
+7. Deflection modification factor reverted to the Concrete Centre worked-method
+   form, F3 = As,prov/As,req (capped 1.5), replacing the steel-service-stress
+   delta_s/beta_s route (capped 2.0). Result now carries two stages:
+   deflection_base_status compares actual span/depth against the unmodified
+   basic ratio; deflection_status is the final check with F3 applied. Both are
+   always computed -- deflection_status is the one that determines PASS/FAIL
+   for the overall design, deflection_base_status is for reporting the
+   "before enhancement" narrative.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -108,6 +124,8 @@ class OneWayResult:
     actual_slenderness: float
     slenderness_limit: float
     deflection_status: str
+    deflection_base_status: str
+    deflection_enhanced: bool
     shear_status: str
     overall_status: str
     notes: List[str] = field(default_factory=list)
@@ -212,7 +230,8 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
     # ---- deflection (EC2 7.4.2 / UK NA, steel-stress modification factor) ----
     bd = b * d
     As_prov_span = sf.bar.As_prov if sf.bar else 0.0
-    rho = As_prov_span / bd if bd else 0.0
+    As_req_span = sf.As_req
+    rho = As_req_span / bd if bd else 0.0
     rho0 = 1e-3 * math.sqrt(fck)
     K_sys = _K_SYS.get(inp.continuity, 1.0)
     if rho > 0 and rho <= rho0:
@@ -221,14 +240,29 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
         basic = K_sys * (11 + 1.5 * math.sqrt(fck) * (rho0 / rho))
     else:
         basic = K_sys * 11
-    # Modification factor for tension reinforcement (UK NA to EC2, steel-service-stress form):
-    #   delta_s = (310 * fyk * As_req) / (500 * As_prov)
-    #   beta_s  = 310 / delta_s   (<= 2.0)
-    delta_s = (310.0 * fyk * sf.As_req) / (500.0 * As_prov_span) if (As_prov_span and fyk) else 1.0
-    beta_s = min(310.0 / delta_s, 2.0) if delta_s else 2.0
-    slenderness_limit = basic * beta_s
+    # Enhancement factor for over-provided steel (Concrete Centre EC2 deflection
+    # guidance, worked-method form): F3 = As,prov / As,req, capped at 1.5.
+    # F3 is only computed and applied if the base (unmodified) check fails --
+    # a slab that already passes on the basic ratio doesn't need it, and this
+    # is one deflection check with one verdict, not two parallel checks.
+    # delta_s is kept only as a legacy/unused field (steel-stress route dropped
+    # per review).
+    delta_s = 1.0
     actual_slenderness = L_mm / d if d else 0.0
-    deflection_status = "PASS" if actual_slenderness <= slenderness_limit else "FAIL"
+
+    deflection_base_status = "PASS" if actual_slenderness <= basic else "FAIL"
+
+    if deflection_base_status == "PASS":
+        F3 = 1.0
+        slenderness_limit = basic
+        deflection_status = "PASS"
+        deflection_enhanced = False
+    else:
+        F3 = min(As_prov_span / As_req_span, 1.5) if As_req_span else 1.0
+        slenderness_limit = basic * F3
+        deflection_status = "PASS" if actual_slenderness <= slenderness_limit else "FAIL"
+        deflection_enhanced = True
+    beta_s = F3
 
     # ---- shear (EC2 6.2.2) ----
     rho_l = min(As_prov_span / bd, 0.02) if bd else 0.0
@@ -247,6 +281,7 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
         "Single-span closed-form EC2 coefficients (span/depth EC2 §7.4.2, shear EC2 §6.2.2).",
         "Effective depth derived from the actually-selected bar diameter (iterative), not a fixed assumption.",
         "Cover = clear cover input + 5 mm fixed detailing tolerance.",
+        "Deflection basic ratio uses rho from As,required (EC2 7.4.2); modification factor uses As,required/As,provided.",
     ]
 
     return OneWayResult(
@@ -254,6 +289,8 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
         self_weight=self_weight, g_k=g_k, q_k=q_k, w_ed=w_ed, V_ed_kN=V_ed_kN,
         v_ed=v_ed, v_rdc=v_rdc, actual_slenderness=actual_slenderness,
         slenderness_limit=slenderness_limit, deflection_status=deflection_status,
+        deflection_base_status=deflection_base_status,
+        deflection_enhanced=deflection_enhanced,
         shear_status=shear_status, overall_status=overall, notes=notes,
         rho=rho, rho0=rho0, ld_basic=basic, delta_s=delta_s, beta_s=beta_s, K_sys=K_sys,
     )

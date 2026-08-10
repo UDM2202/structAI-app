@@ -8,8 +8,8 @@
 // repainted on EVERY printed page, which is what produced N identical pages.
 // It now hands the report body to exportElementToPdf(), which clones the
 // content into a plain <div> on <body> (no fixed ancestor) and prints once.
-import React, { useRef } from "react";
-import { FiX, FiDownload } from "react-icons/fi";
+import React, { useRef, useState } from "react";
+import { FiX, FiDownload, FiAlertTriangle } from "react-icons/fi";
 import { exportElementToPdf } from "../utils/exportPdf";
 
 export default function DetailedReport({
@@ -17,12 +17,26 @@ export default function DetailedReport({
   heading = "Detailed Calculation Report",
   subtitle = "",
   onClose,
+  overallStatus,          // "PASS" | "FAIL" -- drives the increase-thickness prompt
+  currentThickness,       // current thickness in mm, used to prefill the form
+  onIncreaseThickness,    // (newThicknessMm) => void -- triggers a re-run in the parent
+  isRerunning = false,    // parent is mid re-run -- disables the form, shows a spinner state
 }) {
   const sheetRef = useRef(null);
+  const [showThicknessForm, setShowThicknessForm] = useState(false);
+  const [newThickness, setNewThickness] = useState(
+    currentThickness ? Number(currentThickness) + 25 : 200
+  );
 
   const handlePrint = () => {
     const name = heading.replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
     exportElementToPdf(sheetRef.current, name || "calculation-report");
+  };
+
+  const handleRerun = () => {
+    if (onIncreaseThickness && newThickness > 0) {
+      onIncreaseThickness(newThickness);
+    }
   };
 
   return (
@@ -88,6 +102,53 @@ export default function DetailedReport({
             Calculation trace generated from the design engine. Verify coefficients and code clauses against your reference copy before use.
           </p>
         </div>
+
+        {/* dr-no-print: kept outside the printable ref on purpose, this is an
+            interactive action, not part of the calculation record */}
+        {overallStatus === "FAIL" && onIncreaseThickness && (
+          <div className="dr-no-print border-t border-[#e2e8f0] px-6 py-4 dark:border-white/10">
+            <div className="flex items-center gap-2 text-sm font-semibold text-red-600 dark:text-red-400">
+              <FiAlertTriangle size={16} /> One or more checks failed.
+            </div>
+            {!showThicknessForm ? (
+              <button
+                onClick={() => setShowThicknessForm(true)}
+                className="mt-3 rounded-lg bg-[#0A2F44] px-4 py-2 text-sm font-medium text-white hover:bg-[#082636]"
+              >
+                Increase Thickness
+              </button>
+            ) : (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <label className="text-[13px] text-[#334155] dark:text-slate-300">
+                  New thickness (mm)
+                </label>
+                <input
+                  type="number"
+                  min={currentThickness ? Number(currentThickness) + 1 : 1}
+                  step={25}
+                  value={newThickness}
+                  onChange={(e) => setNewThickness(Number(e.target.value))}
+                  disabled={isRerunning}
+                  className="w-28 rounded-lg border border-[#e2e8f0] px-3 py-1.5 text-sm dark:border-white/10 dark:bg-[#0f172a] dark:text-white"
+                />
+                <button
+                  onClick={handleRerun}
+                  disabled={isRerunning || !(newThickness > (Number(currentThickness) || 0))}
+                  className="rounded-lg bg-[#0A2F44] px-4 py-2 text-sm font-medium text-white hover:bg-[#082636] disabled:opacity-50"
+                >
+                  {isRerunning ? "Re-running..." : "Re-run Design"}
+                </button>
+                <button
+                  onClick={() => setShowThicknessForm(false)}
+                  disabled={isRerunning}
+                  className="text-sm text-[#64748b] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

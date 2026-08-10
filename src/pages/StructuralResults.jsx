@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import DetailedReport from "../components/DetailedReport";
+import { slabAPI } from "../services/api";
 import {
   FiHome, FiChevronRight, FiFilePlus, FiFolder, FiSave, FiMoreVertical,
   FiArrowLeft, FiArrowRight, FiCheck, FiDownload, FiFileText,
@@ -108,6 +109,9 @@ const StructuralResults = () => {
   const navigate = useNavigate();
   const [tab, setTab] = useState("Overview");
   const [reportOpen, setReportOpen] = useState(false);
+  const [liveResult, setLiveResult] = useState(null);   // overrides location.state after a re-run
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunError, setRerunError] = useState("");
   const { workspaceId, projectId } = useParams();
 
   // Workspace-aware back navigation: return to the scoped slab input when we
@@ -120,7 +124,27 @@ const StructuralResults = () => {
     }
   };
 
-  const rawData = location.state?.designResult;
+  const originalFormData = location.state?.formData;
+  const rawData = liveResult || location.state?.designResult;
+
+  const handleIncreaseThickness = async (newThicknessMm) => {
+    if (!originalFormData) {
+      setRerunError("Can't re-run: this page wasn't given the original design inputs.");
+      return;
+    }
+    setRerunning(true);
+    setRerunError("");
+    try {
+      const result = await slabAPI.startDesign({ ...originalFormData, thickness: newThicknessMm });
+      setLiveResult(result);
+      setTab("Deflection");
+      setReportOpen(false);
+    } catch (e) {
+      setRerunError(e.message || "Re-run failed.");
+    } finally {
+      setRerunning(false);
+    }
+  };
 
   if (!rawData) {
     return (
@@ -245,12 +269,22 @@ const StructuralResults = () => {
         </div>
       </main>
 
+      {rerunError && (
+        <div className="fixed bottom-4 right-4 z-[70] rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-[13px] text-red-700 shadow-lg dark:border-red-700 dark:bg-red-900/40 dark:text-red-300">
+          {rerunError}
+        </div>
+      )}
+
       {reportOpen && (
         <DetailedReport
           report={rawData.report || []}
           heading="Slab — Detailed Calculation Report"
           subtitle={`${summary.slab_type || "Slab"} · ${summary.concrete_grade || ""}`}
           onClose={() => setReportOpen(false)}
+          overallStatus={summary.status}
+          currentThickness={summary.thickness}
+          onIncreaseThickness={handleIncreaseThickness}
+          isRerunning={rerunning}
         />
       )}
     </div>
@@ -351,7 +385,7 @@ function FlexuralTab({ ctx }) {
       </Card>
 
       <Card number="" title="Bending Moment Diagram" className="mt-4">
-        <MomentDiagram sagging={D.sagging.M} hogging={D.hogging.M} />
+        <MomentDiagram sagging={D.sagging.M} hogging={D.hogging.M} continuity={summary.continuity} />
       </Card>
     </>
   );
@@ -764,35 +798,78 @@ function OutlineBtn({ icon: Icon, label }) {
 /* ================================================================== */
 /*  DIAGRAMS  (parametric, currentColor → dark-mode aware)            */
 /* ================================================================== */
-function MomentDiagram({ sagging = 0, hogging = 0 }) {
+function MomentDiagram({ sagging = 0, hogging = 0, continuity = "" }) {
   const peak = Math.max(Math.abs(sagging), Math.abs(hogging), 1);
   const x0 = 50, x1 = 470, base = 95;
   const scale = 55 / peak;
-  const hog = hogging * scale;
   const sag = sagging * scale;
-  // FIX: hogging is passed in as a non-negative magnitude (Math.abs'd upstream
-  // in deriveEC2). The old code hardcoded a literal "-" in front of it
-  // regardless of value, so a genuinely zero hogging moment (e.g. a simply
-  // supported single span) rendered as the literal string "-0.00" -- not a
-  // floating point artifact, just string concatenation ignoring the actual
-  // value. Only show the minus sign when hogging is actually greater than
-  // zero; zero has no sign.
-  const hogLabel = hogging > 0 ? `-${f(hogging)}` : f(hogging);
+  // The dip depth is drawn at 2x the scaled sagging value (for visual
+  // emphasis), which can push the "+value" label down far enough to collide
+  // with the fixed "Bending Moment" caption below. Cap the DRAWN dip and its
+  // label position independent of the true value -- this is a display-only
+  // cap, the printed number (f(sagging)) is always exact, only the curve's
+  // depth on screen is clamped.
+  const dipPx = Math.min(2 * sag, 46);
+
+  // Which end(s) actually carry the hogging moment. The backend only reports
+  // a single magnitude (max_hogging_moment) -- it doesn't track which
+  // physical end is pinned vs fixed/continuous. So this is a fixed labeling
+  // CONVENTION, not derived data: for an asymmetric condition (one end
+  // continuous, or a cantilever) the continuous/fixed end is always drawn on
+  // the RIGHT (B). If your model's actual left/right orientation differs,
+  // the magnitude is still correct, only which side it's drawn on is a guess.
+  const c = String(continuity || "").toLowerCase().replace(/\s+/g, "_");
+  const isCantilever = c.includes("cantilever");
+  const isOneEnd = c.includes("one_end") || c.includes("one end");
+  const isBothEnds = c.includes("both_end") || c.includes("both end");
+
+  let hogA = hogging, hogB = hogging;   // default: symmetric (simply supported -> both 0; both-ends-continuous -> both equal)
+  let labelA = "A", labelB = "B";
+  if (isOneEnd) {
+    hogA = 0;
+    hogB = hogging;
+    labelA = "Simple";
+    labelB = "Continuous";
+  } else if (isCantilever) {
+    hogA = 0;
+    hogB = hogging;
+    labelA = "Free End";
+    labelB = "Fixed End";
+  } else if (isBothEnds) {
+    labelA = "Continuous";
+    labelB = "Continuous";
+  }
+
+  const hA = hogA * scale;
+  const hB = hogB * scale;
+
+  // Same -0.00 guard as before, applied per side now that they can differ.
+  const labelFor = (v) => (v > 0 ? `-${f(v)}` : f(v));
+  const hogLabelA = labelFor(hogA);
+  const hogLabelB = labelFor(hogB);
+
   return (
     <div className="text-[#475569] dark:text-[#94a3b8]">
-      <svg viewBox="0 0 520 180" className="w-full">
+      <svg viewBox="0 0 580 190" className="w-full">
         <line x1={x0} y1={base} x2={x1} y2={base} stroke="currentColor" strokeWidth="1" />
         <path
-          d={`M${x0},${base} L${x0},${base - hog} Q${(x0 + x1) / 2},${base + 2 * sag} ${x1},${base - hog} L${x1},${base} Z`}
+          d={`M${x0},${base} L${x0},${base - hA} Q${(x0 + x1) / 2},${base + dipPx} ${x1},${base - hB} L${x1},${base} Z`}
           fill="#ef4444" fillOpacity="0.12" stroke="#ef4444" strokeWidth="1.6"
         />
-        <text x={x0} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabel}</text>
-        <text x={x1} y={base - hog - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabel}</text>
-        <text x={(x0 + x1) / 2} y={base + 2 * sag + 16} fontSize="10" fill="#0ea5e9" textAnchor="middle">+{f(sagging)}</text>
-        <text x={x0 - 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="end">A</text>
-        <text x={x1 + 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="start">B</text>
-        <text x={(x0 + x1) / 2} y={170} fontSize="9" fill="currentColor" fillOpacity="0.7" textAnchor="middle">Bending Moment (kNm/m)</text>
+        <text x={x0} y={base - hA - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabelA}</text>
+        <text x={x1} y={base - hB - 6} fontSize="10" fill="#ef4444" textAnchor="middle">{hogLabelB}</text>
+        {!isCantilever && (
+          <text x={(x0 + x1) / 2} y={base + dipPx + 16} fontSize="10" fill="#0ea5e9" textAnchor="middle">+{f(sagging)}</text>
+        )}
+        <text x={x0 - 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="end">{labelA}</text>
+        <text x={x1 + 6} y={base + 14} fontSize="9" fill="currentColor" textAnchor="start">{labelB}</text>
+        <text x={(x0 + x1) / 2} y={182} fontSize="9" fill="currentColor" fillOpacity="0.7" textAnchor="middle">Bending Moment (kNm/m)</text>
       </svg>
+      {(isOneEnd || isCantilever) && (
+        <p className="mt-1 text-[10px] italic text-[#94a3b8] dark:text-[#64748b]">
+          Left/right placement of the {isCantilever ? "fixed end" : "continuous end"} is a display convention, the engine doesn't track physical orientation, only the magnitude.
+        </p>
+      )}
     </div>
   );
 }
