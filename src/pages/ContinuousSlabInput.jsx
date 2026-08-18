@@ -55,7 +55,6 @@ const DEFAULTS = {
   exposureClass: "XC3",
   fireRating: "60",
   crackWidthLimit: "0.3",
-  deflectionLimit: "250",
   barDiameters: [10, 12, 16],
   region: "Nigeria",
 };
@@ -223,7 +222,6 @@ export default function ContinuousSlabInput() {
             <div><label className={LABEL}>Code</label><input className={`${INPUT} opacity-70`} value="EC2" readOnly /></div>
             <div><label className={LABEL}>Exposure</label><Dropdown value={form.exposureClass} onChange={(v) => set({ exposureClass: v })} options={EXPOSURE} /></div>
             <div><label className={LABEL}>Fire (min)</label><input type="number" className={INPUT} value={form.fireRating} onChange={(e) => set({ fireRating: e.target.value })} /></div>
-            <div><label className={LABEL}>Deflection L/?</label><input type="number" className={INPUT} value={form.deflectionLimit} onChange={(e) => set({ deflectionLimit: e.target.value })} /></div>
           </div>
         </section>
       </div>
