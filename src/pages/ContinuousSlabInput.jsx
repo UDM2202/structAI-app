@@ -1,5 +1,5 @@
 // src/pages/ContinuousSlabInput.jsx — renders inside MainLayout
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { FiPlus, FiTrash2, FiLayers, FiLoader } from "react-icons/fi";
 import { continuousSlabAPI } from "../services/api";
@@ -11,6 +11,8 @@ const SUB = "text-[#64748b] dark:text-[#94a3b8]";
 const ACCENT = "text-[#0A2F44] dark:text-[#66a4c2]";
 const LABEL = "block text-[11px] font-semibold uppercase tracking-wide text-[#64748b] dark:text-[#94a3b8] mb-1";
 const INPUT = "w-full rounded-lg border border-[#e2e8f0] dark:border-[#334155] bg-white dark:bg-[#0f172a] px-3 py-2 text-sm text-[#0F172A] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0A2F44]/30 dark:focus:ring-[#66a4c2]/30";
+
+const INPUT_DRAFT_KEY = "continuousSlabInputDraft";
 
 const SUPPORTS = [{ value: "pinned", label: "Pinned / Simple" }, { value: "fixed", label: "Fixed / Built-in" }];
 const CONCRETE = ["C25/30", "C30/37", "C35/45"];
@@ -60,9 +62,25 @@ const DEFAULTS = {
 
 export default function ContinuousSlabInput() {
   const navigate = useNavigate();
-  const [form, setForm] = useState(DEFAULTS);
+  const [form, setForm] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(INPUT_DRAFT_KEY);
+      return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : DEFAULTS;
+    } catch {
+      return DEFAULTS;
+    }
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Persist every change so navigating to /continuous-slab-results and back restores it.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(INPUT_DRAFT_KEY, JSON.stringify(form));
+    } catch {
+      // sessionStorage unavailable (e.g. private browsing) -- draft just won't persist
+    }
+  }, [form]);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -87,7 +105,7 @@ export default function ContinuousSlabInput() {
     setLoading(true);
     try {
       const result = await continuousSlabAPI.startDesign(form);
-      navigate("/continuous-slab-results", { state: { designResult: result } });
+      navigate("/continuous-slab-results", { state: { designResult: result, formData: form } });
     } catch (e) {
       setError(e.message || "Design failed.");
     } finally {

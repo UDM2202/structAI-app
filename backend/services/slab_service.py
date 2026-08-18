@@ -20,6 +20,7 @@ try:
     from engine.two_way_slab_engine import (
         TwoWaySlabInput, TwoWaySlabDesigner, SupportCondition as _TWSupport,
         PanelType as _TWPanel, EdgeCondition as _TWEdge, PartitionMode as _TWPart,
+        Material as _TWMaterial,
     )
     _TWO_WAY_ENGINE = True
 except ImportError:
@@ -27,6 +28,7 @@ except ImportError:
         from two_way_slab_engine import (
             TwoWaySlabInput, TwoWaySlabDesigner, SupportCondition as _TWSupport,
             PanelType as _TWPanel, EdgeCondition as _TWEdge, PartitionMode as _TWPart,
+            Material as _TWMaterial,
         )
         _TWO_WAY_ENGINE = True
     except ImportError:
@@ -37,6 +39,14 @@ _EDGE_MAP = {
     "one_short_discontinuous": "ONE_SHORT_EDGE_DISCONTINUOUS",
     "one_long_discontinuous": "ONE_LONG_EDGE_DISCONTINUOUS",
     "two_adjacent_discontinuous": "TWO_ADJACENT_EDGES_DISCONTINUOUS",
+    "two_short_discontinuous": "TWO_SHORT_EDGES_DISCONTINUOUS",
+    "two_long_discontinuous": "TWO_LONG_EDGES_DISCONTINUOUS",
+    "three_edges_one_long_continuous": "THREE_EDGES_ONE_LONG_CONTINUOUS",
+    "three_edges_one_short_continuous": "THREE_EDGES_ONE_SHORT_CONTINUOUS",
+    # "all_edges_discontinuous" (true SSSS) is NOT in this map on purpose --
+    # it is handled as a special case in _calculate_two_way_slab, routed
+    # directly to the engine's SSSS_2W / Navier elastic-plate-series method
+    # rather than through the coefficient table.
 }
 
 # One-way EC2 engine (closed-form moments + EC2 section/deflection/shear/cost).
@@ -155,7 +165,7 @@ def calculate_slab_design(request: SlabDesignRequest) -> SlabDesignResult:
 
     # EC2 two-way is handled by the dedicated coefficient/plate engine.
     # BS 8110 two-way and all one-way cases stay on the logic below.
-    if two_way and code == "EC2" and _TWO_WAY_ENGINE and continuity_val in _EDGE_MAP:
+    if two_way and code == "EC2" and _TWO_WAY_ENGINE and (continuity_val in _EDGE_MAP or continuity_val == "all_edges_discontinuous"):
         return _calculate_two_way_slab(request)
 
     # EC2 one-way -> dedicated closed-form + section-design engine.
@@ -330,7 +340,7 @@ def calculate_slab_design(request: SlabDesignRequest) -> SlabDesignResult:
         status="PASS" if deflection_status == "PASS" and shear_status == "PASS" else "FAIL",
         slab_type=f"{'Two-Way' if two_way else 'One-Way'} Slab",
         continuity=continuity_val.replace('_', ' ').title(),
-        span_lx=lx_m, span_ly=ly_m, thickness=h, effective_depth=d, clear_cover=cover,   
+        span_lx=lx_m, span_ly=ly_m, thickness=h, effective_depth=d, clear_cover=cover,
         concrete_grade=request.materials.concrete_grade, steel_grade=request.materials.steel_grade,
         selected_bar_diameter=best["bar_diameter"], selected_spacing=best["spacing"],
         total_cost=round(total_cost * slab_area, 2), optimization_rank=1,
@@ -496,12 +506,13 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     gk_services = 0.0 if api_dead_extra > 0 else None
     qk_imposed = api_live if api_live > 0 else None
 
-    edge = _TWEdge(_EDGE_MAP[_enum(request.continuity)])
+    is_ssss = _enum(request.continuity) == "all_edges_discontinuous"
+    edge = None if is_ssss else _TWEdge(_EDGE_MAP[_enum(request.continuity)])
 
     inp = TwoWaySlabInput(
         lx_m=g.span_lx,
         ly_m=g.span_ly,
-        support_condition=_TWSupport.TWO_WAY_BEAM_SUPPORTED,
+        support_condition=_TWSupport.SSSS_2W if is_ssss else _TWSupport.TWO_WAY_BEAM_SUPPORTED,
         panel_type=_TWPanel.TWO_WAY,
         edge_condition=edge,
         concrete_grade=mats.concrete_grade,
@@ -510,7 +521,7 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
         partition_mode=_TWPart.PERMANENT_GK,
         exposure_class=_enum(dp.exposure_class),
         thickness_mm=int(g.thickness) if g.thickness else None,     # API thickness wins; else preset
-        cover_mm=g.clear_cover if g.clear_cover else None,
+        cover_mm=g.clear_cover if g.clear_cover is not None else None,
         gk_finish_kN_m2=gk_finish,
         gk_partition_kN_m2=gk_partition,
         gk_services_kN_m2=gk_services,
@@ -570,7 +581,7 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     summary = DesignSummary(
         status=res.overall_status, slab_type="Two-Way Slab",
         continuity=_enum(request.continuity).replace("_", " ").title(),
-        span_lx=inp.lx_m, span_ly=inp.ly_m, thickness=res.thickness_mm, effective_depth=round(res.d_mm, 1), clear_cover=round(res.cover_mm, 1),     
+        span_lx=inp.lx_m, span_ly=inp.ly_m, thickness=res.thickness_mm, effective_depth=round(res.d_mm, 1), clear_cover=round(res.cover_mm, 1),
         concrete_grade=mats.concrete_grade, steel_grade=mats.steel_grade,
         selected_bar_diameter=bx, selected_spacing=sx,
         total_cost=round(total_cost * slab_area, 2), optimization_rank=1, utilization_ratio=round(util, 2),
@@ -646,82 +657,238 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
 
 def _build_two_way_report(inp, res, fck, v_ed_kn, v_rdc, shear_status):
     R = lambda ref, calc, out: {"reference": ref, "calculation": calc, "output": out}
+    mat = _TWMaterial(concrete_grade=inp.concrete_grade, steel_grade=inp.steel_grade)
+    fyk = mat.fyk
+    fyd = mat.fyd
+    fcd = mat.fcd
+    fctm = mat.fctm
+    b = 1000.0
+    d = res.d_mm
+    z = res.z_mm
+    is_ssss = "elastic plate" in (res.analysis_method_used or "").lower()
+    main_bar = res.main_x.bar_dia_mm if res.main_x else (inp.main_bar_diameter_mm or 12)
     sec = []
 
-    sec.append({"title": "1. Cover & Geometry", "rows": [
-        R("EC2 \u00a74.4.1.2", f"c_min,b = max(\u03c6, 20) ; c_min,dur ({inp.exposure_class})",
-          f"c_nom = {res.cover_mm:.0f} mm"),
-        R("Geometry", f"r = l_y/l_x = {inp.ly_m:.2f}/{inp.lx_m:.2f}", f"r = {res.aspect_ratio_r:.3f}"),
-        R("EC2 \u00a76.1", f"d = h \u2212 c_nom \u2212 \u03c6/2 = {res.thickness_mm:.0f} \u2212 {res.cover_mm:.0f} \u2212 \u03c6/2",
-          f"d = {res.d_mm:.0f} mm"),
-        R("EC2 \u00a76.1", f"z = 0.9 d = 0.9 \u00d7 {res.d_mm:.0f}", f"z = {res.z_mm:.0f} mm"),
+    # ---------------- 1. Design basis ----------------
+    sec.append({"title": "1. Design Basis and References", "rows": [
+        R("EN 1990", "Basis of structural design \u2014 ULS combination Eq. 6.10", "adopted"),
+        R("EN 1991-1-1", "Actions: densities, self-weight (\u00a73.2.1), imposed loads (Table 6.2)", "adopted"),
+        R("EN 1992-1-1", "Concrete design \u2014 \u00a76.1 flexure, \u00a76.2.2 shear, \u00a77.4.2 deflection, \u00a79.2.1.1 min steel", "adopted"),
+        R("UK NA", "National Annex to EN 1992-1-1", "adopted"),
+        R("Concrete Centre Table 8" if not is_ssss else "Elastic plate theory",
+          "two-way panel supported on four sides, uniformly distributed load" if not is_ssss
+          else "no continuity on any edge -- moments from Navier double sine-series, not a coefficient table",
+          res.analysis_method_used),
+        R("Design panel", f"Lx (short span) = {inp.lx_m:.2f} m ; Ly (long span) = {inp.ly_m:.2f} m", f"r = Ly/Lx = {res.aspect_ratio_r:.3f}"),
     ]})
 
-    sec.append({"title": "2. Materials", "rows": [
-        R("EC2 Table 3.1", f"f_ck (grade {inp.concrete_grade})", f"f_ck = {fck:.0f} MPa"),
-        R("EC2 \u00a73.1.6", "f_cd = \u03b1_cc f_ck / \u03b3_c", f"computed"),
-        R("EC2 \u00a73.2.7", "f_yd = f_yk / 1.15", f"computed"),
+    # ---------------- 2. Geometry, cover & materials ----------------
+    geom_rows = [
+        R("Geometry", f"Lx = {inp.lx_m:.2f} m ; Ly = {inp.ly_m:.2f} m ; overall thickness h = {res.thickness_mm:.0f} mm", f"h = {res.thickness_mm:.0f} mm"),
+    ]
+    if inp.cover_mm is not None:
+        geom_rows += [
+            R("Cover input", f"clear cover specified by user, Cc = {inp.cover_mm:.0f} mm", f"Cc,input = {inp.cover_mm:.0f} mm"),
+            R("Tolerance", "a fixed 5 mm fixing/detailing allowance is added to the clear cover specified above -- this is not user-editable", f"+{inp.delta_c_dev_mm:.0f} mm"),
+            R("Cover used", f"Cc,used = Cc,input + {inp.delta_c_dev_mm:.0f} mm = {inp.cover_mm:.0f} + {inp.delta_c_dev_mm:.0f}", f"Cc = {res.cover_mm:.0f} mm"),
+        ]
+    else:
+        geom_rows += [
+            R("EC2 \u00a74.4.1.2", f"c_min,b = max(main bar \u03c6, 20) = max({main_bar:.0f}, 20)", f"c_min,b = {res.c_min_b_mm:.0f} mm"),
+            R("EC2 \u00a74.4.1.2", f"c_min,dur (exposure {inp.exposure_class})", f"c_min,dur = {res.c_min_dur_mm:.0f} mm"),
+            R("EC2 \u00a74.4.1.2", f"c_min = max(c_min,b , c_min,dur , 10) = max({res.c_min_b_mm:.0f}, {res.c_min_dur_mm:.0f}, 10)", f"c_min = {res.c_min_mm:.0f} mm"),
+            R("EC2 \u00a74.4.1.2", f"c_nom = c_min + \u0394c_dev = {res.c_min_mm:.0f} + {res.delta_c_dev_mm:.0f} (auto-derived -- no user cover supplied)", f"Cc = {res.cover_mm:.0f} mm"),
+        ]
+    geom_rows += [
+        R("Bar assumed", f"governing main bar \u03c6 = {main_bar:.0f} mm  \u2192  \u03c6/2 = {main_bar/2:.1f} mm", f"\u03c6 = {main_bar:.0f} mm"),
+        R("EC2 \u00a76.1", f"d = h \u2212 Cc \u2212 \u03c6/2 = {res.thickness_mm:.0f} \u2212 {res.cover_mm:.0f} \u2212 {main_bar/2:.1f}", f"d = {d:.0f} mm"),
+        R("EC2 \u00a76.1", f"z = 0.9d (fixed lever-arm assumption for two-way slabs, not iterated via K) = 0.9 \u00d7 {d:.0f}", f"z = {z:.0f} mm"),
+        R("EC2 Table 3.1", f"f_ctm = 0.30 \u00d7 f_ck^(2/3) = 0.30 \u00d7 {fck:.0f}^(2/3) = 0.30 \u00d7 {fck**(2/3):.3f}", f"f_ctm = {fctm:.2f} MPa"),
+        R("EC2 \u00a73.1.6", f"f_cd = \u03b1_cc\u00b7f_ck/\u03b3_c = {mat.alpha_cc:.2f} \u00d7 {fck:.0f}/1.50", f"f_cd = {fcd:.2f} MPa"),
+        R("EC2 \u00a73.2.7", f"f_yd = f_yk/\u03b3_s = {fyk:.0f}/1.15", f"f_yd = {fyd:.1f} MPa"),
+    ]
+    sec.append({"title": "2. Geometry, Cover and Materials", "rows": geom_rows})
+
+    # ---------------- 3. Permanent loads ----------------
+    sec.append({"title": "3. Permanent Loads (Load Analysis)", "rows": [
+        R("EN 1991-1-1 \u00a73.2.1", f"Self-weight of slab = \u03b3_c \u00d7 h = 25 kN/m\u00b3 \u00d7 {res.thickness_mm/1000:.3f}m", f"{res.gk_self_kN_m2:.2f} kN/m\u00b2"),
+        R("User input / auto default", "Weight of finishes", f"{res.gk_finish_kN_m2:.2f} kN/m\u00b2"),
+        R("User input / auto default", "Partition allowance", f"{res.gk_partition_kN_m2:.2f} kN/m\u00b2"),
+        R("User input / auto default", "Services allowance", f"{res.gk_services_kN_m2:.2f} kN/m\u00b2"),
+        R("Total dead load", f"G_k = self-weight + finishes + partition + services = {res.gk_self_kN_m2:.2f} + {res.gk_finish_kN_m2:.2f} + {res.gk_partition_kN_m2:.2f} + {res.gk_services_kN_m2:.2f}", f"G_k = {res.Gk_total:.2f} kN/m\u00b2"),
     ]})
 
-    sec.append({"title": "3. Loads & Combination", "rows": [
-        R("Self weight", f"g_self = 25 \u00d7 {res.thickness_mm/1000:.3f}", f"{res.gk_self_kN_m2:.2f} kN/m\u00b2"),
-        R("Dead", "G_k (self + finishes + partition + services)", f"G_k = {res.Gk_total:.2f} kN/m\u00b2"),
-        R("EN 1991-1-1", f"Q_k (use: {inp.building_use})", f"Q_k = {res.Qk_total:.2f} kN/m\u00b2"),
-        R("EN 1990", f"w_Ed = 1.35\u00d7{res.Gk_total:.2f} + 1.50\u00d7{res.Qk_total:.2f}", f"w_Ed = {res.wEd_area_kN_m2:.2f} kN/m\u00b2"),
+    # ---------------- 4. Variable loads ----------------
+    sec.append({"title": "4. Variable Load on Slab", "rows": [
+        R("EN 1991-1-1 Table 6.2", f"Leading variable action (imposed load), based on building use ({inp.building_use})", f"{res.qk_imposed_kN_m2:.2f} kN/m\u00b2"),
+        R("Total variable load", "Q_k = imposed load (no separate extra live load input in this engine)", f"Q_k = {res.Qk_total:.2f} kN/m\u00b2"),
     ]})
 
-    sec.append({"title": "4. Moments \u2014 Coefficient Method", "rows": [
-        R("Concrete Centre Table", f"\u03b1_x: neg {res.alpha_x_neg or 0:.3f} / pos {res.alpha_x_pos or 0:.3f}  (r={res.aspect_ratio_r:.2f})", "interpolated"),
-        R("Concrete Centre Table", f"\u03b1_y: neg {res.alpha_y_neg or 0:.3f} / pos {res.alpha_y_pos or 0:.3f}", "from table"),
-        R("Moment", f"M_x,pos = \u03b1 \u00d7 w \u00d7 l_x\u00b2 = {res.alpha_x_pos or 0:.3f}\u00d7{res.wEd_area_kN_m2:.2f}\u00d7{inp.lx_m:.2f}\u00b2", f"{res.MEd_x_pos_kN_m_per_m:.2f} kNm/m"),
-        R("Moment", f"M_x,neg = {res.alpha_x_neg or 0:.3f}\u00d7{res.wEd_area_kN_m2:.2f}\u00d7{inp.lx_m:.2f}\u00b2", f"{res.MEd_x_neg_kN_m_per_m:.2f} kNm/m"),
-        R("Moment", f"M_y,pos = {res.alpha_y_pos or 0:.3f}\u00d7{res.wEd_area_kN_m2:.2f}\u00d7{inp.lx_m:.2f}\u00b2", f"{res.MEd_y_pos_kN_m_per_m:.2f} kNm/m"),
-        R("Moment", f"M_y,neg = {res.alpha_y_neg or 0:.3f}\u00d7{res.wEd_area_kN_m2:.2f}\u00d7{inp.lx_m:.2f}\u00b2", f"{res.MEd_y_neg_kN_m_per_m:.2f} kNm/m"),
+    # ---------------- 5. ULS combination ----------------
+    pg, pq = 1.35 * res.Gk_total, 1.50 * res.Qk_total
+    sec.append({"title": "5. Ultimate Limit State Combination", "rows": [
+        R("EN 1990 Eq. 6.10", "w_Ed = \u03b3_Gk\u00b7G_k + \u03b3_Qk\u00b7Q_k", "combination adopted"),
+        R("Partial factors", "\u03b3_Gk = 1.35 (permanent) ; \u03b3_Qk = 1.50 (variable)", "EN 1990 Table A1.2(B)"),
+        R("Substitution", f"w_Ed = (1.35 \u00d7 {res.Gk_total:.2f}) + (1.50 \u00d7 {res.Qk_total:.2f}) = {pg:.4f} + {pq:.4f}", f"w_Ed = {res.wEd_area_kN_m2:.4f} kN/m\u00b2"),
     ]})
 
-    sec.append({"title": "5. Flexural Reinforcement", "rows": [
-        R("EC2 \u00a76.2.3", f"A_s,x = M_x/(f_yd z); governing M_x = {res.As_req_x_main * res.z_mm * 0 + max(res.MEd_x_pos_kN_m_per_m, res.MEd_x_neg_kN_m_per_m):.2f} kNm/m",
-          f"A_s,x,req = {res.As_req_x_main:.0f} mm\u00b2/m"),
-        R("EC2 \u00a76.2.3", "A_s,y = M_y/(f_yd z)", f"A_s,y,req = {res.As_req_y_main:.0f} mm\u00b2/m"),
-        R("EC2 \u00a79.2.1.1", f"A_s,min = max(0.26 f_ctm/f_yk b d, 0.0013 b d)", f"A_s,min = {res.As_min:.0f} mm\u00b2/m"),
-        R("Provided", f"x: T{res.main_x.bar_dia_mm} @ {res.main_x.spacing_mm}" if res.main_x else "-",
-          f"{res.main_x.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.main_x else "-"),
-        R("Provided", f"y: T{res.main_y.bar_dia_mm} @ {res.main_y.spacing_mm}" if res.main_y else "-",
-          f"{res.main_y.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.main_y else "-"),
+    # ---------------- 6. Two-way moment analysis ----------------
+    if is_ssss:
+        moment_rows = [
+            R("Elastic plate theory", "Navier double sine-series solution for a rectangular plate simply supported on all four edges, no continuity anywhere so no coefficient table applies", res.analysis_method_used),
+            R("Governing assumption", "Poisson's ratio \u03bd = 0.20 ; series evaluated at panel centre (x=Lx/2, y=Ly/2) for maximum sagging moment", "9\u00d79 term series (odd m,n)"),
+            R("Series form", "w(x,y) = \u03a3\u03a3 Wmn\u00b7sin(m\u03c0x/Lx)\u00b7sin(n\u03c0y/Ly) ; Mx = \u2212(\u2202\u00b2w/\u2202x\u00b2 + \u03bd\u00b7\u2202\u00b2w/\u2202y\u00b2), My = \u2212(\u2202\u00b2w/\u2202y\u00b2 + \u03bd\u00b7\u2202\u00b2w/\u2202x\u00b2)", "evaluated numerically"),
+            R("Moment", f"M_x,pos = \u03a3\u03a3 term at panel centre, w_Ed = {res.wEd_area_kN_m2:.2f} kN/m\u00b2", f"M_x,pos = {res.MEd_x_pos_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", "M_x,neg -- no continuous edge anywhere, hogging is exactly zero by definition", f"M_x,neg = {res.MEd_x_neg_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", f"M_y,pos = \u03a3\u03a3 term at panel centre", f"M_y,pos = {res.MEd_y_pos_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", "M_y,neg -- no continuous edge anywhere, hogging is exactly zero by definition", f"M_y,neg = {res.MEd_y_neg_kN_m_per_m:.2f} kNm/m"),
+        ]
+    else:
+        moment_rows = [
+            R("Concrete Centre Table 8", f"edge condition selected, coefficients interpolated at r = {res.aspect_ratio_r:.3f} (clamped 1.0\u20132.0 for table lookup)", "interpolated"),
+            R("\u03b1_x,neg", f"short-span hogging coefficient at continuous edge, interpolated at r = {res.aspect_ratio_r:.3f}", f"\u03b1_x,neg = {res.alpha_x_neg or 0:.4f}"),
+            R("\u03b1_x,pos", f"short-span sagging coefficient at mid-span, interpolated at r = {res.aspect_ratio_r:.3f}", f"\u03b1_x,pos = {res.alpha_x_pos or 0:.4f}"),
+            R("\u03b1_y,neg", "long-span hogging coefficient (constant across r for a given edge condition)", f"\u03b1_y,neg = {res.alpha_y_neg or 0:.4f}"),
+            R("\u03b1_y,pos", "long-span sagging coefficient (constant across r for a given edge condition)", f"\u03b1_y,pos = {res.alpha_y_pos or 0:.4f}"),
+            R("Moment", f"M_x,neg = \u03b1_x,neg \u00d7 w_Ed \u00d7 Lx\u00b2 = {res.alpha_x_neg or 0:.4f} \u00d7 {res.wEd_area_kN_m2:.2f} \u00d7 {inp.lx_m:.2f}\u00b2", f"M_x,neg = {res.MEd_x_neg_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", f"M_x,pos = \u03b1_x,pos \u00d7 w_Ed \u00d7 Lx\u00b2 = {res.alpha_x_pos or 0:.4f} \u00d7 {res.wEd_area_kN_m2:.2f} \u00d7 {inp.lx_m:.2f}\u00b2", f"M_x,pos = {res.MEd_x_pos_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", f"M_y,neg = \u03b1_y,neg \u00d7 w_Ed \u00d7 Lx\u00b2 = {res.alpha_y_neg or 0:.4f} \u00d7 {res.wEd_area_kN_m2:.2f} \u00d7 {inp.lx_m:.2f}\u00b2  (note: uses Lx\u00b2, not Ly\u00b2, per the source table convention)", f"M_y,neg = {res.MEd_y_neg_kN_m_per_m:.2f} kNm/m"),
+            R("Moment", f"M_y,pos = \u03b1_y,pos \u00d7 w_Ed \u00d7 Lx\u00b2 = {res.alpha_y_pos or 0:.4f} \u00d7 {res.wEd_area_kN_m2:.2f} \u00d7 {inp.lx_m:.2f}\u00b2", f"M_y,pos = {res.MEd_y_pos_kN_m_per_m:.2f} kNm/m"),
+        ]
+    sec.append({"title": "6. Two-Way Moment Analysis", "rows": moment_rows})
+
+    # ---------------- 7. Flexural reinforcement -- X direction ----------------
+    x_rows = [
+        R("EC2 \u00a76.2.3", f"A_s,x,pos = M_x,pos\u00d710\u2076/(f_yd\u00b7z) = ({res.MEd_x_pos_kN_m_per_m:.2f} \u00d7 10\u2076)/({fyd:.1f} \u00d7 {z:.0f})", f"A_s,x,pos = {res.As_req_x_pos:.0f} mm\u00b2/m"),
+    ]
+    if res.MEd_x_neg_kN_m_per_m > 0:
+        x_rows.append(R("EC2 \u00a76.2.3", f"A_s,x,neg = M_x,neg\u00d710\u2076/(f_yd\u00b7z) = ({res.MEd_x_neg_kN_m_per_m:.2f} \u00d7 10\u2076)/({fyd:.1f} \u00d7 {z:.0f})", f"A_s,x,neg = {res.As_req_x_neg:.0f} mm\u00b2/m"))
+    x_rows.append(R("Governing", f"A_s,x,main = max(A_s,x,pos , A_s,x,neg) = max({res.As_req_x_pos:.0f} , {res.As_req_x_neg:.0f})", f"A_s,x,main = {res.As_req_x_main:.0f} mm\u00b2/m"))
+    sec.append({"title": "7. Flexural Reinforcement \u2014 Short Span (X)", "rows": x_rows})
+
+    # ---------------- 8. Flexural reinforcement -- Y direction ----------------
+    y_rows = [
+        R("EC2 \u00a76.2.3", f"A_s,y,pos = M_y,pos\u00d710\u2076/(f_yd\u00b7z) = ({res.MEd_y_pos_kN_m_per_m:.2f} \u00d7 10\u2076)/({fyd:.1f} \u00d7 {z:.0f})", f"A_s,y,pos = {res.As_req_y_pos:.0f} mm\u00b2/m"),
+    ]
+    if res.MEd_y_neg_kN_m_per_m > 0:
+        y_rows.append(R("EC2 \u00a76.2.3", f"A_s,y,neg = M_y,neg\u00d710\u2076/(f_yd\u00b7z) = ({res.MEd_y_neg_kN_m_per_m:.2f} \u00d7 10\u2076)/({fyd:.1f} \u00d7 {z:.0f})", f"A_s,y,neg = {res.As_req_y_neg:.0f} mm\u00b2/m"))
+    y_rows.append(R("Governing", f"A_s,y,main = max(A_s,y,pos , A_s,y,neg) = max({res.As_req_y_pos:.0f} , {res.As_req_y_neg:.0f})", f"A_s,y,main = {res.As_req_y_main:.0f} mm\u00b2/m"))
+    sec.append({"title": "8. Flexural Reinforcement \u2014 Long Span (Y)", "rows": y_rows})
+
+    # ---------------- 9. Minimum reinforcement ----------------
+    gov = "concrete tensile strength basis" if res.As_min_1 >= res.As_min_2 else "0.13% minimum basis"
+    sec.append({"title": "9. Minimum Reinforcement Check", "rows": [
+        R("EC2 \u00a79.2.1.1", "A_s,min = max( 0.26\u00b7f_ctm/f_yk\u00b7b\u00b7d , 0.0013\u00b7b\u00b7d )  \u2014 same d used for both directions", "As,min formula"),
+        R("Basis 1 \u2014 concrete tensile strength", f"0.26 \u00d7 f_ctm/f_yk \u00d7 b\u00b7d = 0.26 \u00d7 {fctm:.2f}/{fyk:.0f} \u00d7 {b:.0f}\u00d7{d:.0f}", f"{res.As_min_1:.0f} mm\u00b2/m"),
+        R("Basis 2 \u2014 0.13% of section", f"0.0013 \u00d7 b\u00b7d = 0.0013 \u00d7 {b:.0f}\u00d7{d:.0f}", f"{res.As_min_2:.0f} mm\u00b2/m"),
+        R("Governing", f"A_s,min = max({res.As_min_1:.0f} , {res.As_min_2:.0f})  \u2190 {gov} governs", f"A_s,min = {res.As_min:.0f} mm\u00b2/m"),
+        R("Target \u2014 X", f"A_s,target,x = max(A_s,x,main , A_s,min) = max({res.As_req_x_main:.0f} , {res.As_min:.0f})", f"A_s,target,x = {res.As_target_x:.0f} mm\u00b2/m"),
+        R("Target \u2014 Y", f"A_s,target,y = max(A_s,y,main , A_s,min) = max({res.As_req_y_main:.0f} , {res.As_min:.0f})", f"A_s,target,y = {res.As_target_y:.0f} mm\u00b2/m"),
     ]})
 
-    sec.append({"title": "6. Distribution Steel", "rows": [
-        R("User rule", f"target = 0.50 \u00d7 A_s,main", f"{res.dist_target_x:.0f} mm\u00b2/m"),
-        R("Min", "not less than T8 @ 250", f"{res.dist_minimum:.0f} mm\u00b2/m"),
-        R("Provided", f"x: T{res.dist_x.bar_dia_mm} @ {res.dist_x.spacing_mm}" if res.dist_x else "-",
-          f"{res.dist_x.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.dist_x else "-"),
-        R("Provided", f"y: T{res.dist_y.bar_dia_mm} @ {res.dist_y.spacing_mm}" if res.dist_y else "-",
-          f"{res.dist_y.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.dist_y else "-"),
+    # ---------------- 10. Bar selection -- X and Y ----------------
+    s_max = min(3 * res.thickness_mm, 400)
+    bar_rows = []
+    if res.main_x:
+        Ab_x = math.pi * res.main_x.bar_dia_mm ** 2 / 4.0
+        bar_rows += [
+            R("Bar area \u2014 X", f"A_bar = \u03c0\u03c6\u00b2/4 = \u03c0 \u00d7 {res.main_x.bar_dia_mm}\u00b2/4", f"A_bar = {Ab_x:.1f} mm\u00b2"),
+            R("Spacing required \u2014 X", f"s \u2264 A_bar \u00d7 1000/A_s,target,x = {Ab_x:.1f} \u00d7 1000/{res.As_target_x:.0f}", f"adopt s = {res.main_x.spacing_mm} mm"),
+            R("Provided \u2014 X", f"A_s,prov,x = A_bar \u00d7 (1000/s) = {Ab_x:.1f} \u00d7 (1000/{res.main_x.spacing_mm})", f"A_s,prov,x = {res.main_x.As_provided_mm2_per_m:.0f} mm\u00b2/m"),
+            R("Check \u2014 X", f"A_s,prov,x \u2265 A_s,target,x \u2192 {res.main_x.As_provided_mm2_per_m:.0f} \u2265 {res.As_target_x:.0f}", "OK" if res.main_x.As_provided_mm2_per_m >= res.As_target_x else "INCREASE STEEL"),
+            R("EC2 \u00a79.3.1.1 \u2014 X", f"max spacing = min(3h, 400) = min({3*res.thickness_mm:.0f}, 400) = {s_max:.0f} mm ; provided {res.main_x.spacing_mm} mm", "OK" if res.main_x.spacing_mm <= s_max else "SPACING TOO WIDE"),
+            R("Provide \u2014 X (short span)", f"T{res.main_x.bar_dia_mm} @ {res.main_x.spacing_mm} mm c/c", f"T{res.main_x.bar_dia_mm} @ {res.main_x.spacing_mm}"),
+        ]
+    if res.main_y:
+        Ab_y = math.pi * res.main_y.bar_dia_mm ** 2 / 4.0
+        bar_rows += [
+            R("Bar area \u2014 Y", f"A_bar = \u03c0\u03c6\u00b2/4 = \u03c0 \u00d7 {res.main_y.bar_dia_mm}\u00b2/4", f"A_bar = {Ab_y:.1f} mm\u00b2"),
+            R("Spacing required \u2014 Y", f"s \u2264 A_bar \u00d7 1000/A_s,target,y = {Ab_y:.1f} \u00d7 1000/{res.As_target_y:.0f}", f"adopt s = {res.main_y.spacing_mm} mm"),
+            R("Provided \u2014 Y", f"A_s,prov,y = A_bar \u00d7 (1000/s) = {Ab_y:.1f} \u00d7 (1000/{res.main_y.spacing_mm})", f"A_s,prov,y = {res.main_y.As_provided_mm2_per_m:.0f} mm\u00b2/m"),
+            R("Check \u2014 Y", f"A_s,prov,y \u2265 A_s,target,y \u2192 {res.main_y.As_provided_mm2_per_m:.0f} \u2265 {res.As_target_y:.0f}", "OK" if res.main_y.As_provided_mm2_per_m >= res.As_target_y else "INCREASE STEEL"),
+            R("EC2 \u00a79.3.1.1 \u2014 Y", f"max spacing = min(3h, 400) = {s_max:.0f} mm ; provided {res.main_y.spacing_mm} mm", "OK" if res.main_y.spacing_mm <= s_max else "SPACING TOO WIDE"),
+            R("Provide \u2014 Y (long span)", f"T{res.main_y.bar_dia_mm} @ {res.main_y.spacing_mm} mm c/c", f"T{res.main_y.bar_dia_mm} @ {res.main_y.spacing_mm}"),
+        ]
+    sec.append({"title": "10. Bar Selection \u2014 X and Y", "rows": bar_rows})
+
+    # ---------------- 11. Distribution / tertiary steel (engine-computed; see note) ----------------
+    if res.dist_x or res.dist_y:
+        dist_rows = [
+            R("Note", "this engine also computes a third, tertiary steel layer using one-way-slab distribution-steel rules (>=50% of main steel, not less than T8@250). For a genuine two-way slab, X and Y are both primary reinforcement directions -- confirm with your design basis whether a separate distribution layer is actually required here, or whether this section should be disregarded.", ""),
+            R("Target \u2014 X", f"0.50 \u00d7 A_s,prov,x = 0.50 \u00d7 {res.main_x.As_provided_mm2_per_m:.0f}" if res.main_x else "-", f"{res.dist_target_x:.0f} mm\u00b2/m"),
+            R("Target \u2014 Y", f"0.50 \u00d7 A_s,prov,y = 0.50 \u00d7 {res.main_y.As_provided_mm2_per_m:.0f}" if res.main_y else "-", f"{res.dist_target_y:.0f} mm\u00b2/m"),
+            R("Minimum", "not less than T8 @ 250 = \u03c0\u00d78\u00b2/4 \u00d7 1000/250", f"{res.dist_minimum:.0f} mm\u00b2/m"),
+        ]
+        if res.dist_x:
+            dist_rows.append(R("Provided \u2014 X", f"T{res.dist_x.bar_dia_mm} @ {res.dist_x.spacing_mm} mm c/c", f"{res.dist_x.As_provided_mm2_per_m:.0f} mm\u00b2/m"))
+        if res.dist_y:
+            dist_rows.append(R("Provided \u2014 Y", f"T{res.dist_y.bar_dia_mm} @ {res.dist_y.spacing_mm} mm c/c", f"{res.dist_y.As_provided_mm2_per_m:.0f} mm\u00b2/m"))
+        sec.append({"title": "11. Distribution Steel (Tertiary Layer)", "rows": dist_rows})
+
+    # ---------------- 12. Deflection check ----------------
+    branch = "A (\u03c1 \u2264 \u03c1\u2080, lightly reinforced)" if res.rho <= res.rho_0 else "B (\u03c1 > \u03c1\u2080, heavily reinforced)"
+    deflection_rows = [
+        R("Note", "for two-way spanning slabs, the check is carried out based on the shorter span (Lx)", ""),
+        R("Note", "K = 1.0 simply supported / 1.5 interior span / 1.3 end span / 0.4 cantilever \u2014 graded here by how many edges remain continuous (engineering judgement, see engine notes)", f"K = {res.K_deflection:.2f}"),
+        R("Basic span/depth ratio", f"\u03c1 = A_s,x,main/(b\u00b7d) = {res.As_req_x_main:.0f}/({b:.0f}\u00d7{d:.0f})", f"\u03c1 = {res.rho:.5f}"),
+        R("Basic span/depth ratio", f"\u03c1\u2080 = 10\u207b\u00b3 \u00d7 \u221af_ck = 10\u207b\u00b3 \u00d7 \u221a{fck:.0f}", f"\u03c1\u2080 = {res.rho_0:.5f}"),
+        R("Branch", f"\u03c1 = {res.rho:.5f} vs \u03c1\u2080 = {res.rho_0:.5f}", f"branch {branch}"),
+        R("EC2 \u00a77.4.2 \u2014 Branch A", f"K[11 + 1.5\u221af_ck\u00b7(\u03c1\u2080/\u03c1)] = {res.K_deflection:.2f}[11 + 1.5\u221a{fck:.0f}\u00d7({res.rho_0:.5f}/{max(res.rho,1e-9):.5f})]", f"{res.l_over_d_lim_branch_A:.2f}"),
+        R("EC2 \u00a77.4.2 \u2014 Branch B", f"K[11 + 1.5\u221af_ck] = {res.K_deflection:.2f}[11 + 1.5\u221a{fck:.0f}]", f"{res.l_over_d_lim_branch_B:.2f}"),
+        R("Basic limit selected", f"(L/d)_basic = branch {'A' if res.rho <= res.rho_0 else 'B'}", f"{res.l_over_d_lim_basic:.2f}"),
+        R("Actual deflection", f"(L/d)_actual = Lx/d = {inp.lx_m*1000:.0f}/{d:.0f}", f"{res.l_over_d_actual:.2f}"),
+        R("Base check", f"(L/d)_actual {'\u2264' if res.deflection_base_status == 'PASS' else '>'} (L/d)_basic (before any enhancement) \u2192 {res.l_over_d_actual:.2f} {'\u2264' if res.deflection_base_status == 'PASS' else '>'} {res.l_over_d_lim_basic:.2f}",
+          res.deflection_base_status),
+    ]
+    if res.deflection_enhanced:
+        deflection_rows += [
+            R("Enhancement factor", f"base check failed \u2192 F3 = A_s,prov,x/A_s,x,main = {res.main_x.As_provided_mm2_per_m:.0f}/{res.As_req_x_main:.0f}  (\u2264 1.5)" if res.main_x and res.As_req_x_main else "F3 = 1.0 (no governing moment)", f"F3 = {res.F3:.3f}"),
+            R("Allowable span/depth ratio", f"(L/d)_allow = (L/d)_basic \u00d7 F3 = {res.l_over_d_lim_basic:.2f} \u00d7 {res.F3:.3f}", f"{res.l_over_d_lim_final:.2f}"),
+        ]
+    else:
+        deflection_rows.append(
+            R("Enhancement factor", "base check already passes \u2014 F3 not required", "F3 not applied")
+        )
+    deflection_rows.append(
+        R("Verdict", f"(L/d)_actual {'<' if res.deflection_status == 'PASS' else '>'} allowable (L/d) \u2192 {res.l_over_d_actual:.2f} {'<' if res.deflection_status == 'PASS' else '>'} {res.l_over_d_lim_final:.2f}",
+          "Deflection is okay" if res.deflection_status == "PASS" else "Deflection is NOT okay \u2014 increase depth or steel")
+    )
+    sec.append({"title": "12. Check for Deflection", "rows": deflection_rows})
+
+    # ---------------- 13. Shear ----------------
+    sec.append({"title": "13. Shear Check (EC2 \u00a76.2.2)", "rows": [
+        R("Note", f"the engine itself flags shear as '{res.shear_status}' for two-way panels (punching shear on column-supported slabs is a separate check not covered here) -- the verification below is computed independently in the service layer as a standard one-way-strip EC2 \u00a76.2.2 check along the short span, for reference", ""),
+        R("Design shear", f"V_Ed \u2248 0.5 \u00d7 w_Ed \u00d7 Lx = 0.5 \u00d7 {res.wEd_area_kN_m2:.2f} \u00d7 {inp.lx_m:.2f}", f"V_Ed = {v_ed_kn:.2f} kN/m"),
+        R("EC2 \u00a76.2.2", f"V_Rd,c per EC2 \u00a76.2.2, using A_s,prov,x and d as computed above", f"V_Rd,c = {v_rdc/1000:.2f} kN/m"),
+        R("Verdict", f"V_Rd,c {'>' if shear_status == 'PASS' else '\u2264'} V_Ed \u2192 {v_rdc/1000:.2f} {'>' if shear_status == 'PASS' else '\u2264'} {v_ed_kn:.2f}", shear_status),
     ]})
 
-    sec.append({"title": "7. Deflection (span/depth)", "rows": [
-        R("EC2 \u00a77.4.2", f"K = {res.K_deflection:.2f} ; \u03c1 = {res.rho:.4f} ; \u03c1\u2080 = {res.rho_0:.4f}", ""),
-        R("EC2 \u00a77.4.2", f"(l/d)_basic \u00d7 F3 ({res.F3:.2f})", f"limit = {res.l_over_d_lim_final:.1f}"),
-        R("EC2 \u00a77.4.2", f"actual l/d = {inp.lx_m*1000:.0f}/{res.d_mm:.0f}", f"{res.l_over_d_actual:.1f}  ({res.deflection_status})"),
-    ]})
-
-    sec.append({"title": "8. Shear Check", "rows": [
-        R("EC2 \u00a76.2.2", f"V_Ed \u2248 {v_ed_kn:.2f} kN/m ; V_Rd,c = {v_rdc/1000:.2f} kN/m", f"{shear_status}"),
-    ]})
-
-    sec.append({"title": "9. Checks", "rows": [
-        R("Check", "bending x / y", f"{res.bending_status_x} / {res.bending_status_y}"),
-        R("Check", "minimum steel", f"{res.min_steel_status_x}"),
-        R("Check", "deflection", f"{res.deflection_status}"),
-        R("System", "overall", f"{res.overall_status}"),
-    ]})
+    # ---------------- 14. Summary ----------------
+    summary_rows = [
+        R("Section", f"h = {res.thickness_mm:.0f} mm ; d = {d:.0f} mm ; z = {z:.0f} mm ; cover used = {res.cover_mm:.0f} mm", f"{res.thickness_mm:.0f} mm slab"),
+        R("Panel", f"Lx = {inp.lx_m:.2f} m ; Ly = {inp.ly_m:.2f} m ; r = {res.aspect_ratio_r:.3f}", res.analysis_method_used),
+        R("Loading", f"G_k = {res.Gk_total:.2f} ; Q_k = {res.Qk_total:.2f} \u2192 w_Ed = {res.wEd_area_kN_m2:.2f} kN/m\u00b2", f"w_Ed = {res.wEd_area_kN_m2:.2f} kN/m\u00b2"),
+        R("Actions", f"M_x: +{res.MEd_x_pos_kN_m_per_m:.2f} / \u2212{res.MEd_x_neg_kN_m_per_m:.2f} kNm/m ; M_y: +{res.MEd_y_pos_kN_m_per_m:.2f} / \u2212{res.MEd_y_neg_kN_m_per_m:.2f} kNm/m", "ULS"),
+        R("Steel \u2014 X", f"A_s,target,x = {res.As_target_x:.0f} mm\u00b2/m \u2192 provided {res.main_x.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.main_x else "-",
+          f"T{res.main_x.bar_dia_mm} @ {res.main_x.spacing_mm}" if res.main_x else "-"),
+        R("Steel \u2014 Y", f"A_s,target,y = {res.As_target_y:.0f} mm\u00b2/m \u2192 provided {res.main_y.As_provided_mm2_per_m:.0f} mm\u00b2/m" if res.main_y else "-",
+          f"T{res.main_y.bar_dia_mm} @ {res.main_y.spacing_mm}" if res.main_y else "-"),
+        R("Deflection", f"actual {res.l_over_d_actual:.2f} vs allowable {res.l_over_d_lim_final:.2f}", res.deflection_status),
+        R("Shear", f"V_Ed {v_ed_kn:.2f} vs V_Rd,c {v_rdc/1000:.2f} kN/m", shear_status),
+        R("Bending / min steel checks", f"x: {res.bending_status_x}/{res.min_steel_status_x}  y: {res.bending_status_y}/{res.min_steel_status_y}", ""),
+        R("Overall", "all ULS and SLS checks", res.overall_status),
+    ]
+    for n in res.notes:
+        summary_rows.append(R("Note", n, ""))
+    summary_rows += [
+        R("Note", "Effective depth and lever arm use a single d/z for both directions -- standard simplification for slabs where the two reinforcement layers are close together relative to overall depth.", ""),
+        R("Note", "Cover = clear cover input + fixed detailing tolerance (or fully auto-derived from exposure class if no cover was supplied).", ""),
+    ]
+    sec.append({"title": "14. Design Summary", "rows": summary_rows})
 
     return sec
 
 
-# ======================================================================
-# One-way EC2 adapter: SlabDesignRequest -> one_way_slab_engine -> SlabDesignResult
-# ======================================================================
 def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
     g = request.geometry
     mats = request.materials

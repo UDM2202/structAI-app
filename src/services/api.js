@@ -1,6 +1,28 @@
 // src/services/api.js
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+// FastAPI/Pydantic validation errors come back as
+//   { detail: [{ type, loc, msg, input, ctx }, ...] }
+// -- `detail` is an ARRAY of error objects, not a string. Every API function
+// below used to do `JSON.stringify(err.detail)` as a fallback, which dumped
+// the entire raw array -- including the full echoed request body -- straight
+// into the UI's error box. This extracts just the human-readable `.msg`
+// field(s) instead, and strips the "Value error, " prefix Pydantic adds for
+// custom ValueError-raised messages.
+function extractErrorMessage(errBody, fallback) {
+  if (!errBody) return fallback;
+  const { detail } = errBody;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (d && typeof d.msg === "string" ? d.msg.replace(/^Value error,\s*/, "") : null))
+      .filter(Boolean);
+    if (msgs.length) return msgs.join("; ");
+  }
+  return fallback;
+}
+
 export const slabAPI = {
   startDesign: async (formData) => {
     const request = {
@@ -48,9 +70,9 @@ export const slabAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      console.error("422 DETAIL →", JSON.stringify(error.detail, null, 2));
-      throw new Error(typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail));
+      const error = await response.json().catch(() => null);
+      console.error("Design request failed →", error);
+      throw new Error(extractErrorMessage(error, `Request failed: ${response.status}`));
     }
 
     return response.json();
@@ -110,10 +132,8 @@ export const columnAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(
-        typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail || "Design failed")
-      );
+      const error = await response.json().catch(() => null);
+      throw new Error(extractErrorMessage(error, "Design failed."));
     }
     return response.json();
   },
@@ -161,9 +181,7 @@ export const beamAPI = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      throw new Error(
-        err?.detail ? (typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail)) : `Request failed: ${res.status}`
-      );
+      throw new Error(extractErrorMessage(err, `Request failed: ${res.status}`));
     }
     return res.json();
   },
@@ -215,7 +233,7 @@ export const continuousBeamAPI = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      throw new Error(err?.detail ? (typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail)) : `Request failed: ${res.status}`);
+      throw new Error(extractErrorMessage(err, `Request failed: ${res.status}`));
     }
     return res.json();
   },
@@ -264,7 +282,7 @@ export const continuousSlabAPI = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      throw new Error(err?.detail ? (typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail)) : `Request failed: ${res.status}`);
+      throw new Error(extractErrorMessage(err, `Request failed: ${res.status}`));
     }
     return res.json();
   },
@@ -281,9 +299,7 @@ export const foundationAPI = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(
-        typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || "Design failed")
-      );
+      throw new Error(extractErrorMessage(err, "Design failed."));
     }
     return res.json();
   },
@@ -295,9 +311,7 @@ export const foundationAPI = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(
-        typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || "Design failed")
-      );
+      throw new Error(extractErrorMessage(err, "Design failed."));
     }
     return res.json();
   },

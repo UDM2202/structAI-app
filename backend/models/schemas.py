@@ -8,10 +8,15 @@ class SlabType(str, Enum):
     TWO_WAY = "two_way"
 
 class ContinuityCondition(str, Enum):
+    ALL_EDGES_DISCONTINUOUS = "all_edges_discontinuous"   # SSSS -- simply supported on all four edges, no continuity
     ALL_EDGES_CONTINUOUS = "all_edges_continuous"
     ONE_SHORT_DISCONTINUOUS = "one_short_discontinuous"
     ONE_LONG_DISCONTINUOUS = "one_long_discontinuous"
     TWO_ADJACENT_DISCONTINUOUS = "two_adjacent_discontinuous"
+    TWO_SHORT_DISCONTINUOUS = "two_short_discontinuous"
+    TWO_LONG_DISCONTINUOUS = "two_long_discontinuous"
+    THREE_EDGES_ONE_LONG_CONTINUOUS = "three_edges_one_long_continuous"
+    THREE_EDGES_ONE_SHORT_CONTINUOUS = "three_edges_one_short_continuous"
 
 class OneWayContinuity(str, Enum):
     SIMPLY_SUPPORTED = "simply_supported"
@@ -90,6 +95,20 @@ class SlabDesignRequest(BaseModel):
             raise ValueError(f"two_way slab requires continuity in {sorted(two_way_vals)}")
         return self
 
+    @model_validator(mode="after")
+    def check_lx_ly_order(self):
+        # Lx is always the short span, Ly always the long span. A two-way
+        # panel with Lx > Ly is either a data-entry mistake or the axes are
+        # swapped -- catch it here with a clear message rather than letting
+        # it fail deep inside the engine (or silently produce wrong moments).
+        if self.slab_type == SlabType.TWO_WAY and self.geometry.span_lx > self.geometry.span_ly:
+            raise ValueError(
+                f"span_lx ({self.geometry.span_lx} m) must not be greater than span_ly "
+                f"({self.geometry.span_ly} m). Lx is always the short span and Ly the long span -- "
+                f"swap the values if the short span is actually the larger number you entered."
+            )
+        return self
+
 # ============ RESPONSE MODELS ============
 
 class TaskResponse(BaseModel):
@@ -105,6 +124,7 @@ class DesignSummary(BaseModel):
     span_ly: Optional[float] = None  # one-way slabs have no meaningful Ly -- omit it in the output
     thickness: float
     effective_depth: Optional[float] = None
+    clear_cover: Optional[float] = None  # the actual cover used (clear cover input + fixed 5mm tolerance)
     concrete_grade: str
     steel_grade: str
     selected_bar_diameter: int
@@ -211,6 +231,21 @@ class ContinuousSlabRequest(BaseModel):
     def check_spans(self):
         if any(s <= 0 for s in self.span_lengths):
             raise ValueError("All span lengths must be > 0")
+        # A one-way slab spanning more than ~4.5m stops being economical --
+        # deflection typically governs and fails well before bending does
+        # (see the 5-span worked example: a 6.0m span fails deflection at
+        # 48.0 actual vs 25.18 allowable L/d, while every span <= 4.5m passes).
+        # Beyond this, a two-way slab, a beam-and-slab system, or a flat slab
+        # is the more sensible choice -- flag it here rather than silently
+        # producing a design that's technically compliant but impractical.
+        oversized = [s for s in self.span_lengths if s > 4.5]
+        if oversized:
+            raise ValueError(
+                f"Span length(s) {oversized} m exceed the practical one-way slab limit of 4.5 m. "
+                f"Spans beyond 4.5 m are not economical as a one-way slab -- deflection governs and "
+                f"typically fails well before bending does. Consider a two-way slab, beam-and-slab "
+                f"system, or flat slab for this span instead."
+            )
         return self
 
 class SpanDesignOut(BaseModel):

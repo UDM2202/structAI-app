@@ -585,7 +585,7 @@ function DesignChecksCard({ compliance, summary, isPass }) {
 function SlabPreviewCard({ summary }) {
   return (
     <Card number="3" title="Slab Preview">
-      <SlabPreview3D lx={summary.span_lx} ly={summary.span_ly} t={summary.thickness} />
+      <SlabPreview3D lx={summary.span_lx} ly={summary.span_ly} t={summary.thickness} twoWay={/two/i.test(summary.slab_type || "")} />
       <p className={`mb-1 mt-3 text-[11px] font-semibold uppercase tracking-wide ${TXT_SUB}`}>Section View (Along Span Lx)</p>
       <SectionView span={summary.span_lx} t={summary.thickness} />
     </Card>
@@ -803,27 +803,14 @@ function MomentDiagram({ sagging = 0, hogging = 0, continuity = "" }) {
   const x0 = 50, x1 = 470, base = 95;
   const scale = 55 / peak;
   const sag = sagging * scale;
-  // The dip depth is drawn at 2x the scaled sagging value (for visual
-  // emphasis), which can push the "+value" label down far enough to collide
-  // with the fixed "Bending Moment" caption below. Cap the DRAWN dip and its
-  // label position independent of the true value -- this is a display-only
-  // cap, the printed number (f(sagging)) is always exact, only the curve's
-  // depth on screen is clamped.
   const dipPx = Math.min(2 * sag, 46);
 
-  // Which end(s) actually carry the hogging moment. The backend only reports
-  // a single magnitude (max_hogging_moment) -- it doesn't track which
-  // physical end is pinned vs fixed/continuous. So this is a fixed labeling
-  // CONVENTION, not derived data: for an asymmetric condition (one end
-  // continuous, or a cantilever) the continuous/fixed end is always drawn on
-  // the RIGHT (B). If your model's actual left/right orientation differs,
-  // the magnitude is still correct, only which side it's drawn on is a guess.
   const c = String(continuity || "").toLowerCase().replace(/\s+/g, "_");
   const isCantilever = c.includes("cantilever");
   const isOneEnd = c.includes("one_end") || c.includes("one end");
   const isBothEnds = c.includes("both_end") || c.includes("both end");
 
-  let hogA = hogging, hogB = hogging;   // default: symmetric (simply supported -> both 0; both-ends-continuous -> both equal)
+  let hogA = hogging, hogB = hogging;
   let labelA = "A", labelB = "B";
   if (isOneEnd) {
     hogA = 0;
@@ -843,7 +830,6 @@ function MomentDiagram({ sagging = 0, hogging = 0, continuity = "" }) {
   const hA = hogA * scale;
   const hB = hogB * scale;
 
-  // Same -0.00 guard as before, applied per side now that they can differ.
   const labelFor = (v) => (v > 0 ? `-${f(v)}` : f(v));
   const hogLabelA = labelFor(hogA);
   const hogLabelB = labelFor(hogB);
@@ -905,8 +891,9 @@ function DeflectionDiagram({ defl = 0, span = 0 }) {
   );
 }
 
-function SlabPreview3D({ lx, ly, t }) {
-  const Lx = Number(lx) || 0, Ly = Number(ly) || 0, twoWay = Ly > 0;
+function SlabPreview3D({ lx, ly, t, twoWay: twoWayProp }) {
+  const Lx = Number(lx) || 0, Ly = Number(ly) || 0;
+  const twoWay = twoWayProp !== undefined ? twoWayProp : Ly > 0;
   const ratio = twoWay ? Math.min(Math.max(Ly / (Lx || 1), 0.35), 1.1) : 0.4;
   const dx = Math.round(ratio * 60), dy = Math.round(dx * 0.6);
   const x0 = 55, x1 = 280, yTop = 95, th = 26, yBot = yTop + th;

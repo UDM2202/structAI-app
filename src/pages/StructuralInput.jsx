@@ -25,10 +25,15 @@ const MAIN = "text-[#0F172A] dark:text-white";
 /*  OPTION SETS                                                       */
 /* ================================================================== */
 const TWO_WAY_CONTINUITY = [
+  { value: "all_edges_discontinuous", label: "Simply Supported (SSSS)", edges: { top: 0, right: 0, bottom: 0, left: 0 } },
   { value: "all_edges_continuous", label: "All Edges Continuous", edges: { top: 1, right: 1, bottom: 1, left: 1 } },
   { value: "one_short_discontinuous", label: "One Short Edge Discontinuous", edges: { top: 0, right: 1, bottom: 1, left: 1 } },
   { value: "one_long_discontinuous", label: "One Long Edge Discontinuous", edges: { top: 1, right: 0, bottom: 1, left: 1 } },
   { value: "two_adjacent_discontinuous", label: "Two Adjacent Edges Discontinuous", edges: { top: 0, right: 0, bottom: 1, left: 1 } },
+  { value: "two_short_discontinuous", label: "Two Short Edges Discontinuous", edges: { top: 0, right: 1, bottom: 0, left: 1 } },
+  { value: "two_long_discontinuous", label: "Two Long Edges Discontinuous", edges: { top: 1, right: 0, bottom: 1, left: 0 } },
+  { value: "three_edges_one_long_continuous", label: "Three Edges Discontinuous (One Long Continuous)", edges: { top: 1, right: 0, bottom: 0, left: 0 } },
+  { value: "three_edges_one_short_continuous", label: "Three Edges Discontinuous (One Short Continuous)", edges: { top: 0, right: 1, bottom: 0, left: 0 } },
 ];
 const ONE_WAY_CONTINUITY = [
   { value: "simply_supported", label: "Simply Supported", support: "simple" },
@@ -222,10 +227,14 @@ const StructuralInput = () => {
 
   const handleOptimise = async () => {
     const lx = parseFloat(formData.spanLx), ly = parseFloat(formData.spanLy);
-  if (!(lx > 0) || !(ly > 0)) {
-    setError("Enter valid span dimensions (mm).");
-    return;
-  }
+    if (!(lx > 0) || (twoWay && !(ly > 0))) {
+      setError("Enter valid span dimensions (mm).");
+      return;
+    }
+    if (twoWay && lx > ly) {
+      setError("Lx (short span) must not be greater than Ly (long span). Swap the values or correct your entry.");
+      return;
+    }
     setIsOptimising(true);
     setError(null);
     setProgress(20);

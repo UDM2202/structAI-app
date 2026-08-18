@@ -25,6 +25,11 @@ class EdgeCondition(Enum):
     ONE_SHORT_EDGE_DISCONTINUOUS = "ONE_SHORT_EDGE_DISCONTINUOUS"
     ONE_LONG_EDGE_DISCONTINUOUS = "ONE_LONG_EDGE_DISCONTINUOUS"
     TWO_ADJACENT_EDGES_DISCONTINUOUS = "TWO_ADJACENT_EDGES_DISCONTINUOUS"
+    TWO_SHORT_EDGES_DISCONTINUOUS = "TWO_SHORT_EDGES_DISCONTINUOUS"
+    TWO_LONG_EDGES_DISCONTINUOUS = "TWO_LONG_EDGES_DISCONTINUOUS"
+    THREE_EDGES_ONE_LONG_CONTINUOUS = "THREE_EDGES_ONE_LONG_CONTINUOUS"
+    THREE_EDGES_ONE_SHORT_CONTINUOUS = "THREE_EDGES_ONE_SHORT_CONTINUOUS"
+    FOUR_EDGES_DISCONTINUOUS = "FOUR_EDGES_DISCONTINUOUS"
 
 
 class TwoWayMomentMethod(Enum):
@@ -99,6 +104,31 @@ bending_moment_coeffs = {
         "positive": {"short": {1.0: 0.034, 1.1: 0.046, 1.2: 0.056, 1.3: 0.065, 1.4: 0.072, 1.5: 0.078, 1.75: 0.091, 2.0: 0.100},
                      "long": 0.034}
     },
+    "three_edges_one_long_continuous": {
+        # One LONG edge remains continuous; the other long edge and both short
+        # edges are discontinuous. Hogging only develops at the continuous
+        # long edge -- table gives it as the short-span (x) negative row.
+        "negative": {"short": {1.0: 0.057, 1.1: 0.065, 1.2: 0.071, 1.3: 0.076, 1.4: 0.081, 1.5: 0.084, 1.75: 0.092, 2.0: 0.098},
+                     "long": None},
+        "positive": {"short": {1.0: 0.043, 1.1: 0.048, 1.2: 0.053, 1.3: 0.057, 1.4: 0.060, 1.5: 0.063, 1.75: 0.069, 2.0: 0.074},
+                     "long": 0.044}
+    },
+    "three_edges_one_short_continuous": {
+        # One SHORT edge remains continuous; the other short edge and both
+        # long edges are discontinuous. Hogging only develops at the
+        # continuous short edge -- table gives it as the long-span (y) row.
+        "negative": {"short": None, "long": 0.058},
+        "positive": {"short": {1.0: 0.042, 1.1: 0.054, 1.2: 0.063, 1.3: 0.071, 1.4: 0.078, 1.5: 0.084, 1.75: 0.096, 2.0: 0.105},
+                     "long": 0.044}
+    },
+    "four_edges_discontinuous": {
+        # No continuous edge anywhere -- this is the coefficient-table
+        # equivalent of a true SSSS panel: zero hogging in both directions,
+        # positive (sagging) moment only.
+        "negative": {"short": None, "long": None},
+        "positive": {"short": {1.0: 0.055, 1.1: 0.065, 1.2: 0.074, 1.3: 0.081, 1.4: 0.087, 1.5: 0.092, 1.75: 0.103, 2.0: 0.111},
+                     "long": 0.056}
+    },
 }
 
 AUTO_PRESETS = {
@@ -123,14 +153,20 @@ AUTO_PRESETS = {
 #   { EdgeCondition: { r_nodes:[...], alpha_x_neg:[...], alpha_x_pos:[...],
 #                      alpha_y_neg:[...], alpha_y_pos:[...] } }
 # Short-span (x) varies with aspect ratio; long-span (y) is constant per the
-# table, so it is broadcast to every node. Panels whose short-span entry is
-# None (e.g. two_long_edges_discontinuous) are skipped — not valid for this path.
+# table, so it is broadcast to every node. A None short-span entry (e.g.
+# x_neg for two_long_edges_discontinuous, where no short edge is continuous)
+# becomes zero at every node rather than the whole panel type being dropped.
 # ------------------------------------------------------------
 _EDGE_KEYMAP = {
     EdgeCondition.INTERIOR_PANEL: "interior_panel",
     EdgeCondition.ONE_SHORT_EDGE_DISCONTINUOUS: "one_short_edge_discontinuous",
     EdgeCondition.ONE_LONG_EDGE_DISCONTINUOUS: "one_long_edge_discontinuous",
     EdgeCondition.TWO_ADJACENT_EDGES_DISCONTINUOUS: "two_adjacent_edges_discontinuous",
+    EdgeCondition.TWO_SHORT_EDGES_DISCONTINUOUS: "two_short_edges_discontinuous",
+    EdgeCondition.TWO_LONG_EDGES_DISCONTINUOUS: "two_long_edges_discontinuous",
+    EdgeCondition.THREE_EDGES_ONE_LONG_CONTINUOUS: "three_edges_one_long_continuous",
+    EdgeCondition.THREE_EDGES_ONE_SHORT_CONTINUOUS: "three_edges_one_short_continuous",
+    EdgeCondition.FOUR_EDGES_DISCONTINUOUS: "four_edges_discontinuous",
 }
 
 
@@ -142,15 +178,21 @@ def _build_continuous_table() -> Dict[EdgeCondition, Dict[str, list]]:
             continue
         xneg = src["negative"]["short"]
         xpos = src["positive"]["short"]
-        if xneg is None or xpos is None:
-            continue
-        nodes = sorted(xneg.keys())
         yneg = src["negative"]["long"]
         ypos = src["positive"]["long"]
+        # The r-node list comes from whichever short-span table is actually
+        # populated. x_pos is always present in this table; x_neg is None
+        # whenever no short edge is continuous (e.g. two_long_edges_discontinuous,
+        # four_edges_discontinuous), in which case x_neg is simply zero at
+        # every node rather than the whole panel type being unusable.
+        nodes_source = xneg if xneg is not None else xpos
+        if nodes_source is None:
+            continue  # defensive only -- every real entry has at least x_pos
+        nodes = sorted(nodes_source.keys())
         table[ec] = {
             "r_nodes": nodes,
-            "alpha_x_neg": [xneg[r] for r in nodes],
-            "alpha_x_pos": [xpos[r] for r in nodes],
+            "alpha_x_neg": [(xneg[r] if xneg is not None else 0.0) for r in nodes],
+            "alpha_x_pos": [(xpos[r] if xpos is not None else 0.0) for r in nodes],
             "alpha_y_neg": [(yneg if yneg is not None else 0.0)] * len(nodes),
             "alpha_y_pos": [(ypos if ypos is not None else 0.0)] * len(nodes),
         }
@@ -382,6 +424,8 @@ class TwoWaySlabResult:
     min_steel_status_x: str = ""
     min_steel_status_y: str = ""
     deflection_status: str = ""
+    deflection_base_status: str = ""
+    deflection_enhanced: bool = False
     shear_status: str = ""
     overall_status: str = ""
     notes: List[str] = field(default_factory=list)
@@ -501,17 +545,20 @@ class TwoWaySlabDesigner:
         return BarArrangement(dia, spacing, bar_area_mm2(dia) * 1000.0 / spacing)
 
     def choose_bar_arrangement(self, As_target: float, candidate_diams: List[int], candidate_spacings: List[int]) -> BarArrangement:
-        best = None
-        for dia in sorted(candidate_diams):
-            for spacing in sorted(candidate_spacings):
-                As_prov = bar_area_mm2(dia) * 1000.0 / spacing
-                if As_prov >= As_target:
-                    cand = BarArrangement(dia, spacing, As_prov)
-                    if best is None or cand.As_provided_mm2_per_m < best.As_provided_mm2_per_m:
-                        best = cand
-        if best is None:
-            return self.arrangement_from_bar_and_spacing(max(candidate_diams), min(candidate_spacings))
-        return best
+        # Try diameters in the order given -- the frontend sends the user's
+        # preferred bar FIRST. For each diameter, use the widest (most
+        # economical) spacing that still satisfies demand. Only move on to
+        # the next diameter if NO spacing of this one works at all -- do not
+        # search globally across every diameter for the cheapest option,
+        # which would silently override the user's choice whenever a smaller
+        # diameter happened to need less steel.
+        for dia in candidate_diams:
+            feasible = [(s, bar_area_mm2(dia) * 1000.0 / s) for s in candidate_spacings
+                        if bar_area_mm2(dia) * 1000.0 / s >= As_target]
+            if feasible:
+                s, As_prov = max(feasible, key=lambda t: t[0])
+                return BarArrangement(dia, s, As_prov)
+        return self.arrangement_from_bar_and_spacing(max(candidate_diams), min(candidate_spacings))
 
     def choose_distribution_arrangement(self, main: BarArrangement) -> BarArrangement:
         if main.bar_dia_mm in (10, 12) and main.spacing_mm == 200:
@@ -532,10 +579,29 @@ class TwoWaySlabDesigner:
         return feasible[0] if feasible else minimum
 
     def deflection_K_factor(self) -> float:
+        # EC2 Table 7.4N gives K for one-way structural systems (1.0 simply
+        # supported / 1.3 end span / 1.5 interior span / 0.4 cantilever). It
+        # has no direct equivalent for two-way panels, so K here is graded by
+        # how many edges remain continuous -- more continuity means more
+        # rotational restraint, closer to the "interior span" case; less
+        # continuity moves toward "simply supported". This mapping is an
+        # engineering judgement call, not a value taken directly from a
+        # code table -- verify against your own design basis if this matters
+        # for a governing deflection check.
         if self.input.support_condition == SupportCondition.SSSS_2W:
             return 1.0
-        if self.input.edge_condition == EdgeCondition.INTERIOR_PANEL:
-            return 1.5
+        ec = self.input.edge_condition
+        if ec == EdgeCondition.INTERIOR_PANEL:
+            return 1.5          # 0 discontinuous edges -- most restrained
+        if ec in (EdgeCondition.ONE_SHORT_EDGE_DISCONTINUOUS, EdgeCondition.ONE_LONG_EDGE_DISCONTINUOUS):
+            return 1.3          # 1 discontinuous edge
+        if ec in (EdgeCondition.TWO_ADJACENT_EDGES_DISCONTINUOUS, EdgeCondition.TWO_SHORT_EDGES_DISCONTINUOUS,
+                  EdgeCondition.TWO_LONG_EDGES_DISCONTINUOUS):
+            return 1.2          # 2 discontinuous edges
+        if ec in (EdgeCondition.THREE_EDGES_ONE_LONG_CONTINUOUS, EdgeCondition.THREE_EDGES_ONE_SHORT_CONTINUOUS):
+            return 1.0          # 3 discontinuous edges -- only one edge still restrained
+        if ec == EdgeCondition.FOUR_EDGES_DISCONTINUOUS:
+            return 1.0          # 0 continuous edges -- true SSSS behaviour
         return 1.3
 
     def run(self) -> TwoWaySlabResult:
@@ -549,19 +615,7 @@ class TwoWaySlabDesigner:
 
         res.thickness_mm = self.input.thickness_mm if self.input.thickness_mm is not None else preset.thickness_mm
 
-        cover = self.cover_breakdown(main_bar_guess)
-        res.c_min_b_mm = cover["c_min_b_mm"]
-        res.c_min_dur_mm = cover["c_min_dur_mm"]
-        res.delta_c_dur_gamma_mm = cover["delta_c_dur_gamma_mm"]
-        res.delta_c_dur_st_mm = cover["delta_c_dur_st_mm"]
-        res.delta_c_dur_add_mm = cover["delta_c_dur_add_mm"]
-        res.c_min_mm = cover["c_min_mm"]
-        res.delta_c_dev_mm = self.input.delta_c_dev_mm
-        res.cover_mm = self.input.cover_mm if self.input.cover_mm is not None else cover["c_nom_mm"]
-
         res.aspect_ratio_r = self.input.ly_m / self.input.lx_m
-        res.d_mm = res.thickness_mm - res.cover_mm - main_bar_guess / 2.0
-        res.z_mm = 0.9 * res.d_mm
 
         res.gk_self_kN_m2 = self.input.gk_self_kN_m2 if self.input.gk_self_kN_m2 is not None else 25.0 * res.thickness_mm / 1000.0
         res.gk_finish_kN_m2 = self.input.gk_finish_kN_m2 if self.input.gk_finish_kN_m2 is not None else self.auto_finish_load()
@@ -595,23 +649,47 @@ class TwoWaySlabDesigner:
             res.MEd_y_neg_kN_m_per_m = res.alpha_y_neg * res.wEd_area_kN_m2 * self.input.lx_m ** 2
             res.MEd_y_pos_kN_m_per_m = res.alpha_y_pos * res.wEd_area_kN_m2 * self.input.lx_m ** 2
 
-        res.As_req_x_neg = self.reinforcement_required_mm2_per_m(res.MEd_x_neg_kN_m_per_m, res.z_mm)
-        res.As_req_x_pos = self.reinforcement_required_mm2_per_m(res.MEd_x_pos_kN_m_per_m, res.z_mm)
-        res.As_req_y_neg = self.reinforcement_required_mm2_per_m(res.MEd_y_neg_kN_m_per_m, res.z_mm)
-        res.As_req_y_pos = self.reinforcement_required_mm2_per_m(res.MEd_y_pos_kN_m_per_m, res.z_mm)
-
-        res.As_req_x_main = max(res.As_req_x_neg, res.As_req_x_pos)
-        res.As_req_y_main = max(res.As_req_y_neg, res.As_req_y_pos)
-        res.As_min_1, res.As_min_2, res.As_min = self.minimum_steel_parts_mm2_per_m(res.d_mm)
-        res.As_target_x = max(res.As_req_x_main, res.As_min)
-        res.As_target_y = max(res.As_req_y_main, res.As_min)
-
-        auto_main = self.arrangement_from_bar_and_spacing(main_bar_guess, preset_spacing)
         candidates_d = self.input.candidate_bar_diameters_mm or self.auto_candidate_bar_diameters()
         candidates_s = self.input.candidate_spacing_mm or self.auto_candidate_spacing()
 
-        res.main_x = auto_main if auto_main.As_provided_mm2_per_m >= res.As_target_x else self.choose_bar_arrangement(res.As_target_x, candidates_d, candidates_s)
-        res.main_y = auto_main if auto_main.As_provided_mm2_per_m >= res.As_target_y else self.choose_bar_arrangement(res.As_target_y, candidates_d, candidates_s)
+        # --- iterate: effective depth <-> actually-selected bar diameter ---
+        # d_mm depends on the bar diameter, but the bar diameter selected can
+        # differ from the initial guess if it can't satisfy demand. Re-derive
+        # d_mm/z_mm from whichever diameter is actually governing and re-run
+        # the design until it converges (max 3 passes).
+        for _ in range(3):
+            cover = self.cover_breakdown(main_bar_guess)
+            res.c_min_b_mm = cover["c_min_b_mm"]
+            res.c_min_dur_mm = cover["c_min_dur_mm"]
+            res.delta_c_dur_gamma_mm = cover["delta_c_dur_gamma_mm"]
+            res.delta_c_dur_st_mm = cover["delta_c_dur_st_mm"]
+            res.delta_c_dur_add_mm = cover["delta_c_dur_add_mm"]
+            res.c_min_mm = cover["c_min_mm"]
+            res.delta_c_dev_mm = self.input.delta_c_dev_mm
+            res.cover_mm = (self.input.cover_mm + self.input.delta_c_dev_mm) if self.input.cover_mm is not None else cover["c_nom_mm"]
+
+            res.d_mm = res.thickness_mm - res.cover_mm - main_bar_guess / 2.0
+            res.z_mm = 0.9 * res.d_mm
+
+            res.As_req_x_neg = self.reinforcement_required_mm2_per_m(res.MEd_x_neg_kN_m_per_m, res.z_mm)
+            res.As_req_x_pos = self.reinforcement_required_mm2_per_m(res.MEd_x_pos_kN_m_per_m, res.z_mm)
+            res.As_req_y_neg = self.reinforcement_required_mm2_per_m(res.MEd_y_neg_kN_m_per_m, res.z_mm)
+            res.As_req_y_pos = self.reinforcement_required_mm2_per_m(res.MEd_y_pos_kN_m_per_m, res.z_mm)
+
+            res.As_req_x_main = max(res.As_req_x_neg, res.As_req_x_pos)
+            res.As_req_y_main = max(res.As_req_y_neg, res.As_req_y_pos)
+            res.As_min_1, res.As_min_2, res.As_min = self.minimum_steel_parts_mm2_per_m(res.d_mm)
+            res.As_target_x = max(res.As_req_x_main, res.As_min)
+            res.As_target_y = max(res.As_req_y_main, res.As_min)
+
+            auto_main = self.arrangement_from_bar_and_spacing(main_bar_guess, preset_spacing)
+            res.main_x = auto_main if auto_main.As_provided_mm2_per_m >= res.As_target_x else self.choose_bar_arrangement(res.As_target_x, candidates_d, candidates_s)
+            res.main_y = auto_main if auto_main.As_provided_mm2_per_m >= res.As_target_y else self.choose_bar_arrangement(res.As_target_y, candidates_d, candidates_s)
+
+            governing_dia = max(res.main_x.bar_dia_mm, res.main_y.bar_dia_mm)
+            if governing_dia == main_bar_guess:
+                break
+            main_bar_guess = governing_dia
 
         res.dist_x = self.choose_distribution_arrangement(res.main_x)
         res.dist_y = self.choose_distribution_arrangement(res.main_y)
@@ -627,14 +705,26 @@ class TwoWaySlabDesigner:
         res.l_over_d_lim_branch_A = res.K_deflection * (11.0 + 1.5 * math.sqrt(self.material.fck) * (res.rho_0 / safe_rho))
         res.l_over_d_lim_branch_B = res.K_deflection * (11.0 + 1.5 * math.sqrt(self.material.fck))
         res.l_over_d_lim_basic = res.l_over_d_lim_branch_A if res.rho <= res.rho_0 else res.l_over_d_lim_branch_B
-        res.F3 = min(res.main_x.As_provided_mm2_per_m / res.As_req_x_main, 1.5) if res.As_req_x_main else 1.5
-        res.l_over_d_lim_final = res.l_over_d_lim_basic * res.F3
+
+        # Two-stage deflection check (matches the one-way engine): F3 is only
+        # applied if the slab fails the base (unmodified) ratio. A slab that
+        # already passes on the basic ratio doesn't need the enhancement.
+        res.deflection_base_status = "PASS" if res.l_over_d_actual <= res.l_over_d_lim_basic else "FAIL"
+        if res.deflection_base_status == "PASS":
+            res.F3 = 1.0
+            res.l_over_d_lim_final = res.l_over_d_lim_basic
+            res.deflection_status = "PASS"
+            res.deflection_enhanced = False
+        else:
+            res.F3 = min(res.main_x.As_provided_mm2_per_m / res.As_req_x_main, 1.5) if res.As_req_x_main else 1.0
+            res.l_over_d_lim_final = res.l_over_d_lim_basic * res.F3
+            res.deflection_status = "PASS" if res.l_over_d_actual <= res.l_over_d_lim_final else "FAIL"
+            res.deflection_enhanced = True
 
         res.bending_status_x = "PASS" if res.main_x.As_provided_mm2_per_m >= res.As_req_x_main else "FAIL"
         res.bending_status_y = "PASS" if res.main_y.As_provided_mm2_per_m >= res.As_req_y_main else "FAIL"
         res.min_steel_status_x = "PASS" if res.main_x.As_provided_mm2_per_m >= res.As_min else "FAIL"
         res.min_steel_status_y = "PASS" if res.main_y.As_provided_mm2_per_m >= res.As_min else "FAIL"
-        res.deflection_status = "PASS" if res.l_over_d_actual <= res.l_over_d_lim_final else "FAIL"
         res.shear_status = "NOT_CHECKED_MVP"
 
         checks = [res.bending_status_x, res.bending_status_y, res.min_steel_status_x, res.min_steel_status_y, res.deflection_status]

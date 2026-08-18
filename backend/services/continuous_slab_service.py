@@ -1,5 +1,5 @@
 # backend/services/continuous_slab_service.py
-import sys, os, json
+import sys, os, json, math
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'engine'))
 
@@ -93,7 +93,7 @@ def calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlabR
         status=res.overall_status, slab_type="Continuous One-Way Slab",
         continuity=f"{res.n_spans} spans ({_enum(request.start_support)}–{_enum(request.end_support)})",
         span_lx=request.span_lengths[0], span_ly=total_len,
-        thickness=request.geometry_thickness, effective_depth=round(res.d_mm, 1),
+        thickness=request.geometry_thickness, effective_depth=round(res.d_mm, 1), clear_cover=round(res.cover_mm, 1),
         concrete_grade=mats.concrete_grade, steel_grade=mats.steel_grade,
         selected_bar_diameter=gov_bar.bar_dia if gov_bar else 0,
         selected_spacing=gov_bar.spacing if gov_bar else 0,
@@ -173,57 +173,160 @@ def calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlabR
 
 def _build_report(request, res):
     R = lambda ref, calc, out: {"reference": ref, "calculation": calc, "output": out}
+    fyd = res.fyk / 1.15
+    fcd = res.fck / 1.5
     sec = []
+
+    # ---------------- 1. Geometry & Cover ----------------
     sec.append({"title": "1. Geometry & Cover", "rows": [
-        R("EC2 §4.4.1.2", f"cover (clear {request.clear_cover:.0f}) + allowance", f"c_nom = {res.cover_mm:.0f} mm"),
-        R("EC2 §6.1", f"d = h − c − φ/2 = {request.geometry_thickness:.0f} − {res.cover_mm:.0f} − φ/2", f"d = {res.d_mm:.0f} mm"),
-        R("Spans", f"{res.n_spans} spans: {', '.join(f'{L:.2f}' for L in request.span_lengths)} m", f"{_enum(request.start_support)}–{_enum(request.end_support)}"),
+        R("Cover input", f"clear cover specified by user, Cc = {request.clear_cover:.0f} mm", f"Cc,input = {request.clear_cover:.0f} mm"),
+        R("Tolerance", "a fixed 5 mm fixing/detailing allowance is added to the clear cover specified above -- this is not user-editable", "+5 mm"),
+        R("Cover used", f"Cc,used = Cc,input + 5 mm = {request.clear_cover:.0f} + 5", f"Cc = {res.cover_mm:.0f} mm"),
+        R("EC2 §6.1", f"d = h − Cc − φ/2 = {request.geometry_thickness:.0f} − {res.cover_mm:.0f} − φ/2", f"d = {res.d_mm:.0f} mm"),
+        R("Spans", f"{res.n_spans} spans: {', '.join(f'{L:.2f}' for L in request.span_lengths)} m (each ≤ 4.5 m, the practical one-way slab limit)", f"{_enum(request.start_support)}–{_enum(request.end_support)}"),
     ]})
-    sec.append({"title": "2. Loads & Combination", "rows": [
+
+    # ---------------- 2. Materials ----------------
+    sec.append({"title": "2. Materials", "rows": [
+        R("EC2 Table 3.1", f"f_ctm = {res.fctm:.2f} MPa (grade {request.materials.concrete_grade})", f"f_ctm = {res.fctm:.2f} MPa"),
+        R("EC2 §3.1.6", f"f_cd = f_ck/γ_c = {res.fck:.0f}/1.50", f"f_cd = {fcd:.2f} MPa"),
+        R("EC2 §3.2.7", f"f_yd = f_yk/γ_s = {res.fyk:.0f}/1.15", f"f_yd = {fyd:.1f} MPa"),
+    ]})
+
+    # ---------------- 3. Loads & Combination ----------------
+    sec.append({"title": "3. Loads & Combination", "rows": [
         R("Self weight", f"25 × {request.geometry_thickness/1000:.3f}", f"{res.self_weight:.2f} kN/m²"),
         R("Permanent", "G_k = self + finishes + partition + extra dead", f"G_k = {res.g_k:.2f} kN/m²"),
         R("Variable", "Q_k = live + additional live", f"Q_k = {res.q_k:.2f} kN/m²"),
         R("EN 1990", f"w_Ed = 1.35×{res.g_k:.2f} + 1.50×{res.q_k:.2f}", f"w_Ed = {res.w_ed:.2f} kN/m²"),
     ]})
-    # ---- 3. FEM trace (rotations, node moments, element forces) ----
+
+    # ---------------- 4. Load patterns considered ----------------
+    pattern_rows = [
+        R("UK/EC2 practice", "the moment envelope must come from load patterns, not a single all-spans-loaded case -- an unloaded alternate span can govern sagging elsewhere, and a support between two loaded (with adjacent unloaded) spans can govern hogging there", f"{len(res.load_patterns_used)} patterns considered"),
+    ]
+    for lbl in res.load_patterns_used:
+        pattern_rows.append(R("Pattern", lbl, "solved"))
+    sec.append({"title": "4. Load Patterns Considered", "rows": pattern_rows})
+
+    # ---------------- 5. FEM trace (all-spans-loaded, reference) ----------------
     fem_rows = [
         R("Section", f"b·h³/12 = 1000 × {request.geometry_thickness:.0f}³/12", f"I_g = {res.Ig_mm4:.3e} mm⁴"),
         R("Rigidity", f"EI = E·I_g = 33000 × {res.Ig_mm4:.3e}", f"EI = {res.EI_Nmm2:.3e} N·mm²"),
         R("Element stiffness", "k = (EI/L³)[[12,6L,−12,6L],[6L,4L²,−6L,2L²],[−12,−6L,12,−6L],[6L,2L²,−6L,4L²]]", f"{res.n_spans} elements"),
         R("Fixed-end (UDL)", "f = [wL/2, wL²/12, wL/2, −wL²/12] per element", "assembled into global F"),
-        R("Solve", "K·θ = F  (all vertical DOFs restrained; solve nodal rotations)", f"{len(res.rotations_rad)} nodes"),
+        R("Solve", "K·θ = F  (all vertical DOFs restrained; solve nodal rotations) -- shown for the ALL-SPANS-LOADED case; governing design moments come from the full pattern-loading envelope", f"{len(res.rotations_rad)} nodes"),
     ]
     for i, th in enumerate(res.rotations_rad):
-        fem_rows.append(R(f"θ node {i}", "nodal rotation", f"{th:+.6e} rad"))
-    sec.append({"title": "3. Continuous Analysis — FEM Trace", "rows": fem_rows})
+        fem_rows.append(R(f"θ node {i}", "nodal rotation (all-spans-loaded case)", f"{th:+.6e} rad"))
+    sec.append({"title": "5. Continuous Analysis — FEM Trace (All-Spans-Loaded)", "rows": fem_rows})
 
-    # ---- 3b. Support moments recovered from the FEM (these MATCH the reference) ----
     nm_rows = []
     for i, m in enumerate(res.node_moments_kNm):
-        tag = "end support (pinned) → 0" if (i == 0 or i == len(res.node_moments_kNm) - 1) else "interior support (hogging)"
+        tag = "end support (pinned) → 0" if (i == 0 or i == len(res.node_moments_kNm) - 1) else "interior support (hogging), all-spans-loaded case"
         nm_rows.append(R(f"Node {i}", tag, f"M = {m:+.2f} kNm/m"))
-    sec.append({"title": "3b. Support Moments from FEM", "rows": nm_rows})
-    span_rows = [R("EC2 §6.1", "M(x) = M_A + V_A·x − wx²/2, peak at x* = V_A/w; end moments carried as hogging (negative). Verified against the engineer's corrected hand calc (spans + x* match to the digit).", "recovery confirmed")]
+    sec.append({"title": "5b. Node Moments — All-Spans-Loaded (Reference)", "rows": nm_rows})
+
+    # ---------------- 6. Span (sagging) reinforcement -- full K/Z/As derivation ----------------
+    span_rows = [R("EC2 §6.1", "M(x) = -Mi + Vi·x − wx²/2, peak sampled along each element; GOVERNING value taken as the envelope maximum across every load pattern in Section 4, not just all-spans-loaded", "pattern envelope")]
+    b = 1000.0
     for s in res.spans:
-        bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
-        span_rows.append(R(f"Span {s.index} (L={s.length_m:.2f} m)", f"M_sag = {s.M_sag_kNm:.2f} kNm/m → A_s,req = {s.As_req:.0f}", f"{bar} ({s.status})"))
-    sec.append({"title": "4. Span (Sagging) Reinforcement", "rows": span_rows})
+        root = max(0.25 - s.k / 1.134, 0.0)
+        span_rows.append(R(f"Span {s.index} (L={s.length_m:.2f} m)", f"K = M_sag/(f_ck·b·d²) = ({s.M_sag_kNm:.2f}×10⁶)/({res.fck:.0f}×{b:.0f}×{res.d_mm:.0f}²) [governed by: {s.governing_pattern}]", f"K = {s.k:.4f}"))
+        span_rows.append(R("EC2 §6.1", f"Z = d(0.5+√(0.25−K/1.134)) = {res.d_mm:.0f}(0.5+√{root:.4f})", f"Z = {s.z_mm:.1f} mm"))
+        span_rows.append(R("EC2 §6.1", f"A_s = M_sag×10⁶/(f_yd·Z) = ({s.M_sag_kNm:.2f}×10⁶)/(435×{s.z_mm:.1f})", f"A_s,req = {s.As_req:.0f} mm²/m"))
+        bar = f"T{s.bar.bar_dia}@{s.bar.spacing} ({s.bar.As_prov:.0f} mm²/m)" if s.bar else "-"
+        span_rows.append(R("Provide", f"A_s,min = {s.As_min:.0f} ; A_s,req = max(bending, min) = {s.As_req:.0f}", f"{bar} ({s.status})"))
+    sec.append({"title": "6. Span (Sagging) Reinforcement", "rows": span_rows})
+
+    # ---------------- 7. Support (hogging) reinforcement -- full K/Z/As derivation ----------------
     sup_rows = []
     for s in res.supports:
-        bar = f"T{s.bar.bar_dia}@{s.bar.spacing}" if s.bar else "-"
-        sup_rows.append(R(s.position, f"M_hog = {s.M_hog_kNm:.2f} kNm/m → A_s,req = {s.As_req:.0f}", f"{bar} ({s.status})"))
-    sec.append({"title": "5. Support (Hogging) Reinforcement", "rows": sup_rows})
-    sec.append({"title": "6. Deflection (governing span)", "rows": [
-        R("EC2 §7.4.2", f"actual L/d = {res.actual_slenderness:.1f}", f"limit {res.slenderness_limit:.1f} ({res.deflection_status})"),
+        if s.M_hog_kNm > 0:
+            root = max(0.25 - s.k / 1.134, 0.0)
+            sup_rows.append(R(s.position, f"K = M_hog/(f_ck·b·d²) [governed by: {s.governing_pattern}]", f"K = {s.k:.4f}"))
+            sup_rows.append(R("EC2 §6.1", f"Z = d(0.5+√(0.25−K/1.134)) = {res.d_mm:.0f}(0.5+√{root:.4f})", f"Z = {s.z_mm:.1f} mm"))
+            sup_rows.append(R("EC2 §6.1", f"A_s = M_hog×10⁶/(f_yd·Z)", f"A_s,req = {s.As_req:.0f} mm²/m"))
+        else:
+            sup_rows.append(R(s.position, "no hogging at this support -- nominal minimum steel only", f"A_s,req = {s.As_req:.0f} mm²/m"))
+        bar = f"T{s.bar.bar_dia}@{s.bar.spacing} ({s.bar.As_prov:.0f} mm²/m)" if s.bar else "-"
+        sup_rows.append(R("Provide", f"M_hog = {s.M_hog_kNm:.2f} kNm/m ; A_s,min = {s.As_min:.0f}", f"{bar} ({s.status})"))
+    sec.append({"title": "7. Support (Hogging) Reinforcement", "rows": sup_rows})
+
+    # ---------------- 8. Minimum reinforcement basis (shared across the member -- same d/fctm/fyk) ----------------
+    d = res.d_mm
+    t1 = 0.26 * res.fctm / res.fyk * b * d
+    t2 = 0.0013 * b * d
+    gov = "concrete tensile strength basis" if t1 >= t2 else "0.13% minimum basis"
+    sec.append({"title": "8. Minimum Reinforcement Check", "rows": [
+        R("EC2 §9.2.1.1", "A_s,min = max( 0.26·f_ctm/f_yk·b·d , 0.0013·b·d ) -- same d applies at every span and support on this member", "As,min formula"),
+        R("Basis 1 — concrete tensile strength", f"0.26 × {res.fctm:.2f}/{res.fyk:.0f} × {b:.0f}×{d:.0f}", f"{t1:.0f} mm²/m"),
+        R("Basis 2 — 0.13% of section", f"0.0013 × {b:.0f}×{d:.0f}", f"{t2:.0f} mm²/m"),
+        R("Governing", f"A_s,min = max({t1:.0f}, {t2:.0f}) ← {gov} governs", f"A_s,min = {max(t1,t2):.0f} mm²/m"),
     ]})
+
+    # ---------------- 9. Deflection (governing span) -- full derivation ----------------
+    gov_span = max(res.spans, key=lambda s: s.M_sag_kNm)
+    branch = "A (ρ ≤ ρ₀, lightly reinforced)" if res.rho <= res.rho0 else "B (ρ > ρ₀, heavily reinforced)"
+    defl_rows = [
+        R("Governing span", f"Span {gov_span.index} (L={gov_span.length_m:.2f} m) -- highest sagging demand", f"L = {gov_span.length_m:.2f} m"),
+        R("Note", "K = 1.3 for an end span (one end continuous, other simply supported); K = 1.5 for a true interior span (EC2 Table 7.4N)", f"K = {res.K_sys:.2f}"),
+        R("Basic span/depth ratio", f"ρ = A_s,required/(b·d) = {gov_span.As_req:.0f}/({b:.0f}×{d:.0f})", f"ρ = {res.rho:.5f}"),
+        R("Basic span/depth ratio", f"ρ₀ = 10⁻³ × √f_ck = 10⁻³ × √{res.fck:.0f}", f"ρ₀ = {res.rho0:.5f}"),
+        R("Branch", f"ρ = {res.rho:.5f} vs ρ₀ = {res.rho0:.5f}", f"branch {branch}"),
+        R("EC2 §7.4.2", ("(L/d) = K[11 + 1.5√f_ck·(ρ₀/ρ) + 3.2√f_ck·(ρ₀/ρ − 1)^1.5]" if res.rho <= res.rho0
+                         else "(L/d) = K[11 + 1.5√f_ck]"),
+          f"(L/d)_basic = {res.ld_basic:.2f}"),
+        R("Actual deflection", f"(L/d)_actual = L/d = {gov_span.length_m*1000:.0f}/{d:.0f}", f"{res.actual_slenderness:.2f}"),
+        R("Base check", f"(L/d)_actual {'≤' if res.deflection_base_status == 'PASS' else '>'} (L/d)_basic (before any enhancement) → {res.actual_slenderness:.2f} {'≤' if res.deflection_base_status == 'PASS' else '>'} {res.ld_basic:.2f}", res.deflection_base_status),
+    ]
+    if res.deflection_enhanced:
+        defl_rows += [
+            R("Enhancement factor", f"base check failed → F3 = A_s,prov/A_s,req = {gov_span.bar.As_prov:.0f}/{gov_span.As_req:.0f}  (≤ 1.5)" if gov_span.bar else "F3 = 1.0", f"F3 = {res.F3:.3f}"),
+            R("Allowable span/depth ratio", f"(L/d)_allow = (L/d)_basic × F3 = {res.ld_basic:.2f} × {res.F3:.3f}", f"{res.slenderness_limit:.2f}"),
+        ]
+    else:
+        defl_rows.append(R("Enhancement factor", "base check already passes -- F3 not required", "F3 not applied"))
+    defl_rows.append(R("Verdict", f"(L/d)_actual {'<' if res.deflection_status == 'PASS' else '>'} allowable (L/d) → {res.actual_slenderness:.2f} {'<' if res.deflection_status == 'PASS' else '>'} {res.slenderness_limit:.2f}",
+                        "Deflection is okay" if res.deflection_status == "PASS" else "Deflection is NOT okay — increase depth or steel"))
+    sec.append({"title": "9. Deflection (Governing Span)", "rows": defl_rows})
+
+    # ---------------- 10. Shear -- full term breakdown ----------------
+    as_prov_gov = max((s.bar.As_prov for s in res.spans + res.supports if s.bar), default=0.0)
+    rho_l = min(as_prov_gov / (b * d), 0.02) if d else 0.0
+    k_sh = min(1 + math.sqrt(200 / d), 2.0) if d else 1.0
+    C_Rdc = 0.18 / 1.5
+    v_main = C_Rdc * k_sh * (100 * rho_l * res.fck) ** (1 / 3)
+    v_min_val = 0.035 * k_sh ** 1.5 * math.sqrt(res.fck)
     shear_rows = [
-        R("EC2 §6.2.1(8)", f"critical section at distance d = {res.d_mm:.0f} mm from the support face; V_Ed = V_face − w·d", "reduction applied"),
+        R("EC2 §6.2.1(8)", f"critical section at distance d = {d:.0f} mm from the support face; V_Ed = V_face − w·d", "reduction applied"),
     ]
     for sp in res.supports:
-        if getattr(sp, "shear_reduced_kN", None) is not None and sp.shear_kN:
-            shear_rows.append(R(sp.position, f"V_face = {sp.shear_kN:.2f} kN → V_Ed = {sp.shear_reduced_kN:.2f} kN", ""))
-    shear_rows.append(R("EC2 §6.2.2", f"v_Ed = {res.v_ed:.3f} ; v_Rd,c = {res.v_rdc:.3f} N/mm²", res.shear_status))
-    sec.append({"title": "7. Shear (EC2 6.2.2, with reduction at support)", "rows": shear_rows})
-    sec.append({"title": "8. Checks & Notes", "rows": [R("System", "overall", res.overall_status)] +
-                [R("Note", n, "") for n in res.notes]})
+        if sp.shear_kN:
+            shear_rows.append(R(sp.position, f"V_face = {sp.shear_kN:.2f} kN [{sp.governing_pattern}] → V_Ed = {sp.shear_reduced_kN:.2f} kN", ""))
+    shear_rows += [
+        R("Steel ratio", f"ρ_i = A_s,provided/(b·d) = {as_prov_gov:.0f}/({b:.0f}×{d:.0f})  (≤ 0.02)", f"ρ_i = {rho_l:.5f}"),
+        R("Size factor", f"k = 1 + √(200/d) = 1 + √(200/{d:.0f})  (≤ 2.0)", f"k = {k_sh:.3f}"),
+        R("EC2 §6.2.2", f"C_Rd,c = 0.18/γ_c = 0.18/1.50", f"C_Rd,c = {C_Rdc:.3f}"),
+        R("Main term", f"C_Rd,c·k·(100·ρ_i·f_ck)^(1/3) = {C_Rdc:.3f}×{k_sh:.3f}×(100×{rho_l:.5f}×{res.fck:.0f})^(1/3)", f"{v_main:.3f} MPa"),
+        R("v_min", f"v_min = 0.035·k^1.5·f_ck^0.5 = 0.035×{k_sh:.3f}^1.5×√{res.fck:.0f}", f"{v_min_val:.3f} MPa"),
+        R("Governing", f"v_Rd,c = max({v_main:.3f}, {v_min_val:.3f})", f"v_Rd,c = {res.v_rdc:.3f} MPa"),
+        R("EC2 §6.2.2", f"v_Ed = {res.v_ed:.3f} MPa vs v_Rd,c = {res.v_rdc:.3f} MPa", res.shear_status),
+    ]
+    sec.append({"title": "10. Shear (EC2 6.2.2, with reduction at support)", "rows": shear_rows})
+
+    # ---------------- 11. Checks & Notes -- itemized, so a FAIL is always traceable ----------------
+    check_rows = []
+    for s in res.spans:
+        check_rows.append(R(f"Flexure — Span {s.index}", f"A_s,req {s.As_req:.0f} vs A_s,prov {s.bar.As_prov:.0f}" if s.bar else "no bar selected", s.status))
+    for sp in res.supports:
+        check_rows.append(R(f"Flexure — {sp.position}", f"A_s,req {sp.As_req:.0f} vs A_s,prov {sp.bar.As_prov:.0f}" if sp.bar else "no bar selected", sp.status))
+    check_rows.append(R("Deflection", f"(L/d) actual {res.actual_slenderness:.1f} vs allowable {res.slenderness_limit:.1f}", res.deflection_status))
+    check_rows.append(R("Shear", f"v_Ed {res.v_ed:.3f} vs v_Rd,c {res.v_rdc:.3f} MPa", res.shear_status))
+    failed = [r["reference"] for r in check_rows if r["output"] == "FAIL"]
+    check_rows.append(R("Overall", "FAILED checks: " + (", ".join(failed) if failed else "none") if res.overall_status == "FAIL" else "all checks pass", res.overall_status))
+    for n in res.notes:
+        check_rows.append(R("Note", n, ""))
+    sec.append({"title": "11. Checks & Notes", "rows": check_rows})
+
     return sec

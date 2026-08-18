@@ -35,6 +35,11 @@ export default function ContinuousSlabResults() {
 
   const { summary, envelope, spans, supports, deflection, shear, compliance, cost_breakdown, diagram, report } = data;
   const pass = summary.status === "PASS";
+  // The backend already returns per-check PASS/FAIL status in `compliance`
+  // (span flexures, support flexures, deflection, shear) -- use it to name
+  // exactly which check(s) failed, instead of just showing a bare
+  // "CHECK REQUIRED" with no explanation.
+  const failedChecks = (compliance || []).filter((c) => c.status !== "PASS");
 
   // reshape for the (continuous-beam) BMD/SFD components
   const bmdSpans = spans.map((s) => ({ index: s.index - 1, length: s.length, m_sagging: s.max_sagging_moment }));
@@ -65,6 +70,26 @@ export default function ContinuousSlabResults() {
         </div>
       </div>
 
+      {/* Why it failed -- names the specific check(s), not just a bare status pill */}
+      {!pass && failedChecks.length > 0 && (
+        <div className="cb-no-print mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 dark:border-red-700 dark:bg-red-900/20">
+          <div className="mb-1.5 flex items-center gap-2">
+            <FiAlertTriangle className="text-red-600 dark:text-red-400" size={16} />
+            <span className="text-[13px] font-bold uppercase tracking-wide text-red-800 dark:text-red-300">
+              Failed check{failedChecks.length > 1 ? "s" : ""} — {failedChecks.length} of {compliance.length}
+            </span>
+          </div>
+          <ul className="ml-6 list-disc space-y-0.5">
+            {failedChecks.map((c, i) => (
+              <li key={i} className="text-[12px] text-red-700 dark:text-red-300">
+                <span className="font-semibold">{c.check}</span>
+                {c.limit ? ` — ratio ${c.ratio?.toFixed?.(2) ?? c.ratio} (limit ${c.limit})` : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className={`cb-no-print mb-5 ${CARD} flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3`}>
         {meta.map((m, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -83,7 +108,7 @@ export default function ContinuousSlabResults() {
             ["Max Shear", `${envelope.max_shear_force} kN/m`],
             ["Ultimate w_Ed", `${envelope.ultimate_load} kN/m²`],
             ["Service load", `${envelope.service_load} kN/m²`],
-          ]} status={summary.status} />
+          ]} status={summary.status} failedChecks={failedChecks} />
         </Card>
 
         <Card n="2" title="Bending Moment Diagram">
@@ -174,11 +199,20 @@ function Tbl({ head, rows }) {
     </div>
   );
 }
-function KV({ rows, status }) {
+function KV({ rows, status, failedChecks }) {
   return (
     <div className="space-y-1.5">
       {rows.map((r, i) => <div key={i} className="flex items-center justify-between gap-3"><span className={`text-xs ${SUB}`}>{r[0]}</span><span className={`font-mono text-xs font-semibold ${MAIN}`}>{r[1]}</span></div>)}
-      {status && <div className={`mt-2 rounded-md px-3 py-1.5 text-center text-sm font-bold ${status === "PASS" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>{status === "PASS" ? "SAFE" : "CHECK REQUIRED"}</div>}
+      {status && (
+        <div className={`mt-2 rounded-md px-3 py-1.5 text-center text-sm font-bold ${status === "PASS" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
+          {status === "PASS" ? "SAFE" : "CHECK REQUIRED"}
+        </div>
+      )}
+      {status !== "PASS" && failedChecks && failedChecks.length > 0 && (
+        <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+          Failed: {failedChecks.map((c) => c.check).join(", ")}
+        </p>
+      )}
     </div>
   );
 }
