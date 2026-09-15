@@ -86,55 +86,26 @@ export const slabAPI = {
 };
 
 export const columnAPI = {
-  startDesign: async (formData) => {
-    const request = {
-      column_id: formData.columnId,
-      storey: formData.storey,
-      grid: formData.grid,
-      description: formData.description,
-
-      loading_type: formData.loadingType,
-      bracing: formData.bracing,
-      slenderness_class: formData.slendernessClass,
-
-      section_shape: formData.sectionShape,
-      width: parseFloat(formData.width),
-      depth: parseFloat(formData.depth),
-      cover: parseFloat(formData.cover),
-      link_dia: parseFloat(formData.linkDia),
-      n_bars_per_face: parseInt(formData.nBarsPerFace),
-      bar_dia: parseFloat(formData.barDia),
-
-      concrete_grade: formData.concreteGrade,
-      steel_grade: formData.steelGrade,
-      gamma_c: parseFloat(formData.gammaC),
-      gamma_s: parseFloat(formData.gammaS),
-
-      ky: parseFloat(formData.ky),
-      ly: parseFloat(formData.ly),
-      kz: parseFloat(formData.kz),
-      lz: parseFloat(formData.lz),
-
-      ned: parseFloat(formData.ned),
-      medy: parseFloat(formData.medy),
-      medz: parseFloat(formData.medz),
-
-      analysis_method: formData.analysisMethod,
-      consider_imperfections: !!formData.considerImperfections,
-      alpha_i: parseFloat(formData.alphaI),
-      use_min_ecc: !!formData.useMinEcc,
-    };
-
+  /**
+   * @param {object} request 
+   */
+  startDesign: async (request) => {
     const response = await fetch(`${API_BASE}/api/column/design/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-
+ 
     if (!response.ok) {
       const error = await response.json().catch(() => null);
-      throw new Error(extractErrorMessage(error, "Design failed."));
+      throw new Error(extractErrorMessage(error, "Column design failed."));
     }
+    return response.json();
+  },
+ 
+  health: async () => {
+    const response = await fetch(`${API_BASE}/api/column/health`);
+    if (!response.ok) throw new Error("Column module is not responding.");
     return response.json();
   },
 };

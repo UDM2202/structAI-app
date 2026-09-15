@@ -1,55 +1,66 @@
 """
-Unified EC2 RC COLUMN design engine — axial / uniaxial / biaxial.
+column_engine.py — EC2 reinforced concrete column design engine.
 
-Consolidated from the user's three load-take-down scripts. Returns a
-STRUCTURED result dict (JSON-serializable) instead of printing, so the web
-dashboard can render it. The calculation trace is preserved as structured
-rows (reference / calculation / output) for the detailed-report panel.
+One engine serves all three column types via `column_type`:
+    "axial"     — nominal axial with minimum eccentricity about each axis
+    "uniaxial"  — N + Mx
+    "biaxial"   — N + Mx + My, EC2 Cl. 5.8.9 interaction
 
-Behaviour vs the original scripts:
-  * Honours the user-provided section & reinforcement by default
-    (auto_select=False). The biaxial script's auto-section / auto-rebar is
-    kept as an optional path (auto_select=True).
-  * Same tributary-area load take-down, moments, slenderness, reinforcement
-    limits, axial resistance, simplified moment capacity and interaction,
-    and tie design as the source scripts.
+Load input follows the established override pattern (cf. beam_ss_engine):
+by default the engine runs a full tributary-area load take-down; supply
+NEd_override_kN / MEdx_override_kNm / MEdy_override_kNm to bypass it and
+design directly from frame-analysis output. Called with no overrides the
+behaviour is the full take-down, so existing callers are unaffected.
 
-VERIFICATION STATUS (unchanged from the scripts — flagged honestly):
-  * Axial resistance, moment capacity (MRx/MRy) and the interaction check are
-    the SIMPLIFIED hand estimates from the scripts, not a full N-M strain-
-    compatibility analysis. The interaction is linear (Mx/MRx + My/MRy <= 1),
-    not the EC2 5.8.9 exponent form. Slenderness uses the conservative
-    20*C/sqrt(n) format. Treat outputs as indicative; verify against a
-    trusted tool before real design.
+Section capacity is by strain compatibility (EC2 Cl. 3.1.7 rectangular
+stress block + Cl. 3.2.7 bilinear steel), not a beam-style As*fyd*z
+estimate: a column's moment capacity depends on the axial load it carries.
+
+Corrections applied relative to the three reference scripts:
+  * slenderness is checked about BOTH axes (the scripts only ever used
+    i = h/sqrt(12), which is the strong axis)
+  * lambda_lim uses the full 20*A*B*C/sqrt(n) of Cl. 5.8.3.1, not 20*C
+  * slender columns get a second-order moment (nominal curvature,
+    Cl. 5.8.8); the scripts printed "slender" and designed as short
+  * tie spacing is min(20*phi_long, min(b,h), 400) per Cl. 9.5.3(3)
+  * NRd deducts the concrete displaced by the bars
+  * beam/wall reactions use the actual tributary spans
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Optional, List, Tuple
+
 import math
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+Es_MPA = 200_000.0
+
+# Utilisation is capped rather than allowed to reach infinity: JSON cannot
+# encode inf/NaN, so an uncapped ratio would break the API response.
+UTIL_CAP = 999.0
 
 
-# ============================================================ ENUMS
-class ColumnType(Enum):
-    AXIAL = "axially loaded"
-    UNIAXIAL = "uniaxially loaded"
-    BIAXIAL = "biaxially loaded"
+# ============================================================
+# 1. LOOKUPS
+# ============================================================
 
+CONCRETE_GRADES: Dict[str, float] = {
+    "C12/15": 12, "C16/20": 16, "C20/25": 20, "C25/30": 25, "C30/37": 30,
+    "C35/45": 35, "C40/50": 40, "C45/55": 45, "C50/60": 50, "C55/67": 55,
+    "C60/75": 60, "C70/85": 70, "C80/95": 80, "C90/105": 90,
+}
 
-class EndCondition(Enum):
-    FIXED_FIXED = "fixed-fixed"
-    FIXED_PINNED = "fixed-pinned"
-    PINNED_PINNED = "pinned-pinned"
-    FIXED_FREE = "fixed-free"
+STEEL_GRADES: Dict[str, float] = {"B500": 500.0, "B460": 460.0}
 
+# EN 1992-1-1 Table 4.4N / 4.5N, structural class S4
+EXPOSURE_MIN_DUR_MM: Dict[str, float] = {
+    "X0": 10.0, "XC1": 15.0, "XC2": 25.0, "XC3": 25.0, "XC4": 30.0,
+    "XD1": 30.0, "XD2": 35.0, "XD3": 45.0,
+    "XS1": 35.0, "XS2": 40.0, "XS3": 45.0,
+}
 
-class DesignCode(Enum):
-    EUROCODE_2 = "EC2"
-
-
-# ============================================================ LOOKUPS
-BUILDING_USE_LIVE_LOADS = {
+# EN 1991-1-1 Table 6.2 style imposed loads, kN/m^2
+BUILDING_USE_LIVE_LOADS: Dict[str, float] = {
     "residential": 2.0, "office": 3.0, "corridor": 4.0, "stairs": 4.0,
     "retail": 4.0, "shopping_mall": 5.0, "assembly_fixed_seating": 4.0,
     "assembly_movable_seating": 5.0, "assembly_concert_hall": 5.0,
@@ -60,860 +71,1351 @@ BUILDING_USE_LIVE_LOADS = {
     "gymnasium": 5.0, "roof_access": 1.5, "roof_no_access": 0.75,
     "balcony": 3.0, "plant_room": 5.0,
 }
-CONCRETE_GRADES = {
-    "C12/15": 12, "C16/20": 16, "C20/25": 20, "C25/30": 25, "C30/37": 30,
-    "C35/45": 35, "C40/50": 40, "C45/55": 45, "C50/60": 50, "C55/67": 55,
-    "C60/75": 60, "C70/85": 70, "C80/95": 80, "C90/105": 90,
+
+END_CONDITION_K: Dict[str, float] = {
+    "fixed-fixed": 0.5,
+    "fixed-pinned": 0.7,
+    "pinned-pinned": 1.0,
+    "fixed-free": 2.0,
 }
-STEEL_GRADES = {"B500": 500.0, "B460": 460.0}
-EXPOSURE_MIN_DUR_MM = {"XC1": 20.0, "XC2": 25.0, "XC3": 30.0, "XC4": 35.0}
-AVAILABLE_LINK_DIAS_MM = [8, 10, 12]
-CANDIDATE_SECTIONS_MM = [
-    (230, 230), (230, 300), (230, 380), (230, 460), (300, 300), (300, 450),
-    (300, 600), (350, 350), (350, 525), (400, 400), (400, 600),
-]
-CANDIDATE_BAR_LAYOUTS = [
-    (4, 16), (6, 16), (8, 16), (4, 20), (6, 20), (8, 20),
-    (10, 20), (12, 20), (8, 25), (10, 25),
-]
+
+AVAILABLE_BAR_DIAS = [12, 16, 20, 25, 32, 40]
+AVAILABLE_LINK_DIAS = [6, 8, 10, 12]
 
 
-def get_fck(grade):
-    try: return CONCRETE_GRADES[grade]
-    except KeyError: raise ValueError(f"Unsupported concrete grade: {grade}")
+def get_fck(grade: str) -> float:
+    try:
+        return float(CONCRETE_GRADES[grade])
+    except KeyError:
+        raise ValueError(f"Unsupported concrete grade: {grade}")
 
-def get_fyk(grade):
-    try: return STEEL_GRADES[grade]
-    except KeyError: raise ValueError(f"Unsupported steel grade: {grade}")
 
-def get_code_parameters(code):
-    if code == DesignCode.EUROCODE_2:
-        return {"gamma_G": 1.35, "gamma_Q": 1.50, "gamma_c": 1.50,
-                "gamma_s": 1.15, "alpha_cc": 0.85}
-    raise ValueError("Unsupported design code.")
+def get_fyk(grade: str) -> float:
+    try:
+        return STEEL_GRADES[grade]
+    except KeyError:
+        raise ValueError(f"Unsupported steel grade: {grade}")
 
-def support_k(ec):
-    return {EndCondition.FIXED_FIXED: 0.5, EndCondition.FIXED_PINNED: 0.7,
-            EndCondition.PINNED_PINNED: 1.0, EndCondition.FIXED_FREE: 2.0}[ec]
 
-def frame_coefficient_c(braced): return 0.7 if braced else 1.1
-
-def live_load_for_use(use):
-    k = use.strip().lower()
-    if k not in BUILDING_USE_LIVE_LOADS:
+def live_load_for_use(use: str) -> float:
+    key = (use or "").strip().lower()
+    if key not in BUILDING_USE_LIVE_LOADS:
         raise ValueError(f"Unsupported building use: {use}")
-    return BUILDING_USE_LIVE_LOADS[k]
+    return BUILDING_USE_LIVE_LOADS[key]
 
-def round_up_to_available(value, available):
-    for it in available:
-        if it >= value: return it
+
+def support_k(end_condition: str) -> float:
+    key = (end_condition or "").strip().lower()
+    if key not in END_CONDITION_K:
+        raise ValueError(
+            "Invalid end_condition. Use one of: " + ", ".join(END_CONDITION_K)
+        )
+    return END_CONDITION_K[key]
+
+
+def order_end_moments(m_a: float, m_b: float) -> Tuple[float, float]:
+    """
+    EN 1992-1-1 Cl. 5.8.8.2(2) requires |M02| >= |M01|, with the signs kept:
+    opposite signs mean double curvature, which lowers M0e and raises C.
+
+    Textbooks label these inconsistently. Ubani's Column E5 lists
+    "M01 = 13.185, M02 = -6.592" and then takes rm = -6.592/13.185 = -0.50,
+    i.e. smaller over larger. Ordering here by magnitude makes the engine
+    immune to which way round they were typed.
+
+    Returns (M01, M02) in EC2's sense: M01 is the smaller magnitude.
+    """
+    if abs(m_a) >= abs(m_b):
+        return m_b, m_a
+    return m_a, m_b
+
+
+def bar_area_mm2(d_mm: float) -> float:
+    return math.pi * d_mm ** 2 / 4.0
+
+
+def round_up_to_available(value: float, available: List[int]) -> int:
+    for item in available:
+        if item >= value:
+            return item
     return available[-1]
 
-def bar_area_mm2(d): return math.pi * d ** 2 / 4.0
 
-def nominal_cover_mm(exposure_class, link_dia_mm, c_dev_mm=10.0):
-    c_min_dur = EXPOSURE_MIN_DUR_MM.get(exposure_class, 25.0)
-    c_min_b = max(link_dia_mm, 10.0)
-    return max(c_min_dur, c_min_b) + c_dev_mm
+# ============================================================
+# 2. INPUT
+# ============================================================
 
-
-# ============================================================ DATA CLASSES
 @dataclass
-class Material:
-    design_code: DesignCode = DesignCode.EUROCODE_2
+class Wall:
+    present: bool = False
+    thickness_m: float = 0.15
+    density_kN_per_m3: Optional[float] = None
+    opening_ratio: float = 0.0
+
+    def line_load_kN_per_m(self, clear_height_m: float, default_density: float) -> float:
+        if not self.present:
+            return 0.0
+        density = self.density_kN_per_m3 if self.density_kN_per_m3 is not None else default_density
+        return self.thickness_m * clear_height_m * density * (1.0 - self.opening_ratio)
+
+
+@dataclass
+class Beam:
+    """
+    One of the two beams framing into the column in a given direction.
+
+    There is deliberately NO span field. The spans are already fully
+    determined by left_x_m/right_x_m (for the x-direction pair) and
+    top_y_m/bottom_y_m (for the y-direction pair), and the reaction
+    delivered to the column is w*(L_a/2 + L_b/2) = w*tributary_width.
+    Carrying a separate span here would let the input contradict the
+    tributary geometry, with the engine silently ignoring one of them.
+    """
+    width_m: float = 0.23
+    depth_m: float = 0.45
+    wall: Wall = field(default_factory=Wall)
+
+    def self_weight_kN_per_m(self, concrete_density: float) -> float:
+        return self.width_m * self.depth_m * concrete_density
+
+    def wall_line_load_kN_per_m(self, storey_height_m: float, default_density: float) -> float:
+        clear_height = max(storey_height_m - self.depth_m, 0.0)
+        return self.wall.line_load_kN_per_m(clear_height, default_density)
+
+
+@dataclass
+class FloorTemplate:
+    building_use: str = "office"
+    slab_thickness_m: float = 0.150
+    finishes_kN_per_m2: float = 1.0
+    services_kN_per_m2: float = 0.5
+    partitions_kN_per_m2: float = 1.0
+    beam_x: Beam = field(default_factory=Beam)   # pair spanning in x (left + right)
+    beam_y: Beam = field(default_factory=Beam)   # pair spanning in y (top + bottom)
+    imposed_override_kN_per_m2: Optional[float] = None
+
+    def live_load_kN_per_m2(self) -> float:
+        if self.imposed_override_kN_per_m2 is not None:
+            return self.imposed_override_kN_per_m2
+        return live_load_for_use(self.building_use)
+
+    def slab_self_weight_kN_per_m2(self, concrete_density: float) -> float:
+        return self.slab_thickness_m * concrete_density
+
+    def dead_load_kN_per_m2(self, concrete_density: float) -> float:
+        return (
+            self.slab_self_weight_kN_per_m2(concrete_density)
+            + self.finishes_kN_per_m2
+            + self.services_kN_per_m2
+            + self.partitions_kN_per_m2
+        )
+
+
+@dataclass
+class ColumnInput:
+    # --- identity / route ---
+    column_id: str = "C1"
+    column_type: str = "biaxial"           # axial | uniaxial | biaxial
+    design_code: str = "EC2"
+
+    # --- section ---
+    b_mm: float = 230.0                     # width  (x direction)
+    h_mm: float = 460.0                     # depth  (y direction)
+    storey_height_m: float = 3.0
+    clear_height_m: Optional[float] = None   # defaults to storey_height_m
+    end_condition: str = "fixed-fixed"
+    braced: bool = True
+
+    # Effective length. Precedence: l0_override -> k1/k2 (EC2 Eq. 5.15/5.16)
+    # -> idealised K from end_condition. Real frame columns need the k-factor
+    # route: the same clear height gives a different l0 about each axis.
+    l0_override_x_mm: Optional[float] = None
+    l0_override_y_mm: Optional[float] = None
+    k1_x: Optional[float] = None
+    k2_x: Optional[float] = None
+    k1_y: Optional[float] = None
+    k2_y: Optional[float] = None
+
+    include_geometric_imperfections: bool = True
+
+    # EC2 Cl. 5.8.3.1 permits either computed A and B, or the defaults
+    # A = 0.7 (phi_ef unknown) and B = 1.1 (omega unknown). Default to the
+    # code defaults: they are conservative, they match published worked
+    # examples, and B computed from omega needs As, which is not known at
+    # the point slenderness is classified.
+    use_default_A_B: bool = True
+
+    # --- reinforcement ---
+    main_bar_dia_mm: float = 16.0
+    n_bars_total: int = 8
+    n_bars_b_face: Optional[int] = None     # bars on each face parallel to b (incl. corners)
+    n_bars_h_face: Optional[int] = None     # bars on each face parallel to h (incl. corners)
+    link_dia_mm: float = 8.0
+
+    # --- durability / cover ---
+    exposure_class: str = "XC1"
+    delta_c_dev_mm: float = 10.0
+    clear_cover_override_mm: Optional[float] = None
+
+    # --- materials ---
     concrete_grade: str = "C30/37"
     steel_grade: str = "B500"
     concrete_density_kN_per_m3: float = 25.0
     masonry_density_kN_per_m3: float = 20.0
 
-    @property
-    def code_params(self): return get_code_parameters(self.design_code)
-    @property
-    def fck(self): return float(get_fck(self.concrete_grade))
-    @property
-    def fyk(self): return get_fyk(self.steel_grade)
-    @property
-    def gamma_G(self): return self.code_params["gamma_G"]
-    @property
-    def gamma_Q(self): return self.code_params["gamma_Q"]
-    @property
-    def gamma_c(self): return self.code_params["gamma_c"]
-    @property
-    def gamma_s(self): return self.code_params["gamma_s"]
-    @property
-    def alpha_cc(self): return self.code_params["alpha_cc"]
-    @property
-    def fcd(self): return self.alpha_cc * self.fck / self.gamma_c
-    @property
-    def fyd(self): return self.fyk / self.gamma_s
-    @property
-    def nu(self): return 1.0 - self.fck / 250.0
+    # --- partial factors ---
+    gamma_G: float = 1.35
+    gamma_Q: float = 1.50
+    gamma_c: float = 1.50
+    gamma_s: float = 1.15
+    alpha_cc: float = 0.85
 
-
-@dataclass
-class Wall:
-    present: bool = False
-    thickness_m: float = 0.150
-    density_kN_per_m3: Optional[float] = None
-    opening_ratio: float = 0.0
-
-    def line_load_kN_per_m(self, clear_h, default_density):
-        if not self.present: return 0.0
-        d = self.density_kN_per_m3 if self.density_kN_per_m3 is not None else default_density
-        return self.thickness_m * clear_h * d * (1.0 - self.opening_ratio)
-
-
-@dataclass
-class Beam:
-    width_m: float
-    depth_m: float
-    span_m: float
-    wall: Wall = field(default_factory=Wall)
-
-    def self_weight_kN_per_m(self, cd): return self.width_m * self.depth_m * cd
-    def wall_line_load_kN_per_m(self, sh, dd):
-        return self.wall.line_load_kN_per_m(max(sh - self.depth_m, 0.0), dd)
-
-
-@dataclass
-class FloorTemplate:
-    building_use: str
-    slab_thickness_m: float
-    finishes_kN_per_m2: float
-    services_kN_per_m2: float
-    partitions_kN_per_m2: float
-    beam_x: Beam
-    beam_y: Beam
-    imposed_override_kN_per_m2: Optional[float] = None
-
-    def live_load_kN_per_m2(self):
-        return self.imposed_override_kN_per_m2 if self.imposed_override_kN_per_m2 is not None else live_load_for_use(self.building_use)
-    def slab_self_weight_kN_per_m2(self, cd): return self.slab_thickness_m * cd
-    def dead_load_kN_per_m2(self, cd):
-        return (self.slab_self_weight_kN_per_m2(cd) + self.finishes_kN_per_m2
-                + self.services_kN_per_m2 + self.partitions_kN_per_m2)
-
-
-@dataclass
-class BuildingInput:
-    number_of_typical_floors: int
-    typical_floor: FloorTemplate
-    roof_floor: FloorTemplate
-
-
-@dataclass
-class Geometry:
-    column_id: str
-    b_mm: float
-    h_mm: float
-    clear_cover_mm: float
-    link_dia_mm: float
-    main_bar_dia_mm: float
-    n_bars_total: int
-    storey_height_m: float = 3.0
+    # --- tributary geometry (m) ---
     left_x_m: float = 4.0
     right_x_m: float = 5.0
     top_y_m: float = 3.5
     bottom_y_m: float = 3.5
 
-    @property
-    def tributary_width_x_m(self): return 0.5 * (self.left_x_m + self.right_x_m)
-    @property
-    def tributary_width_y_m(self): return 0.5 * (self.top_y_m + self.bottom_y_m)
-    @property
-    def tributary_area_m2(self): return self.tributary_width_x_m * self.tributary_width_y_m
-    @property
-    def area_mm2(self): return self.b_mm * self.h_mm
-    @property
-    def area_m2(self): return (self.b_mm / 1000.0) * (self.h_mm / 1000.0)
-    @property
-    def Ix_mm4(self): return self.b_mm * self.h_mm ** 3 / 12.0
-    @property
-    def Iy_mm4(self): return self.h_mm * self.b_mm ** 3 / 12.0
-    @property
-    def ix_mm(self): return math.sqrt(self.Ix_mm4 / self.area_mm2)
-    @property
-    def iy_mm(self): return math.sqrt(self.Iy_mm4 / self.area_mm2)
-    @property
-    def minimum_eccentricity_x_mm(self): return max(20.0, self.h_mm / 30.0)
-    @property
-    def minimum_eccentricity_y_mm(self): return max(20.0, self.b_mm / 30.0)
-    @property
-    def one_bar_area_mm2(self): return bar_area_mm2(self.main_bar_dia_mm)
-    @property
-    def total_steel_area_mm2(self): return self.n_bars_total * self.one_bar_area_mm2
+    # --- building for take-down ---
+    number_of_typical_floors: int = 3
+    typical_floor: FloorTemplate = field(default_factory=FloorTemplate)
+    roof_floor: FloorTemplate = field(
+        default_factory=lambda: FloorTemplate(
+            building_use="roof_no_access",
+            finishes_kN_per_m2=0.75,
+            services_kN_per_m2=0.25,
+            partitions_kN_per_m2=0.0,
+            beam_x=Beam(wall=Wall(present=False)),
+            beam_y=Beam(wall=Wall(present=False)),
+        )
+    )
 
-
-@dataclass
-class DesignInput:
-    column_type: ColumnType
-    end_condition: EndCondition
-    braced: bool
-    include_min_eccentricity: bool = True
-    exposure_class: str = "XC1"
-    auto_select: bool = False
-    M01_kNm: Dict[str, float] = field(default_factory=dict)
-    M02_kNm: Dict[str, float] = field(default_factory=dict)
+    # --- first order moments from frame analysis, per level (kNm) ---
+    M01x_kNm: Dict[str, float] = field(default_factory=dict)
+    M02x_kNm: Dict[str, float] = field(default_factory=dict)
     M01y_kNm: Dict[str, float] = field(default_factory=dict)
     M02y_kNm: Dict[str, float] = field(default_factory=dict)
-    Mx_override_kNm: Dict[str, float] = field(default_factory=dict)
-    My_override_kNm: Dict[str, float] = field(default_factory=dict)
+
+    include_min_eccentricity: bool = True
+    effective_creep_ratio: float = 2.0      # phi_ef for the nominal curvature method
+
+    # --- OVERRIDES: bypass the take-down and design directly ---
+    NEd_override_kN: Optional[float] = None
+    MEdx_override_kNm: Optional[float] = None
+    MEdy_override_kNm: Optional[float] = None
 
 
-# ============================================================ ENGINE
-class ColumnDesign:
-    def __init__(self, material, geometry, building, design):
-        self.material = material
-        self.geometry = geometry
-        self.building = building
-        self.design = design
-        self._rows: List[dict] = []
-        self._sheet: List[dict] = []
+# ============================================================
+# 3. MATERIALS
+# ============================================================
 
-    # -- trace capture (mirrors the scripts' print rows) --
-    def _sec(self, title):
-        self._rows = []
-        self._sheet.append({"section": title, "rows": self._rows})
-    def _row(self, ref, calc, out=""):
-        self._rows.append({"ref": ref, "calc": calc, "out": str(out)})
+class Materials:
+    def __init__(self, d: ColumnInput):
+        self.fck = get_fck(d.concrete_grade)
+        self.fyk = get_fyk(d.steel_grade)
+        self.gamma_c = d.gamma_c
+        self.gamma_s = d.gamma_s
+        self.alpha_cc = d.alpha_cc
 
-    # -- core --
-    def K(self): return support_k(self.design.end_condition)
-    def C(self): return frame_coefficient_c(self.design.braced)
-    def effective_length_m(self): return self.K() * self.geometry.storey_height_m
-    def column_self_weight_kN(self):
-        return (self.material.gamma_G * self.geometry.area_m2
-                * self.geometry.storey_height_m * self.material.concrete_density_kN_per_m3)
+    @property
+    def fcd(self) -> float:
+        return self.alpha_cc * self.fck / self.gamma_c
 
-    def floor_load_breakdown(self, floor):
-        m = self.material; g = self.geometry
-        Gk = floor.dead_load_kN_per_m2(m.concrete_density_kN_per_m3)
-        Qk = floor.live_load_kN_per_m2()
-        q_uls = m.gamma_G * Gk + m.gamma_Q * Qk
-        slab = q_uls * g.tributary_area_m2
-        bx_sw = floor.beam_x.self_weight_kN_per_m(m.concrete_density_kN_per_m3)
-        by_sw = floor.beam_y.self_weight_kN_per_m(m.concrete_density_kN_per_m3)
-        bx_wall = floor.beam_x.wall_line_load_kN_per_m(g.storey_height_m, m.masonry_density_kN_per_m3)
-        by_wall = floor.beam_y.wall_line_load_kN_per_m(g.storey_height_m, m.masonry_density_kN_per_m3)
-        bx_r = m.gamma_G * (bx_sw + bx_wall) * floor.beam_x.span_m / 2.0
-        by_r = m.gamma_G * (by_sw + by_wall) * floor.beam_y.span_m / 2.0
-        col = self.column_self_weight_kN()
-        return {"Gk": Gk, "Qk": Qk, "q_uls": q_uls, "slab_to_column": slab,
-                "bx_sw": bx_sw, "by_sw": by_sw, "bx_wall": bx_wall, "by_wall": by_wall,
-                "bx_reaction": bx_r, "by_reaction": by_r, "column_self_weight": col,
-                "total_floor_load": slab + bx_r + by_r + col}
+    @property
+    def fyd(self) -> float:
+        return self.fyk / self.gamma_s
 
-    def typical_floor_result(self): return self.floor_load_breakdown(self.building.typical_floor)
-    def roof_floor_result(self): return self.floor_load_breakdown(self.building.roof_floor)
+    @property
+    def eps_yd(self) -> float:
+        return self.fyd / Es_MPA
 
-    def axial_loads_by_level_kN(self):
-        res = {}
-        running = self.roof_floor_result()["total_floor_load"]
-        res["Roof"] = running
-        for i in range(self.building.number_of_typical_floors, 0, -1):
-            running += self.typical_floor_result()["total_floor_load"]
-            res[f"Typical_Floor_{i}"] = running
-        ordered = {}
-        for i in range(1, self.building.number_of_typical_floors + 1):
-            ordered[f"Typical_Floor_{i}"] = res[f"Typical_Floor_{i}"]
-        ordered["Roof"] = res["Roof"]
-        return ordered
+    @property
+    def lambda_block(self) -> float:
+        """EC2 Cl. 3.1.7(3): depth of the rectangular stress block."""
+        if self.fck <= 50.0:
+            return 0.8
+        return 0.8 - (self.fck - 50.0) / 400.0
 
-    def equivalent_first_order_moment_kNm(self, M01, M02):
-        M01, M02 = abs(M01), abs(M02)
-        return max(0.6 * M02 + 0.4 * M01, 0.4 * M02)
+    @property
+    def eta_block(self) -> float:
+        """EC2 Cl. 3.1.7(3): effective strength factor."""
+        if self.fck <= 50.0:
+            return 1.0
+        return 1.0 - (self.fck - 50.0) / 200.0
 
-    def min_ecc_moment_x(self, N): return N * self.geometry.minimum_eccentricity_x_mm / 1000.0
-    def min_ecc_moment_y(self, N): return N * self.geometry.minimum_eccentricity_y_mm / 1000.0
+    @property
+    def eps_cu3(self) -> float:
+        """EC2 Table 3.1: ultimate strain, bilinear/rectangular law."""
+        if self.fck <= 50.0:
+            return 0.0035
+        return (2.6 + 35.0 * ((90.0 - self.fck) / 100.0) ** 4) / 1000.0
 
-    def governing_moment_x(self, level, N):
-        if level in self.design.Mx_override_kNm: return self.design.Mx_override_kNm[level]
-        if self.design.column_type == ColumnType.AXIAL:
-            mf = 0.0
+    @property
+    def eps_c3(self) -> float:
+        """EC2 Table 3.1: strain at the pivot for pure compression."""
+        if self.fck <= 50.0:
+            return 0.00175
+        return (1.75 + 0.55 * ((self.fck - 50.0) / 40.0)) / 1000.0
+
+    def steel_stress(self, eps: float) -> float:
+        """Bilinear with horizontal top branch (EC2 Cl. 3.2.7, Fig. 3.8)."""
+        return max(-self.fyd, min(self.fyd, Es_MPA * eps))
+
+
+# ============================================================
+# 4. GEOMETRY + BAR LAYOUT
+# ============================================================
+
+def distribute_bars(n_total: int, b_mm: float, h_mm: float) -> Tuple[int, int, int]:
+    """
+    Spread n_total bars around the perimeter with bars at all four corners.
+
+    Returns (n_b_face, n_h_face, n_used) where
+        n_used = 2*n_b_face + 2*n_h_face - 4
+    and more bars land on the longer face. n_total is rounded up to the
+    next even number if odd, since the layout must stay symmetric.
+    """
+    n = max(4, int(n_total))
+    if n % 2 == 1:
+        n += 1
+    s = n // 2 + 2                      # n_b_face + n_h_face
+    n_h = int(round(s * h_mm / (b_mm + h_mm)))
+    n_h = max(2, min(s - 2, n_h))
+    n_b = s - n_h
+    return n_b, n_h, 2 * n_b + 2 * n_h - 4
+
+
+class Geometry:
+    def __init__(self, d: ColumnInput, mat: Materials):
+        self.d = d
+        self.mat = mat
+        self.b = d.b_mm
+        self.h = d.h_mm
+
+        if d.n_bars_b_face and d.n_bars_h_face:
+            self.n_b_face = int(d.n_bars_b_face)
+            self.n_h_face = int(d.n_bars_h_face)
+            self.n_bars = 2 * self.n_b_face + 2 * self.n_h_face - 4
         else:
-            mf = self.equivalent_first_order_moment_kNm(
-                self.design.M01_kNm.get(level, 0.0), self.design.M02_kNm.get(level, 0.0))
-        return max(mf, self.min_ecc_moment_x(N)) if self.design.include_min_eccentricity else mf
+            self.n_b_face, self.n_h_face, self.n_bars = distribute_bars(
+                d.n_bars_total, self.b, self.h
+            )
 
-    def governing_moment_y(self, level, N):
-        if level in self.design.My_override_kNm: return self.design.My_override_kNm[level]
-        if self.design.column_type in (ColumnType.AXIAL, ColumnType.UNIAXIAL):
-            mf = 0.0
+        self.bar_dia = d.main_bar_dia_mm
+        self.link_dia = d.link_dia_mm
+        self.cover = self._nominal_cover()
+        self.d_prime = self.cover + self.link_dia + self.bar_dia / 2.0
+
+    # ---------- cover ----------
+    def c_min_dur(self) -> float:
+        return EXPOSURE_MIN_DUR_MM.get(self.d.exposure_class, 25.0)
+
+    def c_min_b(self) -> float:
+        # EC2 Cl. 4.4.1.2(3): bond cover equals the bar diameter for
+        # separated bars. Links are checked too since they sit outermost.
+        return max(self.bar_dia, self.link_dia)
+
+    def c_min(self) -> float:
+        return max(self.c_min_b(), self.c_min_dur(), 10.0)
+
+    def _nominal_cover(self) -> float:
+        if self.d.clear_cover_override_mm is not None:
+            return float(self.d.clear_cover_override_mm)
+        return self.c_min() + self.d.delta_c_dev_mm
+
+    # ---------- section properties ----------
+    @property
+    def Ac(self) -> float:
+        return self.b * self.h
+
+    @property
+    def Ix(self) -> float:
+        return self.b * self.h ** 3 / 12.0
+
+    @property
+    def Iy(self) -> float:
+        return self.h * self.b ** 3 / 12.0
+
+    @property
+    def ix(self) -> float:
+        return math.sqrt(self.Ix / self.Ac)
+
+    @property
+    def iy(self) -> float:
+        return math.sqrt(self.Iy / self.Ac)
+
+    @property
+    def one_bar_area(self) -> float:
+        return bar_area_mm2(self.bar_dia)
+
+    @property
+    def As_total(self) -> float:
+        return self.n_bars * self.one_bar_area
+
+    @property
+    def tributary_width_x_m(self) -> float:
+        return 0.5 * (self.d.left_x_m + self.d.right_x_m)
+
+    @property
+    def tributary_width_y_m(self) -> float:
+        return 0.5 * (self.d.top_y_m + self.d.bottom_y_m)
+
+    @property
+    def tributary_area_m2(self) -> float:
+        return self.tributary_width_x_m * self.tributary_width_y_m
+
+    def e0_x_mm(self) -> float:
+        """Minimum eccentricity for bending about x (section depth h)."""
+        return max(20.0, self.h / 30.0)
+
+    def e0_y_mm(self) -> float:
+        """Minimum eccentricity for bending about y (section depth b)."""
+        return max(20.0, self.b / 30.0)
+
+    # ---------- bar coordinates ----------
+    def bar_coords(self) -> List[Tuple[float, float, float]]:
+        """
+        Bar positions as (x, y, area) with origin at a section corner,
+        x along b and y along h. Corners are placed once.
+        """
+        dp = self.d_prime
+        area = self.one_bar_area
+        bars: List[Tuple[float, float, float]] = []
+
+        x0, x1 = dp, self.b - dp
+        y0, y1 = dp, self.h - dp
+
+        # rows on the two faces parallel to b (y = y0 and y = y1)
+        if self.n_b_face == 1:
+            xs = [0.5 * (x0 + x1)]
         else:
-            mf = self.equivalent_first_order_moment_kNm(
-                self.design.M01y_kNm.get(level, 0.0), self.design.M02y_kNm.get(level, 0.0))
-        return max(mf, self.min_ecc_moment_y(N)) if self.design.include_min_eccentricity else mf
-
-    def slenderness_ratio(self): return (self.effective_length_m() * 1000.0) / self.geometry.ix_mm
-    def relative_axial_load_n(self, N): return (N * 1000.0) / (self.geometry.area_mm2 * self.material.fcd)
-    def slenderness_limit(self, N):
-        n = max(self.relative_axial_load_n(N), 0.10)
-        return 20.0 * self.C() / math.sqrt(n)
-
-    def min_long_steel(self, N):
-        return max(0.10 * (N * 1000.0) / self.material.fyd, 0.002 * self.geometry.area_mm2)
-    def max_long_steel(self): return 0.04 * self.geometry.area_mm2
-
-    def axial_resistance_kN(self):
-        conc = self.material.nu * self.material.fcd * self.geometry.area_mm2 / 1000.0
-        steel = self.geometry.total_steel_area_mm2 * self.material.fyd / 1000.0
-        return conc + steel
-
-    def moment_capacity_x(self):
-        As = 4 * bar_area_mm2(self.geometry.main_bar_dia_mm)
-        d = self.geometry.h_mm - self.geometry.clear_cover_mm - self.geometry.link_dia_mm - self.geometry.main_bar_dia_mm / 2.0
-        return As * self.material.fyd * (0.9 * d / 1000.0) / 1000.0
-    def moment_capacity_y(self):
-        As = 2 * bar_area_mm2(self.geometry.main_bar_dia_mm)
-        d = self.geometry.b_mm - self.geometry.clear_cover_mm - self.geometry.link_dia_mm - self.geometry.main_bar_dia_mm / 2.0
-        return As * self.material.fyd * (0.9 * d / 1000.0) / 1000.0
-
-    def utilisation(self, level, N):
-        Mx, My = self.governing_moment_x(level, N), self.governing_moment_y(level, N)
-        MRx, MRy = self.moment_capacity_x(), self.moment_capacity_y()
-        return (Mx / MRx if MRx > 0 else 999.0) + (My / MRy if MRy > 0 else 999.0)
-
-    def min_tie_dia(self): return max(6.0, self.geometry.main_bar_dia_mm / 4.0)
-    def max_tie_spacing(self):
-        return min(12.0 * self.geometry.main_bar_dia_mm, min(self.geometry.b_mm, self.geometry.h_mm), 300.0)
-
-    # ---- N-M interaction diagram (strain compatibility, rectangular block) ----
-    # Simplified: symmetric steel in 2 layers (half top, half bottom), fck<=50
-    # (lambda=0.8, eta=1.0). Returns list of {M_kNm, N_kN} about the given axis.
-    def interaction_curve(self, axis="x"):
-        g, m = self.geometry, self.material
-        if axis == "x":              # bending about x -> depth = h, width = b
-            overall, width = g.h_mm, g.b_mm
-        else:                        # about y -> depth = b, width = h
-            overall, width = g.b_mm, g.h_mm
-        fcd, fyd = m.fcd, m.fyd
-        Es, ecu = 200000.0, 0.0035
-        As_layer = g.total_steel_area_mm2 / 2.0
-        d2 = g.clear_cover_mm + g.link_dia_mm + g.main_bar_dia_mm / 2.0  # to near steel
-        d = overall - d2                                                # to far steel
-        layers = [(d2, As_layer), (d, As_layer)]                        # (depth from comp face, area)
-        lam, eta = 0.8, 1.0
-
-        pts = []
-        # pure axial squash point
-        N0 = (eta * fcd * width * overall + g.total_steel_area_mm2 * fyd) / 1000.0
-        pts.append({"M_kNm": 0.0, "N_kN": round(N0, 1)})
-        # sweep neutral axis depth
-        xs = [overall * f for f in (
-            0.10, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7,
-            0.8, 0.9, 1.0, 1.2, 1.5, 2.0, 3.0)]
+            step = (x1 - x0) / (self.n_b_face - 1)
+            xs = [x0 + i * step for i in range(self.n_b_face)]
         for x in xs:
-            a = min(lam * x, overall)
-            Fc = eta * fcd * width * a                         # N (compression +)
-            zc = overall / 2.0 - a / 2.0
-            N = Fc
-            M = Fc * zc
-            for di, As in layers:
-                eps = ecu * (x - di) / x if x > 0 else -0.01
-                sig = max(-fyd, min(fyd, Es * eps))            # +comp
-                Fs = As * sig
-                N += Fs
-                M += Fs * (overall / 2.0 - di)
-            pts.append({"M_kNm": round(abs(M) / 1e6, 2), "N_kN": round(N / 1e3, 1)})
-        # pure bending point (N=0): approximate tension-controlled
-        pts.append({"M_kNm": round(self._pure_bending_M(width, overall, As_layer, d, d2), 2), "N_kN": 0.0})
-        pts.sort(key=lambda p: p["N_kN"])
+            bars.append((x, y0, area))
+            bars.append((x, y1, area))
+
+        # intermediate bars on the two faces parallel to h, corners excluded
+        if self.n_h_face > 2:
+            step = (y1 - y0) / (self.n_h_face - 1)
+            for i in range(1, self.n_h_face - 1):
+                y = y0 + i * step
+                bars.append((x0, y, area))
+                bars.append((x1, y, area))
+
+        return bars
+
+    def bar_depths(self, axis: str) -> List[Tuple[float, float]]:
+        """
+        Bars reduced to (depth_from_compression_face, area) for the axis
+        being bent about. axis "x" bends about the x-axis, so the section
+        depth is h and the relevant coordinate is y.
+        """
+        if axis == "x":
+            return [(y, a) for (_x, y, a) in self.bar_coords()]
+        return [(x, a) for (x, _y, a) in self.bar_coords()]
+
+    def section_depth(self, axis: str) -> float:
+        return self.h if axis == "x" else self.b
+
+    def section_width(self, axis: str) -> float:
+        return self.b if axis == "x" else self.h
+
+
+# ============================================================
+# 5. LOAD TAKE-DOWN
+# ============================================================
+
+class LoadTakedown:
+    def __init__(self, d: ColumnInput, geo: Geometry):
+        self.d = d
+        self.geo = geo
+
+    def column_self_weight_kN(self) -> float:
+        return (
+            self.d.gamma_G
+            * (self.geo.b / 1000.0)
+            * (self.geo.h / 1000.0)
+            * self.d.storey_height_m
+            * self.d.concrete_density_kN_per_m3
+        )
+
+    def floor_breakdown(self, floor: FloorTemplate) -> Dict[str, float]:
+        rho_c = self.d.concrete_density_kN_per_m3
+        rho_w = self.d.masonry_density_kN_per_m3
+
+        Gk = floor.dead_load_kN_per_m2(rho_c)
+        Qk = floor.live_load_kN_per_m2()
+        q_uls = self.d.gamma_G * Gk + self.d.gamma_Q * Qk
+        slab_to_column = q_uls * self.geo.tributary_area_m2
+
+        bx_sw = floor.beam_x.self_weight_kN_per_m(rho_c)
+        by_sw = floor.beam_y.self_weight_kN_per_m(rho_c)
+        bx_wall = floor.beam_x.wall_line_load_kN_per_m(self.d.storey_height_m, rho_w)
+        by_wall = floor.beam_y.wall_line_load_kN_per_m(self.d.storey_height_m, rho_w)
+
+        # Four beams frame into the column. The x-direction pair spans
+        # left_x_m and right_x_m, delivering w*(left/2 + right/2) = w*tx.
+        # The y-direction pair likewise delivers w*ty. Both pairs count.
+        span_x = self.geo.tributary_width_x_m
+        span_y = self.geo.tributary_width_y_m
+        bx_reaction = self.d.gamma_G * (bx_sw + bx_wall) * span_x
+        by_reaction = self.d.gamma_G * (by_sw + by_wall) * span_y
+
+        col_sw = self.column_self_weight_kN()
+        total = slab_to_column + bx_reaction + by_reaction + col_sw
+
+        return {
+            "Gk": Gk, "Qk": Qk, "q_uls": q_uls,
+            "slab_to_column": slab_to_column,
+            "bx_sw": bx_sw, "by_sw": by_sw,
+            "bx_wall": bx_wall, "by_wall": by_wall,
+            "bx_reaction": bx_reaction, "by_reaction": by_reaction,
+            "span_x": span_x, "span_y": span_y,
+            "column_self_weight": col_sw,
+            "total_floor_load": total,
+        }
+
+    def typical(self) -> Dict[str, float]:
+        return self.floor_breakdown(self.d.typical_floor)
+
+    def roof(self) -> Dict[str, float]:
+        return self.floor_breakdown(self.d.roof_floor)
+
+    def axial_by_level(self) -> Dict[str, float]:
+        """
+        Cumulative NEd at each level, ordered top down. Roof first, then
+        Typical_Floor_n ... Typical_Floor_1, so the last entry carries the
+        largest load. The critical level is taken by value, not position.
+        """
+        results: Dict[str, float] = {}
+        running = self.roof()["total_floor_load"]
+        results["Roof"] = running
+        per_floor = self.typical()["total_floor_load"]
+        for i in range(self.d.number_of_typical_floors, 0, -1):
+            running += per_floor
+            results[f"Typical_Floor_{i}"] = running
+        return results
+
+
+# ============================================================
+# 6. SECTION ANALYSIS — STRAIN COMPATIBILITY
+# ============================================================
+
+class SectionAnalysis:
+    """
+    Rectangular section, symmetric perimeter reinforcement, uniaxial
+    bending about one axis. Sign convention: compression positive.
+    """
+
+    def __init__(self, geo: Geometry, mat: Materials, axis: str):
+        self.geo = geo
+        self.mat = mat
+        self.axis = axis
+        self.depth = geo.section_depth(axis)       # section depth in bending plane
+        self.width = geo.section_width(axis)
+        self.bars = geo.bar_depths(axis)
+
+    # ---------- strain profile ----------
+    def strain_at(self, y: float, x: float) -> float:
+        """
+        Strain at depth y from the compression face for neutral axis depth x.
+
+        x <= depth : pivot at the compression face, eps_cu3
+        x >  depth : pivot at point C, eps_c3 at depth h*(1 - eps_c3/eps_cu3)
+        """
+        eps_cu3 = self.mat.eps_cu3
+        eps_c3 = self.mat.eps_c3
+        if x <= 0:
+            return 0.0
+        if x <= self.depth:
+            return eps_cu3 * (x - y) / x
+        y_c = self.depth * (1.0 - eps_c3 / eps_cu3)
+        return eps_c3 * (x - y) / (x - y_c)
+
+    # ---------- resultants ----------
+    def forces(self, x: float) -> Tuple[float, float]:
+        """
+        Return (N_kN, M_kNm) for neutral axis depth x, moment taken about
+        the section centroid. Bars inside the compression block have the
+        displaced concrete deducted.
+        """
+        mat = self.mat
+        eta_fcd = mat.eta_block * mat.fcd
+        a = min(mat.lambda_block * x, self.depth)      # stress block depth
+        a = max(a, 0.0)
+
+        Fc = eta_fcd * self.width * a                  # N
+        centroid = self.depth / 2.0
+        M = Fc * (centroid - a / 2.0)                  # N.mm
+        N = Fc
+
+        for (y, area) in self.bars:
+            eps = self.strain_at(y, x)
+            sigma = mat.steel_stress(eps)
+            if y <= a:                                 # bar sits in the block
+                sigma -= eta_fcd
+            Fs = area * sigma
+            N += Fs
+            M += Fs * (centroid - y)
+
+        return N / 1000.0, M / 1e6
+
+    # ---------- capacity envelope ----------
+    def N_pure_compression(self) -> float:
+        """NRd at uniform strain eps_c3 (steel does not reach fyd here)."""
+        mat = self.mat
+        eta_fcd = mat.eta_block * mat.fcd
+        sigma_s = mat.steel_stress(mat.eps_c3)
+        As = sum(a for (_y, a) in self.bars)
+        return (eta_fcd * (self.width * self.depth - As) + As * sigma_s) / 1000.0
+
+    def N_simplified_kN(self) -> float:
+        """
+        Textbook form: NRd = Ac*fcd + As*fyd.
+
+        Reported for reconciliation only, never used for the design check.
+        It differs from N_pure_compression() in two ways: it does not deduct
+        the concrete displaced by the bars, and it assumes the steel reaches
+        fyd, which cannot happen in pure compression because the concrete
+        pivot eps_c3 caps the steel strain below eps_yd for B500.
+        """
+        As = sum(a for (_y, a) in self.bars)
+        return (self.width * self.depth * self.mat.fcd + As * self.mat.fyd) / 1000.0
+
+    def N_pure_tension(self) -> float:
+        As = sum(a for (_y, a) in self.bars)
+        return -As * self.mat.fyd / 1000.0
+
+    def MRd_at(self, NEd_kN: float) -> float:
+        """
+        Moment capacity at the given axial load, by bisection on the
+        neutral axis depth. N(x) is monotonic for symmetric reinforcement,
+        so the solution is unique.
+        """
+        N_max = self.N_pure_compression()
+        if NEd_kN >= N_max:
+            return 0.0
+        if NEd_kN <= self.N_pure_tension():
+            return 0.0
+
+        lo, hi = 1e-6, self.depth
+        # grow hi until it brackets NEd
+        while self.forces(hi)[0] < NEd_kN and hi < 100.0 * self.depth:
+            hi *= 2.0
+
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            if self.forces(mid)[0] < NEd_kN:
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo < 1e-9 * self.depth:
+                break
+
+        x = 0.5 * (lo + hi)
+        return max(self.forces(x)[1], 0.0)
+
+    def interaction_curve(self, n_points: int = 40) -> List[Dict[str, float]]:
+        """Sampled N-M diagram, useful for plotting on the results page."""
+        pts: List[Dict[str, float]] = []
+        x_max = 6.0 * self.depth
+        for i in range(n_points + 1):
+            t = i / n_points
+            x = 0.02 * self.depth * (x_max / (0.02 * self.depth)) ** t
+            N, M = self.forces(x)
+            pts.append({"N_kN": round(N, 3), "M_kNm": round(M, 3), "x_mm": round(x, 2)})
         return pts
 
-    def _pure_bending_M(self, width, overall, As_layer, d, d2):
-        m = self.material
-        # tension steel = As_layer at d yields; compression steel ignored (conservative)
-        fyd, fcd = m.fyd, m.fcd
-        a = As_layer * fyd / (0.8 * fcd * width)          # block depth from N=0 eq (comp steel ignored)
-        a = min(a, overall)
-        z = d - a / 2.0
-        return As_layer * fyd * z / 1e6                    # kN*m
 
-    # ---- biaxial interaction envelope (EC2 5.8.9 exponent method) ----
-    def biaxial_envelope(self, N_crit):
-        MRx, MRy = self.moment_capacity_x(), self.moment_capacity_y()
-        NRd = self.axial_resistance_kN()
-        n = N_crit / NRd if NRd > 0 else 0.0
-        # exponent a: n<=0.1 ->1.0; 0.7->1.5; 1.0->2.0 (piecewise linear)
-        if n <= 0.1: a = 1.0
-        elif n >= 1.0: a = 2.0
-        elif n <= 0.7: a = 1.0 + (n - 0.1) * (0.5 / 0.6)
-        else: a = 1.5 + (n - 0.7) * (0.5 / 0.3)
-        pts = []
-        for i in range(41):
-            t = i / 40.0
-            mx = MRx * t
-            inner = 1.0 - (mx / MRx) ** a if MRx > 0 else 0.0
-            my = MRy * (max(inner, 0.0)) ** (1.0 / a) if MRy > 0 else 0.0
-            pts.append({"Mx_kNm": round(mx, 2), "My_kNm": round(my, 2)})
-        return {"exponent_a": round(a, 3), "MRx_kNm": round(MRx, 2),
-                "MRy_kNm": round(MRy, 2), "envelope": pts}
+# ============================================================
+# 7. SLENDERNESS + SECOND ORDER
+# ============================================================
 
-    # ---- second-order (nominal curvature, 5.8.8) ----
-    def second_order(self, level, N, axis="x"):
-        g, m = self.geometry, self.material
-        if not (self.slenderness_ratio() > self.slenderness_limit(N)):
-            M0 = self.governing_moment_x(level, N) if axis == "x" else self.governing_moment_y(level, N)
-            return {"slender": False, "e2_mm": 0.0, "M2_kNm": 0.0,
-                    "M0Ed_kNm": round(M0, 2), "MEd_kNm": round(M0, 2)}
-        overall = g.h_mm if axis == "x" else g.b_mm
-        d = overall - (g.clear_cover_mm + g.link_dia_mm + g.main_bar_dia_mm / 2.0)
-        eps_yd = m.fyd / 200000.0
-        inv_r0 = eps_yd / (0.45 * d)
-        Kr, Kphi = 1.0, 1.0                        # conservative (as flagged)
+class Slenderness:
+    def __init__(self, d: ColumnInput, geo: Geometry, mat: Materials):
+        self.d = d
+        self.geo = geo
+        self.mat = mat
+
+    @property
+    def K(self) -> float:
+        return support_k(self.d.end_condition)
+
+    @property
+    def clear_height_mm(self) -> float:
+        h = self.d.clear_height_m if self.d.clear_height_m is not None else self.d.storey_height_m
+        return h * 1000.0
+
+    def l0_source(self, axis: str) -> str:
+        if (self.d.l0_override_x_mm if axis == "x" else self.d.l0_override_y_mm) is not None:
+            return "override"
+        k1 = self.d.k1_x if axis == "x" else self.d.k1_y
+        k2 = self.d.k2_x if axis == "x" else self.d.k2_y
+        if k1 is not None and k2 is not None:
+            return "k-factors"
+        return "idealised K"
+
+    def l0_axis_mm(self, axis: str) -> float:
+        """
+        EN 1992-1-1 Cl. 5.8.3.2(3).
+            braced   Eq. 5.15: l0 = 0.5*l*sqrt((1+k1/(0.45+k1))*(1+k2/(0.45+k2)))
+            unbraced Eq. 5.16: l0 = l*max(sqrt(1+10*k1*k2/(k1+k2)),
+                                          (1+k1/(1+k1))*(1+k2/(1+k2)))
+        k is the joint flexibility. EC2 notes k = 0 is a theoretical value
+        only, so 0.1 is taken as the practical lower bound.
+        """
+        ov = self.d.l0_override_x_mm if axis == "x" else self.d.l0_override_y_mm
+        if ov is not None:
+            return float(ov)
+
+        k1 = self.d.k1_x if axis == "x" else self.d.k1_y
+        k2 = self.d.k2_x if axis == "x" else self.d.k2_y
+        l = self.clear_height_mm
+        if k1 is not None and k2 is not None:
+            k1 = max(float(k1), 0.1)
+            k2 = max(float(k2), 0.1)
+            if self.d.braced:
+                return 0.5 * l * math.sqrt(
+                    (1.0 + k1 / (0.45 + k1)) * (1.0 + k2 / (0.45 + k2))
+                )
+            return l * max(
+                math.sqrt(1.0 + 10.0 * k1 * k2 / (k1 + k2)),
+                (1.0 + k1 / (1.0 + k1)) * (1.0 + k2 / (1.0 + k2)),
+            )
+        return self.K * l
+
+    @property
+    def l0_mm(self) -> float:
+        """Back-compatible scalar: the larger of the two axis values."""
+        return max(self.l0_axis_mm("x"), self.l0_axis_mm("y"))
+
+    def lambda_axis(self, axis: str) -> float:
+        i = self.geo.ix if axis == "x" else self.geo.iy
+        return self.l0_axis_mm(axis) / i
+
+    def imperfection_ecc_mm(self, axis: str) -> float:
+        """EN 1992-1-1 Cl. 5.2: ei = l0/400 for an isolated member."""
+        if not self.d.include_geometric_imperfections:
+            return 0.0
+        return self.l0_axis_mm(axis) / 400.0
+
+    def n_relative(self, NEd_kN: float) -> float:
+        return (NEd_kN * 1000.0) / (self.geo.Ac * self.mat.fcd)
+
+    def factor_A(self) -> float:
+        """EC2 Cl. 5.8.3.1: A = 1/(1 + 0.2*phi_ef), or 0.7 by default."""
+        if self.d.use_default_A_B:
+            return 0.7
+        return 1.0 / (1.0 + 0.2 * self.d.effective_creep_ratio)
+
+    def factor_B(self) -> float:
+        """EC2 Cl. 5.8.3.1: B = sqrt(1 + 2*omega), or 1.1 by default."""
+        if self.d.use_default_A_B:
+            return 1.1
+        omega = self.geo.As_total * self.mat.fyd / (self.geo.Ac * self.mat.fcd)
+        return math.sqrt(1.0 + 2.0 * omega)
+
+    def factor_C(self, M01: float, M02: float) -> float:
+        """
+        EC2 Cl. 5.8.3.1: C = 1.7 - rm, rm = M01/M02.
+        C = 0.7 where the moment ratio is unknown or the member is unbraced.
+        """
+        if not self.d.braced:
+            return 0.7
+        if abs(M02) < 1e-9:
+            return 0.7
+        rm = M01 / M02                      # M01 is the smaller magnitude
+        return max(0.7, min(2.7, 1.7 - rm))
+
+    def lambda_lim(self, NEd_kN: float, M01: float = 0.0, M02: float = 0.0) -> float:
+        n = max(self.n_relative(NEd_kN), 1e-6)
+        A, B, C = self.factor_A(), self.factor_B(), self.factor_C(M01, M02)
+        return 20.0 * A * B * C / math.sqrt(n)
+
+    def second_order_moment_kNm(self, NEd_kN: float, axis: str) -> Dict[str, float]:
+        """
+        Nominal curvature method, EC2 Cl. 5.8.8.
+            e2 = (1/r) * l0^2 / c,  c = 10
+            1/r = Kr * Kphi * 1/r0,  1/r0 = eps_yd / (0.45*d)
+        """
+        geo, mat = self.geo, self.mat
+        depth = geo.section_depth(axis)
+        d_eff = depth - geo.d_prime
+
+        omega = geo.As_total * mat.fyd / (geo.Ac * mat.fcd)
+        n = self.n_relative(NEd_kN)
+        n_u = 1.0 + omega
+        n_bal = 0.4
+        Kr = (n_u - n) / (n_u - n_bal) if (n_u - n_bal) > 0 else 1.0
+        Kr = max(0.0, min(1.0, Kr))
+
+        lam = self.lambda_axis(axis)
+        beta = 0.35 + mat.fck / 200.0 - lam / 150.0
+        Kphi = max(1.0, 1.0 + beta * self.d.effective_creep_ratio)
+
+        inv_r0 = mat.eps_yd / (0.45 * d_eff)
         inv_r = Kr * Kphi * inv_r0
-        l0 = self.effective_length_m() * 1000.0
-        e2 = inv_r * l0 ** 2 / 10.0                 # mm (c≈10)
-        M2 = N * e2 / 1000.0
-        M0 = self.governing_moment_x(level, N) if axis == "x" else self.governing_moment_y(level, N)
-        return {"slender": True, "e2_mm": round(e2, 2), "M2_kNm": round(M2, 2),
-                "M0Ed_kNm": round(M0, 2), "MEd_kNm": round(M0 + M2, 2)}
-
-    # ---- SLS (simplified, indicative) ----
-    def sls_checks(self, N_crit):
-        g, m = self.geometry, self.material
-        # elastic modulus Ecm (EC2 3.1.3): 22*(fcm/10)^0.3 GPa, fcm=fck+8
-        fcm = m.fck + 8.0
-        Ecm = 22000.0 * (fcm / 10.0) ** 0.3        # MPa
-        # axial shortening under quasi-permanent (~N/1.4 as estimate), elastic
-        N_qp = N_crit / 1.4 * 1000.0               # N
-        L = g.storey_height_m * 1000.0
-        # transformed area ~ Ac + (Es/Ecm -1)*As
-        Ac_eff = g.area_mm2 + (200000.0 / Ecm - 1.0) * g.total_steel_area_mm2
-        shortening = N_qp * L / (Ecm * Ac_eff)     # mm
-        short_limit = L / 500.0
-        # crack width: columns in axial compression generally uncracked;
-        # report indicative value = 0 if net compression, flag otherwise
-        crack = 0.0
-        crack_limit = 0.30
-        return {
-            "Ecm_MPa": round(Ecm, 0),
-            "axial_shortening_mm": round(shortening, 3),
-            "axial_shortening_limit_mm": round(short_limit, 2),
-            "axial_shortening_ok": shortening <= short_limit,
-            "crack_width_mm": round(crack, 3),
-            "crack_width_limit_mm": crack_limit,
-            "crack_width_ok": crack <= crack_limit,
-            "note": "Indicative SLS. Column in net compression assumed uncracked (wk≈0).",
-        }
-
-    # -- auto-select (optional; from biaxial script) --
-    def _auto_select(self, N):
-        orig = self.geometry
-        chosen = CANDIDATE_SECTIONS_MM[-1]
-        for b, h in CANDIDATE_SECTIONS_MM:
-            self.geometry = Geometry(orig.column_id, b, h, orig.clear_cover_mm, orig.link_dia_mm,
-                orig.main_bar_dia_mm, orig.n_bars_total, orig.storey_height_m,
-                orig.left_x_m, orig.right_x_m, orig.top_y_m, orig.bottom_y_m)
-            conc = self.material.nu * self.material.fcd * self.geometry.area_mm2 / 1000.0
-            if conc >= 0.75 * N and self.slenderness_ratio() <= self.slenderness_limit(N):
-                chosen = (b, h); break
-        self.geometry = orig
-        b, h = chosen
-        link = round_up_to_available(8.0, AVAILABLE_LINK_DIAS_MM)
-        As_min = max(0.10 * (N * 1000.0) / self.material.fyd, 0.002 * b * h)
-        As_max = 0.04 * b * h
-        cover, main, nb = nominal_cover_mm(self.design.exposure_class, link), 16, 4
-        for n_bars, dia in CANDIDATE_BAR_LAYOUTS:
-            As = n_bars * bar_area_mm2(dia)
-            NRd = (self.material.nu * self.material.fcd * b * h + As * self.material.fyd) / 1000.0
-            if As_min <= As <= As_max and NRd >= N:
-                link = round_up_to_available(max(6.0, dia / 4.0), AVAILABLE_LINK_DIAS_MM)
-                cover, main, nb = nominal_cover_mm(self.design.exposure_class, link), dia, n_bars
-                break
-        else:
-            nb, main = CANDIDATE_BAR_LAYOUTS[-1]
-            link = round_up_to_available(max(6.0, main / 4.0), AVAILABLE_LINK_DIAS_MM)
-            cover = nominal_cover_mm(self.design.exposure_class, link)
-        self.geometry = Geometry(orig.column_id, b, h, cover, link, main, nb, orig.storey_height_m,
-            orig.left_x_m, orig.right_x_m, orig.top_y_m, orig.bottom_y_m)
-
-    # -- main: returns structured result --
-    def design_result(self) -> dict:
-        m, g, d = self.material, self.geometry, self.design
-        self._sheet = []
-
-        axial_pre = self.axial_loads_by_level_kN()
-        N_pre = next(iter(axial_pre.values()))
-        if d.auto_select:
-            self._auto_select(N_pre)
-            g = self.geometry
-
-        axial = self.axial_loads_by_level_kN()
-        crit_level = next(iter(axial.keys()))
-        N_crit = axial[crit_level]
-
-        As_min = self.min_long_steel(N_crit)
-        As_max = self.max_long_steel()
-        As_prov = g.total_steel_area_mm2
-        NRd = self.axial_resistance_kN()
-        MRx, MRy = self.moment_capacity_x(), self.moment_capacity_y()
-        lam = self.slenderness_ratio()
-        lam_lim = self.slenderness_limit(N_crit)
-        slender = lam > lam_lim
-
-        # per-level table
-        levels = []
-        for level, N in axial.items():
-            Mx = self.governing_moment_x(level, N)
-            My = self.governing_moment_y(level, N)
-            util = self.utilisation(level, N)
-            levels.append({
-                "level": level, "NEd_kN": round(N, 2),
-                "Mx_kNm": round(Mx, 2), "My_kNm": round(My, 2),
-                "ex_mm": round(1000.0 * My / N, 2) if N else 0.0,
-                "ey_mm": round(1000.0 * Mx / N, 2) if N else 0.0,
-                "utilisation": round(util, 3),
-                "check": "PASS" if util <= 1.0 else "FAIL",
-            })
-
-        checks = {
-            "axial": NRd >= N_crit,
-            "As_min": As_prov >= As_min,
-            "As_max": As_prov <= As_max,
-            "slenderness_class": "Short" if not slender else "Slender",
-            "interaction": all(l["check"] == "PASS" for l in levels),
-            "tie_dia": g.link_dia_mm >= self.min_tie_dia(),
-        }
-        bool_checks = {k: v for k, v in checks.items() if isinstance(v, bool)}
-        final_pass = all(bool_checks.values())
-
-        governing = "Axial resistance"
-        if slender: governing = "Slenderness"
-        elif not (As_min <= As_prov <= As_max): governing = "Reinforcement limits"
-        else:
-            for l in levels:
-                if l["check"] == "FAIL":
-                    governing = f"Interaction at {l['level']}"; break
-
-        # load breakdowns
-        tf = self.typical_floor_result()
-        rf = self.roof_floor_result()
-
-        self._build_sheet(g, axial, levels, As_min, As_max, As_prov, NRd, MRx, MRy,
-                          lam, lam_lim, slender, N_crit, tf, rf)
+        e2 = inv_r * self.l0_axis_mm(axis) ** 2 / 10.0
+        M2 = NEd_kN * e2 / 1000.0
 
         return {
-            "column_id": g.column_id,
-            "column_type": d.column_type.value,
-            "end_condition": d.end_condition.value,
-            "braced": d.braced,
-            "status": "PASS" if final_pass else "FAIL",
-            "governing": governing,
-            "auto_selected": d.auto_select,
+            "omega": omega, "n": n, "n_u": n_u, "Kr": Kr,
+            "beta": beta, "Kphi": Kphi, "d_eff": d_eff,
+            "inv_r0": inv_r0, "inv_r": inv_r, "e2_mm": e2, "M2_kNm": M2,
+        }
+
+
+# ============================================================
+# 8. DETAILING
+# ============================================================
+
+def min_tie_diameter_mm(main_bar_dia: float) -> float:
+    """EC2 Cl. 9.5.3(1)."""
+    return max(6.0, main_bar_dia / 4.0)
+
+
+def max_tie_spacing_mm(main_bar_dia: float, b: float, h: float) -> float:
+    """EC2 Cl. 9.5.3(3): min(20*phi_long, lesser column dimension, 400)."""
+    return min(20.0 * main_bar_dia, min(b, h), 400.0)
+
+
+def reduced_tie_spacing_mm(s_max: float) -> float:
+    """EC2 Cl. 9.5.3(4): 0.6*s_max near beams/slabs and at lap zones."""
+    return 0.6 * s_max
+
+
+def As_min_mm2(NEd_kN: float, Ac: float, fyd: float) -> Tuple[float, float, float]:
+    """EC2 Cl. 9.5.2(2). Returns (governing, basis_1, basis_2)."""
+    basis_1 = 0.10 * NEd_kN * 1000.0 / fyd
+    basis_2 = 0.002 * Ac
+    return max(basis_1, basis_2), basis_1, basis_2
+
+
+def As_max_mm2(Ac: float) -> float:
+    """EC2 Cl. 9.5.2(3), outside lap locations."""
+    return 0.04 * Ac
+
+
+# ============================================================
+# 9. REPORT HELPERS
+# ============================================================
+
+def row(reference: str, calculation: str, output: str = "") -> Dict[str, str]:
+    return {"reference": reference, "calculation": calculation, "output": output}
+
+
+def section(title: str, rows: List[Dict[str, str]]) -> Dict:
+    return {"title": title, "rows": rows}
+
+
+def f3(v: float) -> str:
+    return f"{v:,.3f}"
+
+
+def f1(v: float) -> str:
+    return f"{v:,.1f}"
+
+
+# ============================================================
+# 10. ENGINE
+# ============================================================
+
+class ColumnEngine:
+    def __init__(self, d: ColumnInput):
+        self.d = d
+        self.mat = Materials(d)
+        self.geo = Geometry(d, self.mat)
+        self.takedown = LoadTakedown(d, self.geo)
+        self.slender = Slenderness(d, self.geo, self.mat)
+        self.sec_x = SectionAnalysis(self.geo, self.mat, "x")
+        self.sec_y = SectionAnalysis(self.geo, self.mat, "y")
+        self.ctype = (d.column_type or "biaxial").strip().lower()
+        if self.ctype not in ("axial", "uniaxial", "biaxial"):
+            raise ValueError("column_type must be axial, uniaxial or biaxial")
+
+    # ---------- moments ----------
+    @staticmethod
+    def M0e(M01: float, M02: float) -> float:
+        """
+        EC2 Cl. 5.8.8.2(2): M0e = max(0.6*M02 + 0.4*M01, 0.4*M02), signs kept.
+
+        This is the EQUIVALENT first order moment, used only as the base for
+        the second order moment M2. It is NOT the design moment on its own:
+        the end section still has to carry M02. Returned as a magnitude.
+        """
+        return abs(max(0.6 * M02 + 0.4 * M01, 0.4 * M02, key=abs))
+
+    def end_moments(self, level: str, axis: str) -> Tuple[float, float]:
+        """Ordered (M01, M02) for the level and axis, zero on the axial route."""
+        if self.ctype == "axial":
+            return 0.0, 0.0
+        if axis == "y" and self.ctype != "biaxial":
+            return 0.0, 0.0
+        src01 = self.d.M01x_kNm if axis == "x" else self.d.M01y_kNm
+        src02 = self.d.M02x_kNm if axis == "x" else self.d.M02y_kNm
+        return order_end_moments(src01.get(level, 0.0), src02.get(level, 0.0))
+
+    def min_ecc_moment(self, NEd_kN: float, axis: str) -> float:
+        e0 = self.geo.e0_x_mm() if axis == "x" else self.geo.e0_y_mm()
+        return NEd_kN * e0 / 1000.0
+
+    # ---------- biaxial exponent ----------
+    def biaxial_exponent(self, NEd_kN: float) -> Tuple[float, float]:
+        """
+        EC2 Cl. 5.8.9(4): a interpolated on NEd/NRd, where
+        NRd = Ac*fcd + As*fyd (the code's own definition for this clause).
+        """
+        NRd = (self.geo.Ac * self.mat.fcd + self.geo.As_total * self.mat.fyd) / 1000.0
+        ratio = NEd_kN / NRd if NRd > 0 else 0.0
+        pts = [(0.1, 1.0), (0.7, 1.5), (1.0, 2.0)]
+        if ratio <= pts[0][0]:
+            a = pts[0][1]
+        elif ratio >= pts[-1][0]:
+            a = pts[-1][1]
+        else:
+            a = pts[-1][1]
+            for (r0, a0), (r1, a1) in zip(pts, pts[1:]):
+                if r0 <= ratio <= r1:
+                    a = a0 + (a1 - a0) * (ratio - r0) / (r1 - r0)
+                    break
+        return a, ratio
+
+    # ---------- per-level design ----------
+    def design_level(self, level: str, NEd_kN: float) -> Dict:
+        res: Dict = {"level": level, "NEd_kN": NEd_kN}
+
+        for axis in ("x", "y"):
+            lam = self.slender.lambda_axis(axis)
+            # An axially loaded column is designed for minimum eccentricity
+            # only, so its moment diagram is effectively uniform and the
+            # frame moments must not leak into factor C. Same for the weak
+            # axis of a uniaxial column.
+            uses_frame_moments = (
+                self.ctype == "biaxial"
+                or (self.ctype == "uniaxial" and axis == "x")
+            )
+            if uses_frame_moments:
+                M01, M02 = self.end_moments(level, axis)
+            else:
+                M01 = M02 = 0.0
+            lam_lim = self.slender.lambda_lim(NEd_kN, M01, M02)
+            is_slender = lam > lam_lim
+
+            # EC2 Cl. 5.2 geometric imperfection, added to the first order
+            # moment before anything else.
+            ei = self.slender.imperfection_ecc_mm(axis)
+            M_imp = NEd_kN * ei / 1000.0
+
+            # Two distinct first order moments, both of which must be carried:
+            #   M_end  - the larger end moment, governs a short column
+            #   M_eq   - the equivalent moment, the base for M2 on a slender one
+            M_end = abs(M02) + M_imp
+            M_eq = self.M0e(M01, M02) + M_imp
+            M_min = self.min_ecc_moment(NEd_kN, axis) if self.d.include_min_eccentricity else 0.0
+
+            so = self.slender.second_order_moment_kNm(NEd_kN, axis)
+            M2 = so["M2_kNm"] if is_slender else 0.0
+
+            M_first = max(M_end, M_eq, M_min)
+            MEd = max(M_end, M_eq + M2, M_min)
+
+            override = self.d.MEdx_override_kNm if axis == "x" else self.d.MEdy_override_kNm
+            if override is not None:
+                MEd = float(override)
+
+            sec = self.sec_x if axis == "x" else self.sec_y
+            MRd = sec.MRd_at(NEd_kN)
+
+            # MRd is zero when NEd already exceeds the axial capacity. Guard
+            # against inf/NaN here: JSON has no representation for either, so
+            # an unguarded value would break the FastAPI response.
+            if MRd > 1e-9:
+                util = MEd / MRd
+            else:
+                util = UTIL_CAP if MEd > 1e-9 else 0.0
+            util = min(util, UTIL_CAP)
+
+            res[axis] = {
+                "lambda": lam, "lambda_lim": lam_lim, "slender": is_slender,
+                "l0_mm": self.slender.l0_axis_mm(axis),
+                "l0_source": self.slender.l0_source(axis),
+                "M01": M01, "M02": M02, "M0e": self.M0e(M01, M02),
+                "ei_mm": ei, "M_imp": M_imp, "M_end": M_end, "M_eq": M_eq,
+                "M_min": M_min,
+                "M_first": M_first, "M2": M2, "MEd": MEd, "MRd": MRd,
+                "second_order": so,
+                "utilisation": util,
+            }
+
+        # axial capacity
+        NRd_max = self.sec_x.N_pure_compression()
+        res["NRd_max_kN"] = NRd_max
+        res["NRd_simplified_kN"] = self.sec_x.N_simplified_kN()
+        res["axial_utilisation"] = NEd_kN / NRd_max if NRd_max > 0 else float("inf")
+
+        # interaction
+        if self.ctype == "biaxial":
+            a, ratio = self.biaxial_exponent(NEd_kN)
+            ux = res["x"]["utilisation"]
+            uy = res["y"]["utilisation"]
+            interaction = min(ux ** a + uy ** a, UTIL_CAP)
+            res["biaxial"] = {"a": a, "N_ratio": ratio, "interaction": interaction}
+            res["governing_utilisation"] = interaction
+        else:
+            # Both axial and uniaxial columns are checked about BOTH axes:
+            # the weak axis still carries minimum eccentricity, and if it is
+            # slender it also carries a second order moment. EC2 Cl. 5.8.9(2)
+            # permits separate design in each principal direction, but it does
+            # not permit ignoring one of them.
+            res["governing_utilisation"] = max(
+                res["x"]["utilisation"], res["y"]["utilisation"]
+            )
+
+        # steel limits
+        As_req, b1, b2 = As_min_mm2(NEd_kN, self.geo.Ac, self.mat.fyd)
+        res["As_min"] = As_req
+        res["As_min_basis_1"] = b1
+        res["As_min_basis_2"] = b2
+
+        checks = []
+        checks.append(("Axial resistance", res["axial_utilisation"] <= 1.0))
+        if self.ctype == "biaxial":
+            checks.append(("Biaxial interaction", res["biaxial"]["interaction"] <= 1.0))
+        elif self.ctype == "uniaxial":
+            checks.append(("Uniaxial bending Mx", res["x"]["utilisation"] <= 1.0))
+            checks.append(("Weak axis My (min ecc + 2nd order)", res["y"]["utilisation"] <= 1.0))
+        else:
+            checks.append(("Minimum eccentricity Mx", res["x"]["utilisation"] <= 1.0))
+            checks.append(("Minimum eccentricity My", res["y"]["utilisation"] <= 1.0))
+        checks.append(("As,min", self.geo.As_total >= As_req))
+        checks.append(("As,max", self.geo.As_total <= As_max_mm2(self.geo.Ac)))
+
+        res["checks"] = [{"name": n, "pass": bool(p)} for n, p in checks]
+        res["status"] = "PASS" if all(p for _n, p in checks) else "FAIL"
+        return res
+
+    # ---------- orchestration ----------
+    def run(self) -> Dict:
+        d, geo, mat = self.d, self.geo, self.mat
+
+        if d.NEd_override_kN is not None:
+            axial = {"Design": float(d.NEd_override_kN)}
+            used_takedown = False
+        else:
+            axial = self.takedown.axial_by_level()
+            used_takedown = True
+
+        critical_level = max(axial, key=lambda k: axial[k])
+        NEd_crit = axial[critical_level]
+
+        levels = [self.design_level(lv, n) for lv, n in axial.items()]
+        crit = next(r for r in levels if r["level"] == critical_level)
+
+        failed = []
+        for r in levels:
+            for c in r["checks"]:
+                if not c["pass"]:
+                    failed.append(f"{c['name']} — {r['level']}")
+
+        status = "PASS" if not failed else "FAIL"
+
+        result = {
+            "summary": {
+                "column_id": d.column_id,
+                "column_type": self.ctype,
+                "design_code": d.design_code,
+                "b_mm": geo.b, "h_mm": geo.h,
+                "storey_height_m": d.storey_height_m,
+                "end_condition": d.end_condition,
+                "braced": d.braced,
+                "concrete_grade": d.concrete_grade,
+                "steel_grade": d.steel_grade,
+                "exposure_class": d.exposure_class,
+                "cover_mm": geo.cover,
+                "n_bars": geo.n_bars,
+                "bar_dia_mm": geo.bar_dia,
+                "link_dia_mm": geo.link_dia,
+                "As_provided_mm2": geo.As_total,
+                "critical_level": critical_level,
+                "NEd_critical_kN": NEd_crit,
+                "used_takedown": used_takedown,
+                "status": status,
+            },
             "materials": {
-                "concrete_grade": m.concrete_grade, "steel_grade": m.steel_grade,
-                "fck": m.fck, "fyk": m.fyk, "fcd": round(m.fcd, 3),
-                "fyd": round(m.fyd, 3), "nu": round(m.nu, 4),
+                "fck": mat.fck, "fcd": mat.fcd, "fyk": mat.fyk, "fyd": mat.fyd,
+                "eps_cu3": mat.eps_cu3, "eps_c3": mat.eps_c3,
+                "lambda_block": mat.lambda_block, "eta_block": mat.eta_block,
             },
-            "geometry": {
-                "b_mm": g.b_mm, "h_mm": g.h_mm, "Ac_mm2": round(g.area_mm2, 1),
-                "cover_mm": round(g.clear_cover_mm, 1), "link_dia_mm": g.link_dia_mm,
-                "main_bar_dia_mm": g.main_bar_dia_mm, "n_bars": g.n_bars_total,
-                "Ix_mm4": round(g.Ix_mm4, 0), "Iy_mm4": round(g.Iy_mm4, 0),
-                "ix_mm": round(g.ix_mm, 2), "iy_mm": round(g.iy_mm, 2),
-                "tributary_area_m2": round(g.tributary_area_m2, 3),
-            },
-            "slenderness": {
-                "K": self.K(), "C": self.C(),
-                "Leff_m": round(self.effective_length_m(), 3),
-                "lambda": round(lam, 2), "lambda_lim": round(lam_lim, 2),
-                "n": round(self.relative_axial_load_n(N_crit), 3),
-                "classification": "Short" if not slender else "Slender",
-            },
-            "reinforcement": {
-                "As_provided_mm2": round(As_prov, 1),
-                "As_min_mm2": round(As_min, 1), "As_max_mm2": round(As_max, 1),
-                "NRd_kN": round(NRd, 2), "MRx_kNm": round(MRx, 2), "MRy_kNm": round(MRy, 2),
-                "rho_pct": round(100.0 * As_prov / g.area_mm2, 2),
-            },
-            "critical": {"level": crit_level, "NEd_kN": round(N_crit, 2)},
+            "axial_by_level": axial,
             "levels": levels,
-            "checks": checks,
-            "ties": {
-                "min_dia_mm": round(self.min_tie_dia(), 1),
-                "provided_dia_mm": g.link_dia_mm,
-                "max_spacing_mm": round(self.max_tie_spacing(), 1),
+            "interaction_x": self.sec_x.interaction_curve(),
+            "interaction_y": self.sec_y.interaction_curve(),
+            "detailing": {
+                "phi_t_min_mm": min_tie_diameter_mm(geo.bar_dia),
+                "link_dia_mm": geo.link_dia,
+                "s_max_mm": max_tie_spacing_mm(geo.bar_dia, geo.b, geo.h),
+                "s_reduced_mm": reduced_tie_spacing_mm(
+                    max_tie_spacing_mm(geo.bar_dia, geo.b, geo.h)),
+                "As_provided_mm2": geo.As_total,
+                "As_min_mm2": crit["As_min"],
+                "As_min_basis_1_mm2": crit["As_min_basis_1"],
+                "As_min_basis_2_mm2": crit["As_min_basis_2"],
+                "As_max_mm2": As_max_mm2(geo.Ac),
+                "rho_pct": 100.0 * geo.As_total / geo.Ac,
+                "n_bars_b_face": geo.n_b_face,
+                "n_bars_h_face": geo.n_h_face,
+                "d_prime_mm": geo.d_prime,
+                "Ac_mm2": geo.Ac,
             },
-            "loads": {"typical_floor": {k: round(v, 3) for k, v in tf.items()},
-                      "roof_floor": {k: round(v, 3) for k, v in rf.items()}},
-            "interaction_curve": {
-                "axis": "x", "design_point": {"M_kNm": round(self.governing_moment_x(crit_level, N_crit), 2),
-                                              "N_kN": round(N_crit, 1)},
-                "points": self.interaction_curve("x"),
-            },
-            "biaxial_envelope": {
-                **self.biaxial_envelope(N_crit),
-                "design_point": {"Mx_kNm": round(self.governing_moment_x(crit_level, N_crit), 2),
-                                 "My_kNm": round(self.governing_moment_y(crit_level, N_crit), 2)},
-            },
-            "surface_3d": {
-                "points": surface_3d(g, m),
-                "design_point": {"N_kN": round(N_crit, 1),
-                                 "Mx_kNm": round(self.governing_moment_x(crit_level, N_crit), 2),
-                                 "My_kNm": round(self.governing_moment_y(crit_level, N_crit), 2)},
-            },
-            "second_order": {
-                l["level"]: second_order_rigorous(
-                    g, m, "x", l["NEd_kN"], self.governing_moment_x(l["level"], l["NEd_kN"]),
-                    self.effective_length_m() * 1000.0, lam, phi_ef=getattr(self.design, "phi_ef", 2.0))
-                for l in levels
-            },
-            "sls": crack_width_ec2(
-                g, m, N_crit / 1.4, self.governing_moment_x(crit_level, N_crit) / 1.4, "x"),
-            "report": self._sheet,
+            "failed_checks": failed,
+            "report": self.build_report(axial, levels, critical_level, used_takedown),
         }
+        return result
 
-    def _build_sheet(self, g, axial, levels, As_min, As_max, As_prov, NRd, MRx, MRy,
-                     lam, lam_lim, slender, N_crit, tf, rf):
-        m, d = self.material, self.design
-        self._sec("1. Materials (EC2 3.1.6 / 3.2.7)")
-        self._row("3.1.6", f"fcd = {m.alpha_cc}·{m.fck}/{m.gamma_c}", f"{m.fcd:.3f} MPa")
-        self._row("3.2.7", f"fyd = {m.fyk}/{m.gamma_s}", f"{m.fyd:.1f} MPa")
-        self._row("—", f"nu = 1 - {m.fck}/250", f"{m.nu:.3f}")
+    # ---------- report ----------
+    def build_report(self, axial, levels, critical_level, used_takedown) -> List[Dict]:
+        d, geo, mat = self.d, self.geo, self.mat
+        sec_list: List[Dict] = []
 
-        self._sec("2. Geometry")
-        self._row("Tributary", f"At = {g.tributary_width_x_m:.2f}×{g.tributary_width_y_m:.2f}", f"{g.tributary_area_m2:.3f} m²")
-        self._row("Section", f"A = {g.b_mm:.0f}×{g.h_mm:.0f}", f"{g.area_mm2:.0f} mm²")
-        self._row("—", "ix = √(Ix/A)", f"{g.ix_mm:.2f} mm")
+        # 1 ------------------------------------------------------
+        sec_list.append(section("1. BASIC INPUT DATA", [
+            row("User input", f"Column ID = {d.column_id}", d.column_id),
+            row("Design route", f"Column type = {self.ctype}", self.ctype),
+            row("User input", f"Section b x h = {f1(geo.b)} x {f1(geo.h)}", f"{f1(geo.b)} x {f1(geo.h)} mm"),
+            row("User input", f"Storey height = {d.storey_height_m}", f"{d.storey_height_m} m"),
+            row("Support condition", f"End condition = {d.end_condition}", d.end_condition),
+            row("Bracing", "Braced" if d.braced else "Unbraced", "Braced" if d.braced else "Unbraced"),
+            row("Durability", f"Exposure class = {d.exposure_class}", d.exposure_class),
+            row("Load path", "Take-down from building geometry" if used_takedown
+                else "NEd supplied directly (override)", "take-down" if used_takedown else "override"),
+        ]))
 
-        self._sec("3. Axial load take-down")
-        for level, N in axial.items():
-            self._row("Take-down", f"NEd at {level}", f"{N:.2f} kN")
+        # 2 ------------------------------------------------------
+        sec_list.append(section("2. MATERIAL PROPERTIES", [
+            row("EN 1992-1-1 Table 3.1", f"fck from {d.concrete_grade}", f"{f1(mat.fck)} MPa"),
+            row("EN 1992-1-1 Cl. 3.1.6", f"fcd = {mat.alpha_cc} x {f1(mat.fck)} / {mat.gamma_c}", f"{f3(mat.fcd)} MPa"),
+            row("EN 1992-1-1 Cl. 3.2.7", f"fyk from {d.steel_grade}", f"{f1(mat.fyk)} MPa"),
+            row("EN 1992-1-1 Cl. 3.2.7", f"fyd = {f1(mat.fyk)} / {mat.gamma_s}", f"{f3(mat.fyd)} MPa"),
+            row("EN 1992-1-1 Cl. 3.2.7", f"eps_yd = fyd / Es = {f3(mat.fyd)} / {f1(Es_MPA)}", f"{mat.eps_yd:.5f}"),
+            row("EN 1992-1-1 Cl. 3.1.7(3)", f"lambda (block depth factor) = {mat.lambda_block}", f"{f3(mat.lambda_block)}"),
+            row("EN 1992-1-1 Cl. 3.1.7(3)", f"eta (block strength factor) = {mat.eta_block}", f"{f3(mat.eta_block)}"),
+            row("EN 1992-1-1 Table 3.1", f"eps_cu3 = {mat.eps_cu3}", f"{mat.eps_cu3:.5f}"),
+            row("EN 1992-1-1 Table 3.1", f"eps_c3 = {mat.eps_c3}", f"{mat.eps_c3:.5f}"),
+        ]))
 
-        self._sec("4. Moments / eccentricity")
-        for l in levels:
-            self._row("5.8.8", f"{l['level']} Mx,Ed", f"{l['Mx_kNm']:.2f} kNm")
-            if d.column_type == ColumnType.BIAXIAL:
-                self._row("5.8.8", f"{l['level']} My,Ed", f"{l['My_kNm']:.2f} kNm")
+        # 3 ------------------------------------------------------
+        rows = [
+            row("EN 1992-1-1 Cl. 4.4.1.2(3)", f"c_min,b = max(phi_bar, phi_link) = max({f1(geo.bar_dia)}, {f1(geo.link_dia)})", f"{f1(geo.c_min_b())} mm"),
+            row("EN 1992-1-1 Table 4.4N", f"c_min,dur for {d.exposure_class}", f"{f1(geo.c_min_dur())} mm"),
+            row("EN 1992-1-1 Cl. 4.4.1.2", f"c_min = max({f1(geo.c_min_b())}, {f1(geo.c_min_dur())}, 10)", f"{f1(geo.c_min())} mm"),
+            row("EN 1992-1-1 Cl. 4.4.1.3", f"c_nom = c_min + dc_dev = {f1(geo.c_min())} + {f1(d.delta_c_dev_mm)}", f"{f1(geo.cover)} mm"),
+        ]
+        if d.clear_cover_override_mm is not None:
+            rows.append(row("User override", f"cover forced to {f1(d.clear_cover_override_mm)}", f"{f1(geo.cover)} mm"))
+        rows += [
+            row("Section geometry", f"Ac = {f1(geo.b)} x {f1(geo.h)}", f"{f1(geo.Ac)} mm2"),
+            row("Section property", f"Ix = b*h^3/12 = {f1(geo.b)} x {f1(geo.h)}^3 / 12", f"{geo.Ix:,.0f} mm4"),
+            row("Section property", f"Iy = h*b^3/12 = {f1(geo.h)} x {f1(geo.b)}^3 / 12", f"{geo.Iy:,.0f} mm4"),
+            row("Section property", "ix = sqrt(Ix/Ac)", f"{f3(geo.ix)} mm"),
+            row("Section property", "iy = sqrt(Iy/Ac)", f"{f3(geo.iy)} mm"),
+            row("Bar layout", f"{geo.n_b_face} bars per b-face, {geo.n_h_face} per h-face, corners shared", f"{geo.n_bars} x Y{int(geo.bar_dia)}"),
+            row("Bar layout", f"As = {geo.n_bars} x pi x {f1(geo.bar_dia)}^2 / 4", f"{f1(geo.As_total)} mm2"),
+            row("Bar layout", f"d' = cover + link + phi/2 = {f1(geo.cover)} + {f1(geo.link_dia)} + {f1(geo.bar_dia/2)}", f"{f1(geo.d_prime)} mm"),
+        ]
+        sec_list.append(section("3. GEOMETRY, COVER AND BAR LAYOUT", rows))
 
-        self._sec("5. Slenderness (5.8.3)")
-        self._row("K", f"from {d.end_condition.value}", f"{self.K()}")
-        self._row("Leff", f"{self.K()}×{g.storey_height_m}", f"{self.effective_length_m():.3f} m")
-        self._row("λ", "Leff/i", f"{lam:.2f}")
-        self._row("5.8.3.1", "λlim = 20·C/√n", f"{lam_lim:.2f}")
-        self._row("Class", "λ ≤ λlim ?", "Short" if not slender else "Slender")
+        # 4 / 5 --------------------------------------------------
+        if used_takedown:
+            tr = self.takedown.typical()
+            rr = self.takedown.roof()
+            tf = d.typical_floor
+            sec_list.append(section("4. TRIBUTARY GEOMETRY", [
+                row("Tributary area method", f"tx = {d.left_x_m}/2 + {d.right_x_m}/2", f"{f3(geo.tributary_width_x_m)} m"),
+                row("Tributary area method", f"ty = {d.top_y_m}/2 + {d.bottom_y_m}/2", f"{f3(geo.tributary_width_y_m)} m"),
+                row("Tributary area method", f"At = {f3(geo.tributary_width_x_m)} x {f3(geo.tributary_width_y_m)}", f"{f3(geo.tributary_area_m2)} m2"),
+            ]))
+            sec_list.append(section("5. TYPICAL FLOOR LOAD BUILD-UP", [
+                row("EN 1991-1-1 Table 6.2", f"Qk for use = {tf.building_use}", f"{f3(tr['Qk'])} kN/m2"),
+                row("EN 1991-1-1", f"Slab self weight = {tf.slab_thickness_m} x {d.concrete_density_kN_per_m3}", f"{f3(tf.slab_self_weight_kN_per_m2(d.concrete_density_kN_per_m3))} kN/m2"),
+                row("EN 1991-1-1", "Gk = slab + finishes + services + partitions", f"{f3(tr['Gk'])} kN/m2"),
+                row("EN 1990 Eq. 6.10", f"q_uls = {d.gamma_G} x {f3(tr['Gk'])} + {d.gamma_Q} x {f3(tr['Qk'])}", f"{f3(tr['q_uls'])} kN/m2"),
+                row("Tributary transfer", f"Slab to column = {f3(tr['q_uls'])} x {f3(geo.tributary_area_m2)}", f"{f3(tr['slab_to_column'])} kN"),
+                row("EN 1991-1-1", f"Beam x self wt = {tf.beam_x.width_m} x {tf.beam_x.depth_m} x {d.concrete_density_kN_per_m3}", f"{f3(tr['bx_sw'])} kN/m"),
+                row("Wall line load", "thickness x clear height x density", f"{f3(tr['bx_wall'])} kN/m"),
+                row("Both x beams, L_left/2 + L_right/2", f"Beam x reaction = {d.gamma_G} x ({f3(tr['bx_sw'])} + {f3(tr['bx_wall'])}) x {f3(tr['span_x'])}", f"{f3(tr['bx_reaction'])} kN"),
+                row("EN 1991-1-1", f"Beam y self wt = {tf.beam_y.width_m} x {tf.beam_y.depth_m} x {d.concrete_density_kN_per_m3}", f"{f3(tr['by_sw'])} kN/m"),
+                row("Wall line load", "thickness x clear height x density", f"{f3(tr['by_wall'])} kN/m"),
+                row("Both y beams, L_top/2 + L_bottom/2", f"Beam y reaction = {d.gamma_G} x ({f3(tr['by_sw'])} + {f3(tr['by_wall'])}) x {f3(tr['span_y'])}", f"{f3(tr['by_reaction'])} kN"),
+                row("EN 1991-1-1", "Column self weight = gG x b x h x H x density", f"{f3(tr['column_self_weight'])} kN"),
+                row("Load build-up", "Total per typical floor", f"{f3(tr['total_floor_load'])} kN"),
+                row("Load build-up", "Total per roof level", f"{f3(rr['total_floor_load'])} kN"),
+            ]))
+        else:
+            sec_list.append(section("4. DESIGN ACTIONS (OVERRIDE)", [
+                row("User / frame analysis", f"NEd supplied directly = {f3(float(d.NEd_override_kN))}", f"{f3(float(d.NEd_override_kN))} kN"),
+                row("Note", "Tributary take-down bypassed by NEd_override_kN", "override active"),
+            ]))
 
-        self._sec("6. Reinforcement & resistance (9.5.2)")
-        self._row("Provided", f"{g.n_bars_total}×Ø{g.main_bar_dia_mm:.0f}", f"{As_prov:.0f} mm²")
-        self._row("9.5.2", "As,min", f"{As_min:.0f} mm²")
-        self._row("9.5.2", "As,max = 0.04Ac", f"{As_max:.0f} mm²")
-        self._row("NRd", "νfcd·Ac + As·fyd", f"{NRd:.2f} kN")
-        self._row("MRx / MRy", "simplified estimate", f"{MRx:.2f} / {MRy:.2f} kNm")
+        # 6 ------------------------------------------------------
+        sec_list.append(section("6. AXIAL LOAD TAKE-DOWN", [
+            row("Cumulative take-down", f"NEd at {lv}", f"{f3(n)} kN") for lv, n in axial.items()
+        ] + [
+            row("Governing", f"Critical level = {critical_level}", f"{f3(axial[critical_level])} kN")
+        ]))
 
-        self._sec("7. Tie design (9.5.3)")
-        self._row("9.5.3", "min tie dia = max(6, φ/4)", f"{self.min_tie_dia():.1f} mm")
-        self._row("9.5.3", "max spacing = min(12φ, min(b,h), 300)", f"{self.max_tie_spacing():.1f} mm")
+        # 7 ------------------------------------------------------
+        rows = []
+        for r in levels:
+            lv = r["level"]
+            for axis, label in (("x", "Mx (depth h)"), ("y", "My (depth b)")):
+                a = r[axis]
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.2", f"{lv} {label}: ordered ends |M02| >= |M01|: M01={f3(a['M01'])}, M02={f3(a['M02'])}", f"rm = {f3(a['M01']/a['M02']) if abs(a['M02'])>1e-9 else 'n/a'}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.2", f"{lv} {label}: ei = l0/400 = {f3(a['l0_mm'])}/400", f"{f3(a['ei_mm'])} mm"))
+                rows.append(row("EN 1992-1-1 Cl. 5.2", f"{lv} {label}: M_imp = NEd x ei = {f3(r['NEd_kN'])} x {f3(a['ei_mm']/1000)}", f"{f3(a['M_imp'])} kNm"))
+                rows.append(row("End section", f"{lv} {label}: M_end = |M02| + M_imp = {f3(abs(a['M02']))} + {f3(a['M_imp'])}", f"{f3(a['M_end'])} kNm"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.2", f"{lv} {label}: M0e = max(0.6M02+0.4M01, 0.4M02) = {f3(a['M0e'])}, + M_imp", f"{f3(a['M_eq'])} kNm"))
+                e0 = geo.e0_x_mm() if axis == "x" else geo.e0_y_mm()
+                depth_sym = "h" if axis == "x" else "b"
+                rows.append(row("EN 1992-1-1 Cl. 6.1(4)", f"{lv} e0 = max({depth_sym}/30, 20) = max({f3((geo.h if axis=='x' else geo.b)/30)}, 20)", f"{f3(e0)} mm"))
+                rows.append(row("Minimum eccentricity", f"{lv} M_min = NEd x e0 = {f3(r['NEd_kN'])} x {f3(e0/1000)}", f"{f3(a['M_min'])} kNm"))
+                rows.append(row("Governing first order", f"{lv} {label}: M_first = max(M_end, M_eq, M_min)", f"{f3(a['M_first'])} kNm"))
+        sec_list.append(section("7. FIRST ORDER MOMENTS AND ECCENTRICITY", rows))
 
+        # 8 ------------------------------------------------------
+        rows = []
+        for r in levels:
+            lv = r["level"]
+            for axis, i_sym in (("x", "ix"), ("y", "iy")):
+                a = r[axis]
+                i_val = geo.ix if axis == "x" else geo.iy
+                src = a["l0_source"]
+                if src == "override":
+                    calc = f"{lv} l0,{axis} supplied directly"
+                elif src == "k-factors":
+                    k1 = d.k1_x if axis == "x" else d.k1_y
+                    k2 = d.k2_x if axis == "x" else d.k2_y
+                    eq = "5.15 (braced)" if d.braced else "5.16 (unbraced)"
+                    calc = (f"{lv} l0,{axis} by Eq. {eq} with l = {f3(self.slender.clear_height_mm)} mm, "
+                            f"k1 = {f3(max(float(k1), 0.1))}, k2 = {f3(max(float(k2), 0.1))}")
+                else:
+                    calc = (f"{lv} l0,{axis} = K x l = {f3(self.slender.K)} x "
+                            f"{self.slender.clear_height_mm:,.0f}")
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.2", calc, f"{f3(a['l0_mm'])} mm"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.2", f"{lv} lambda_{axis} = l0 / {i_sym} = {f3(a['l0_mm'])} / {f3(i_val)}", f"{f3(a['lambda'])}"))
+                if d.use_default_A_B:
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "A = 0.7 (code default, phi_ef taken as not known)", f"{f3(self.slender.factor_A())}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = 1.1 (code default, omega taken as not known)", f"{f3(self.slender.factor_B())}"))
+                else:
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"A = 1/(1+0.2*phi_ef) = 1/(1+0.2x{d.effective_creep_ratio})", f"{f3(self.slender.factor_A())}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = sqrt(1+2*omega), computed from the provided steel", f"{f3(self.slender.factor_B())}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"C = 1.7 - rm (0.7 if unknown/unbraced)", f"{f3(self.slender.factor_C(a['M01'], a['M02']))}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"{lv} n = NEd/(Ac*fcd) = {f3(r['NEd_kN']*1000)}/({f1(geo.Ac)} x {f3(mat.fcd)})", f"{f3(self.slender.n_relative(r['NEd_kN']))}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"{lv} lambda_lim = 20*A*B*C/sqrt(n)", f"{f3(a['lambda_lim'])}"))
+                rows.append(row("Classification", f"{lv} lambda_{axis} {'>' if a['slender'] else '<='} lambda_lim", "SLENDER" if a["slender"] else "SHORT"))
+        sec_list.append(section("8. SLENDERNESS — BOTH AXES", rows))
 
-def design_column(material, geometry, building, design) -> dict:
-    return ColumnDesign(material, geometry, building, design).design_result()
+        # 9 ------------------------------------------------------
+        rows = []
+        any_slender = False
+        for r in levels:
+            lv = r["level"]
+            for axis in ("x", "y"):
+                a = r[axis]
+                if not a["slender"]:
+                    continue
+                any_slender = True
+                so = a["second_order"]
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.3", f"{lv} {axis}: omega = As*fyd/(Ac*fcd)", f"{f3(so['omega'])}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.3", f"{lv} {axis}: Kr = (nu-n)/(nu-nbal) = ({f3(so['n_u'])}-{f3(so['n'])})/({f3(so['n_u'])}-0.4)", f"{f3(so['Kr'])}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.3", f"{lv} {axis}: beta = 0.35 + fck/200 - lambda/150", f"{f3(so['beta'])}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.3", f"{lv} {axis}: Kphi = 1 + beta*phi_ef", f"{f3(so['Kphi'])}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.3", f"{lv} {axis}: 1/r0 = eps_yd/(0.45d) = {mat.eps_yd:.5f}/(0.45 x {f3(so['d_eff'])})", f"{so['inv_r0']:.3e} /mm"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.2", f"{lv} {axis}: e2 = (1/r)*l0^2/c, c = 10", f"{f3(so['e2_mm'])} mm"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.8.2", f"{lv} {axis}: M2 = NEd x e2", f"{f3(so['M2_kNm'])} kNm"))
+                rows.append(row("Design moment", f"{lv} {axis}: MEd = max(M_end, M_eq + M2, M_min) = max({f3(a['M_end'])}, {f3(a['M_eq'])}+{f3(a['M2'])}, {f3(a['M_min'])})", f"{f3(a['MEd'])} kNm"))
+        if not any_slender:
+            rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "All levels short about both axes — second order effects may be ignored", "M2 = 0"))
+        sec_list.append(section("9. SECOND ORDER EFFECTS (NOMINAL CURVATURE)", rows))
 
+        # 10 -----------------------------------------------------
+        crit = next(r for r in levels if r["level"] == critical_level)
+        sec_list.append(section("10. SECTION CAPACITY BY STRAIN COMPATIBILITY", [
+            row("Method", "Rectangular stress block, bilinear steel, layered bars", "strain compatibility"),
+            row("EN 1992-1-1 Cl. 3.1.7", f"Block: eta*fcd = {f3(mat.eta_block)} x {f3(mat.fcd)} over depth {f3(mat.lambda_block)}x", f"{f3(mat.eta_block*mat.fcd)} MPa"),
+            row("Pure compression pivot", f"Uniform strain eps_c3 = {mat.eps_c3:.5f}, so sigma_s = Es*eps_c3 = {f3(min(Es_MPA*mat.eps_c3, mat.fyd))}", f"{f3(min(Es_MPA*mat.eps_c3, mat.fyd))} MPa"),
+            row("Axial resistance (governing)", "NRd,max = eta*fcd*(Ac - As) + As*sigma_s", f"{f3(crit['NRd_max_kN'])} kN"),
+            row("Textbook form, for comparison", f"NRd = Ac*fcd + As*fyd = {f1(geo.Ac)} x {f3(mat.fcd)} + {f1(geo.As_total)} x {f3(mat.fyd)}", f"{f3(crit['NRd_simplified_kN'])} kN"),
+            row("Difference explained", f"(a) concrete displaced by bars not deducted: As*eta*fcd = {f3(geo.As_total*mat.eta_block*mat.fcd/1000)} kN; (b) steel assumed at fyd though eps_c3 caps it at {f3(min(Es_MPA*mat.eps_c3, mat.fyd))} MPa: As*(fyd - sigma_s) = {f3(geo.As_total*(mat.fyd - min(Es_MPA*mat.eps_c3, mat.fyd))/1000)} kN", f"{f3(crit['NRd_simplified_kN'] - crit['NRd_max_kN'])} kN"),
+            row("Design check", f"NEd = {f3(crit['NEd_kN'])} vs NRd,max = {f3(crit['NRd_max_kN'])}", "PASS" if crit["axial_utilisation"] <= 1 else "FAIL"),
+            row("Interaction", f"MRd,x at NEd = {f3(crit['NEd_kN'])} kN", f"{f3(crit['x']['MRd'])} kNm"),
+            row("Interaction", f"MRd,y at NEd = {f3(crit['NEd_kN'])} kN", f"{f3(crit['y']['MRd'])} kNm"),
+        ]))
 
-# ===================== RIGOROUS ADDITIONS (validated) =====================
-import math
+        # 11 -----------------------------------------------------
+        rows = []
+        for r in levels:
+            lv = r["level"]
+            if self.ctype == "biaxial":
+                bi = r["biaxial"]
+                rows.append(row("EN 1992-1-1 Cl. 5.8.9(4)", f"{lv}: NEd/NRd = {f3(bi['N_ratio'])} -> a = {f3(bi['a'])}", f"a = {f3(bi['a'])}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.9(4)", f"{lv}: (MEdx/MRdx)^a + (MEdy/MRdy)^a = ({f3(r['x']['MEd'])}/{f3(r['x']['MRd'])})^{f3(bi['a'])} + ({f3(r['y']['MEd'])}/{f3(r['y']['MRd'])})^{f3(bi['a'])}", f"{f3(bi['interaction'])}"))
+                rows.append(row("Design check", f"{lv}: interaction <= 1.0 ?", "PASS" if bi["interaction"] <= 1.0 else "FAIL"))
+            elif self.ctype == "uniaxial":
+                rows.append(row("Uniaxial check, strong axis", f"{lv}: MEdx/MRdx = {f3(r['x']['MEd'])}/{f3(r['x']['MRd'])}", f"{f3(r['x']['utilisation'])}"))
+                rows.append(row("Weak axis, min ecc + 2nd order", f"{lv}: MEdy/MRdy = {f3(r['y']['MEd'])}/{f3(r['y']['MRd'])}", f"{f3(r['y']['utilisation'])}"))
+                rows.append(row("Design check", f"{lv}: both <= 1.0 ?", "PASS" if max(r['x']['utilisation'], r['y']['utilisation']) <= 1.0 else "FAIL"))
+            else:
+                rows.append(row("Axial + min ecc", f"{lv}: MEdx/MRdx = {f3(r['x']['MEd'])}/{f3(r['x']['MRd'])}", f"{f3(r['x']['utilisation'])}"))
+                rows.append(row("Axial + min ecc", f"{lv}: MEdy/MRdy = {f3(r['y']['MEd'])}/{f3(r['y']['MRd'])}", f"{f3(r['y']['utilisation'])}"))
+                rows.append(row("Design check", f"{lv}: both <= 1.0 ?", "PASS" if max(r['x']['utilisation'], r['y']['utilisation']) <= 1.0 else "FAIL"))
+        sec_list.append(section("11. INTERACTION CHECK", rows))
 
+        # 12 -----------------------------------------------------
+        As_max = As_max_mm2(geo.Ac)
+        rows = [
+            row("EN 1992-1-1 Cl. 9.5.2(2)", f"Basis 1 — axial: 0.10*NEd/fyd = 0.10 x {f3(crit['NEd_kN']*1000)} / {f3(mat.fyd)}", f"{f1(crit['As_min_basis_1'])} mm2"),
+            row("EN 1992-1-1 Cl. 9.5.2(2)", f"Basis 2 — 0.2% of section: 0.002 x {f1(geo.Ac)}", f"{f1(crit['As_min_basis_2'])} mm2"),
+            row("EN 1992-1-1 Cl. 9.5.2(2)", "As,min = max(Basis 1, Basis 2)", f"{f1(crit['As_min'])} mm2"),
+            row("EN 1992-1-1 Cl. 9.5.2(3)", f"As,max = 0.04 x {f1(geo.Ac)}", f"{f1(As_max)} mm2"),
+            row("Provided", f"As = {geo.n_bars} x Y{int(geo.bar_dia)}", f"{f1(geo.As_total)} mm2"),
+            row("Design check", f"As,min <= As <= As,max ?", "PASS" if crit['As_min'] <= geo.As_total <= As_max else "FAIL"),
+        ]
+        sec_list.append(section("12. LONGITUDINAL REINFORCEMENT LIMITS", rows))
 
-def _bar_positions(g):
-    """True (x,y) positions of bars on the section perimeter, origin at centroid.
-    Distributes n_bars_total around the rectangle: corners first, then split the
-    remainder between the two longer/shorter faces as evenly as possible."""
-    b, h = g.b_mm, g.h_mm
-    d2 = g.clear_cover_mm + g.link_dia_mm + g.main_bar_dia_mm / 2.0
-    xL, xR = -b / 2 + d2, b / 2 - d2
-    yB, yT = -h / 2 + d2, h / 2 - d2
-    n = max(4, g.n_bars_total)
-    # corners
-    pts = [(xL, yB), (xR, yB), (xR, yT), (xL, yT)]
-    rem = n - 4
-    if rem <= 0:
-        return pts[:n]
-    # distribute remainder: proportion to side lengths
-    per_x = round(rem * (b / (b + h)))          # bars on top+bottom faces
-    per_y = rem - per_x                          # bars on left+right faces
-    # place along bottom & top (x varies)
-    def spread(count, x0, x1, y):
-        out = []
-        for i in range(count):
-            t = (i + 1) / (count + 1)
-            out.append((x0 + (x1 - x0) * t, y))
-        return out
-    half_x1 = per_x // 2
-    half_x2 = per_x - half_x1
-    pts += spread(half_x1, xL, xR, yB)
-    pts += spread(half_x2, xL, xR, yT)
-    half_y1 = per_y // 2
-    half_y2 = per_y - half_y1
-    pts += [(xL, y) for (_, y) in spread(half_y1, yB, yT, 0)]
-    pts += [(xR, y) for (_, y) in spread(half_y2, yB, yT, 0)]
-    return pts
+        # 13 -----------------------------------------------------
+        phi_t_min = min_tie_diameter_mm(geo.bar_dia)
+        s_max = max_tie_spacing_mm(geo.bar_dia, geo.b, geo.h)
+        s_red = reduced_tie_spacing_mm(s_max)
+        sec_list.append(section("13. TRANSVERSE REINFORCEMENT (TIES)", [
+            row("EN 1992-1-1 Cl. 9.5.3(1)", f"phi_t,min = max(6, phi_long/4) = max(6, {f1(geo.bar_dia)}/4)", f"{f3(phi_t_min)} mm"),
+            row("Provided", f"phi_t = {f1(geo.link_dia)}", f"Y{int(geo.link_dia)}"),
+            row("Design check", "phi_t >= phi_t,min ?", "PASS" if geo.link_dia >= phi_t_min else "FAIL"),
+            row("EN 1992-1-1 Cl. 9.5.3(3)", f"s_cl,tmax = min(20 x {f1(geo.bar_dia)}, min({f1(geo.b)}, {f1(geo.h)}), 400)", f"{f1(s_max)} mm"),
+            row("EN 1992-1-1 Cl. 9.5.3(4)", f"Reduced zones (near beams/slabs, laps) = 0.6 x {f1(s_max)}", f"{f1(s_red)} mm"),
+        ]))
 
+        # 14 -----------------------------------------------------
+        failed = []
+        for r in levels:
+            for c in r["checks"]:
+                if not c["pass"]:
+                    failed.append(f"{c['name']} — {r['level']}")
+        rows = [
+            row("Governing", f"Critical level = {critical_level}", f"NEd = {f3(crit['NEd_kN'])} kN"),
+            row("Axial", "NEd / NRd,max", f"{f3(crit['axial_utilisation'])}"),
+            row("Bending", "Governing utilisation", f"{f3(crit['governing_utilisation'])}"),
+            row("Reinforcement", f"Provided {geo.n_bars}Y{int(geo.bar_dia)} with Y{int(geo.link_dia)} ties", f"{f1(geo.As_total)} mm2"),
+            row("Detailing", f"Ties Y{int(geo.link_dia)} at {f1(s_red)} mm in end/lap zones, {f1(s_max)} mm elsewhere", "adopted"),
+        ]
+        if failed:
+            rows.append(row("FAILED CHECKS", "; ".join(failed), "FAIL"))
+        else:
+            rows.append(row("Overall", "All checks satisfied", "PASS"))
+        sec_list.append(section("14. SUMMARY", rows))
 
-def surface_point(g, m, theta_deg, c_depth):
-    """One (N, Mx, My) point for neutral axis at orientation theta and depth c.
-    Rotated-section strain compatibility, rectangular stress block."""
-    fcd, fyd = m.fcd, m.fyd
-    Es, ecu = 200000.0, 0.0035
-    lam, eta = 0.8, 1.0
-    th = math.radians(theta_deg)
-    ct, st = math.cos(th), math.sin(th)
-    b, h = g.b_mm, g.h_mm
-
-    # signed distance of a point from neutral axis, measured along +normal (ct,st)
-    # extreme compression fibre is the section corner with max u
-    corners = [(-b/2, -h/2), (b/2, -h/2), (b/2, h/2), (-b/2, h/2)]
-    us = [x*ct + y*st for (x, y) in corners]
-    umax = max(us)
-    # neutral axis at u = umax - c_depth ; compression zone: u >= (umax - c)
-    u_na = umax - c_depth
-
-    # concrete: integrate stress block over compression polygon via fine grid
-    # (grid is adequate for a smooth envelope; step ~ h/40)
-    nx, ny = 40, 40
-    dx, dy = b / nx, h / ny
-    dA = dx * dy
-    Fc = 0.0; Mcx = 0.0; Mcy = 0.0
-    for i in range(nx):
-        xc = -b/2 + (i + 0.5) * dx
-        for j in range(ny):
-            yc = -h/2 + (j + 0.5) * dy
-            u = xc*ct + yc*st
-            # within stress block if u between (umax - lam*c) and umax
-            if u >= umax - lam * c_depth:
-                f = eta * fcd
-                Fc += f * dA
-                Mcx += f * dA * yc      # moment about x-axis (My uses x, Mx uses y)
-                Mcy += f * dA * xc
-    # steel
-    Fs = 0.0; Msx = 0.0; Msy = 0.0
-    As_bar = math.pi * g.main_bar_dia_mm**2 / 4.0
-    for (xb, yb) in _bar_positions(g):
-        u = xb*ct + yb*st
-        eps = ecu * (u - u_na) / (umax - u_na) if (umax - u_na) != 0 else 0.0
-        sig = max(-fyd, min(fyd, Es * eps))      # + compression
-        Fs += As_bar * sig
-        Msx += As_bar * sig * yb
-        Msy += As_bar * sig * xb
-    N = (Fc + Fs) / 1000.0                         # kN
-    Mx = (Mcx + Msx) / 1e6                          # kN*m (about x, from y-lever)
-    My = (Mcy + Msy) / 1e6                          # kN*m (about y, from x-lever)
-    return N, abs(Mx), abs(My)
-
-
-def surface_3d(g, m, n_theta=13, n_depth=12):
-    """Mesh of (N, Mx, My) points forming the failure surface (quarter, mirrored)."""
-    pts = []
-    hmax = max(g.b_mm, g.h_mm)
-    depths = [hmax * f for f in [0.08, 0.12, 0.18, 0.25, 0.33, 0.42, 0.52,
-                                 0.65, 0.8, 1.0, 1.4, 2.2][:n_depth]]
-    for ti in range(n_theta):
-        theta = 90.0 * ti / (n_theta - 1)          # 0..90 deg (quarter)
-        for c in depths:
-            N, Mx, My = surface_point(g, m, theta, c)
-            pts.append({"N_kN": round(N, 1), "Mx_kNm": round(Mx, 2), "My_kNm": round(My, 2)})
-    # squash apex
-    N0 = (m.fcd * g.b_mm * g.h_mm + g.total_steel_area_mm2 * m.fyd) / 1000.0
-    pts.append({"N_kN": round(N0, 1), "Mx_kNm": 0.0, "My_kNm": 0.0})
-    return pts
-
-import math
-
-
-def second_order_rigorous(g, m, axis, N_kN, M0Ed_kNm, l0_mm, lam, phi_ef=2.0):
-    """Returns dict with computed Kr, Kphi, e2, M2, MEd for one axis/level.
-    Applies only when slender (caller decides); here we always compute and let
-    the result carry the numbers."""
-    overall = g.h_mm if axis == "x" else g.b_mm
-    d = overall - (g.clear_cover_mm + g.link_dia_mm + g.main_bar_dia_mm / 2.0)
-
-    fcd, fyd = m.fcd, m.fyd
-    Ac = g.area_mm2
-    As = g.total_steel_area_mm2
-
-    # mechanical reinforcement ratio and axial levels
-    omega = As * fyd / (Ac * fcd)
-    n = (N_kN * 1000.0) / (Ac * fcd)          # relative axial load
-    n_u = 1.0 + omega
-    n_bal = 0.4                                # EC2 recommended value
-    Kr = (n_u - n) / (n_u - n_bal) if (n_u - n_bal) != 0 else 1.0
-    Kr = max(0.0, min(1.0, Kr))
-
-    beta = 0.35 + m.fck / 200.0 - lam / 150.0
-    Kphi = max(1.0, 1.0 + beta * phi_ef)
-
-    eps_yd = fyd / 200000.0
-    inv_r0 = eps_yd / (0.45 * d)
-    inv_r = Kr * Kphi * inv_r0
-
-    c = math.pi ** 2                           # ~9.87 (sinusoidal)
-    e2 = inv_r * (l0_mm ** 2) / c              # mm
-    M2 = N_kN * e2 / 1000.0                    # kN*m
-    return {
-        "omega": round(omega, 3),
-        "n": round(n, 3),
-        "n_u": round(n_u, 3),
-        "n_bal": n_bal,
-        "Kr": round(Kr, 3),
-        "beta": round(beta, 3),
-        "phi_ef": phi_ef,
-        "Kphi": round(Kphi, 3),
-        "e2_mm": round(e2, 2),
-        "M2_kNm": round(M2, 2),
-        "M0Ed_kNm": round(M0Ed_kNm, 2),
-        "MEd_kNm": round(M0Ed_kNm + M2, 2),
-    }
-
-import math
+        return sec_list
 
 
-def crack_width_ec2(g, m, N_sls_kN, M_sls_kNm, axis="x"):
-    overall = g.h_mm if axis == "x" else g.b_mm
-    width = g.b_mm if axis == "x" else g.h_mm
-    d = overall - (g.clear_cover_mm + g.link_dia_mm + g.main_bar_dia_mm / 2.0)
-    Ac = g.area_mm2
-    As = g.total_steel_area_mm2
-
-    # does the section crack? kern distance = overall/6 for rectangular.
-    e = (M_sls_kNm * 1000.0 / N_sls_kN) if N_sls_kN > 0 else 1e9   # mm
-    kern = overall / 6.0
-    if N_sls_kN > 0 and e <= kern:
-        # whole section in compression -> no flexural cracking
-        return {"cracks": False, "wk_mm": 0.0, "wk_limit_mm": 0.30,
-                "ok": True, "note": "Section in net compression (e <= h/6) -> uncracked, wk = 0."}
-
-    # cracked: estimate tensile steel stress under SLS.
-    # simplified: treat the tension-side steel (half the bars) with lever ~0.9d
-    As_t = As / 2.0
-    z = 0.9 * d
-    # net tensile force approx from moment about compression resultant minus axial relief
-    sigma_s = max(0.0, (M_sls_kNm * 1e6 / z - N_sls_kN * 1000.0 * 0.0) / As_t)  # MPa
-    if sigma_s <= 0:
-        return {"cracks": False, "wk_mm": 0.0, "wk_limit_mm": 0.30, "ok": True,
-                "note": "No net tensile steel stress -> uncracked, wk = 0."}
-
-    Es = 200000.0
-    fcm = m.fck + 8.0
-    Ecm = 22000.0 * (fcm / 10.0) ** 0.3
-    alpha_e = Es / Ecm
-    fct_eff = 0.30 * m.fck ** (2.0 / 3.0)             # fctm for <= C50
-    kt = 0.4                                           # long-term
-    # effective tension area (7.3.2.3): hc_ef = min(2.5(h-d), (h-x)/3, h/2)
-    hc_ef = min(2.5 * (overall - d), overall / 2.0)
-    Ac_eff = width * hc_ef
-    rho_p_eff = As_t / Ac_eff if Ac_eff > 0 else 0.01
-
-    eps_diff = (sigma_s - kt * (fct_eff / rho_p_eff) * (1 + alpha_e * rho_p_eff)) / Es
-    eps_diff = max(eps_diff, 0.6 * sigma_s / Es)
-
-    k1, k2, k3, k4 = 0.8, 0.5, 3.4, 0.425
-    c = g.clear_cover_mm
-    phi = g.main_bar_dia_mm
-    sr_max = k3 * c + k1 * k2 * k4 * phi / rho_p_eff
-    wk = sr_max * eps_diff
-    return {
-        "cracks": True, "sigma_s_MPa": round(sigma_s, 1),
-        "rho_p_eff": round(rho_p_eff, 4), "sr_max_mm": round(sr_max, 1),
-        "eps_sm_minus_cm": round(eps_diff, 6),
-        "wk_mm": round(wk, 3), "wk_limit_mm": 0.30, "ok": wk <= 0.30,
-        "note": "EC2 7.3.4 cracked-section estimate (simplified SLS steel stress).",
-    }
+def design_column(d: ColumnInput) -> Dict:
+    return ColumnEngine(d).run()

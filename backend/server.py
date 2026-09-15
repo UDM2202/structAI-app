@@ -30,7 +30,7 @@ app.include_router(rates.router, prefix="/api/rates", tags=["Material Rates"])
 app.include_router(beam.router, prefix="/api/beam")
 app.include_router(continuous_beam.router, prefix="/api/continuous-beam")
 app.include_router(continuous_slab.router, prefix="/api/continuous-slab")
-app.include_router(column.router, prefix="/api/column")
+app.include_router(column.router)
 app.include_router(foundation.router, prefix="/api/foundation")
 
 @app.get("/")
