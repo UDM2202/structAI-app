@@ -23,6 +23,20 @@ function extractErrorMessage(errBody, fallback) {
   return fallback;
 }
 
+// Endpoint paths in one place. The continuous beam router is mounted bare
+// (APIRouter() with no prefix) and gets "/api/continuous-beam" from
+// include_router in server.py, so its full path is assembled here.
+const ENDPOINTS = {
+  slab: "/api/slab/design/sync",
+  column: "/api/column/design/sync",
+  columnHealth: "/api/column/health",
+  beam: "/api/beam/design/sync",
+  continuousBeam: "/api/continuous-beam/design/sync",
+  continuousSlab: "/api/continuous-slab/design/sync",
+  padFoundation: "/api/foundation/pad/design/sync",
+  combinedFoundation: "/api/foundation/combined/design/sync",
+};
+
 export const slabAPI = {
   startDesign: async (formData) => {
     const request = {
@@ -63,7 +77,7 @@ export const slabAPI = {
       building_use: formData.buildingUse || "office"
     };
 
-    const response = await fetch(`${API_BASE}/api/slab/design/sync`, {
+    const response = await fetch(`${API_BASE}${ENDPOINTS.slab}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request)
@@ -87,24 +101,25 @@ export const slabAPI = {
 
 export const columnAPI = {
   /**
-   * @param {object} request 
+   * @param {object} request - body built by ColumnInput.jsx buildRequest(),
+   *                           already shaped as ColumnDesignRequest.
    */
   startDesign: async (request) => {
-    const response = await fetch(`${API_BASE}/api/column/design/sync`, {
+    const response = await fetch(`${API_BASE}${ENDPOINTS.column}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
- 
+
     if (!response.ok) {
       const error = await response.json().catch(() => null);
       throw new Error(extractErrorMessage(error, "Column design failed."));
     }
     return response.json();
   },
- 
+
   health: async () => {
-    const response = await fetch(`${API_BASE}/api/column/health`);
+    const response = await fetch(`${API_BASE}${ENDPOINTS.columnHealth}`);
     if (!response.ok) throw new Error("Column module is not responding.");
     return response.json();
   },
@@ -145,7 +160,30 @@ export const beamAPI = {
       region: formData.region || "Nigeria",
     };
 
-    const res = await fetch(`${API_BASE}/api/beam/design/sync`, {
+    const res = await fetch(`${API_BASE}${ENDPOINTS.beam}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(extractErrorMessage(err, `Request failed: ${res.status}`));
+    }
+    return res.json();
+  },
+
+  /**
+   * Continuous beam design.
+   *
+   * BeamInput.jsx merged the continuous beam form into the beam page and
+   * builds the finished ContinuousBeamRequest in buildContinuousPayload(),
+   * so this is a pass-through. Do not re-map camelCase form fields here:
+   * the argument is already the API body.
+   *
+   * @param {object} request - already shaped as ContinuousBeamRequest.
+   */
+  startContinuousDesign: async (request) => {
+    const res = await fetch(`${API_BASE}${ENDPOINTS.continuousBeam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -158,6 +196,12 @@ export const beamAPI = {
   },
 };
 
+/**
+ * Legacy: takes raw camelCase form state and maps it, for the standalone
+ * continuous beam page that predates the merge into BeamInput.jsx. New code
+ * should call beamAPI.startContinuousDesign with a finished body instead.
+ * Both post to the same endpoint.
+ */
 export const continuousBeamAPI = {
   startDesign: async (form) => {
     const request = {
@@ -197,16 +241,7 @@ export const continuousBeamAPI = {
       link_diameter: parseInt(form.linkDiameter) || 8,
       region: form.region || "Nigeria",
     };
-    const res = await fetch(`${API_BASE}/api/continuous-beam/design/sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(extractErrorMessage(err, `Request failed: ${res.status}`));
-    }
-    return res.json();
+    return beamAPI.startContinuousDesign(request);
   },
 };
 
@@ -246,7 +281,7 @@ export const continuousSlabAPI = {
       region: form.region || "Nigeria",
     };
 
-    const res = await fetch(`${API_BASE}/api/continuous-slab/design/sync`, {
+    const res = await fetch(`${API_BASE}${ENDPOINTS.continuousSlab}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -263,7 +298,7 @@ export const foundationAPI = {
   designPad: async (payload) => {
     // payload already carries engine fields; strip the display-only _meta
     const { _meta, ...request } = payload;
-    const res = await fetch(`${API_BASE}/api/foundation/pad/design/sync`, {
+    const res = await fetch(`${API_BASE}${ENDPOINTS.padFoundation}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -274,8 +309,9 @@ export const foundationAPI = {
     }
     return res.json();
   },
-   designCombined: async (payload) => {
-    const res = await fetch(`${API_BASE}/api/foundation/combined/design/sync`, {
+
+  designCombined: async (payload) => {
+    const res = await fetch(`${API_BASE}${ENDPOINTS.combinedFoundation}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -286,5 +322,4 @@ export const foundationAPI = {
     }
     return res.json();
   },
- 
 };
