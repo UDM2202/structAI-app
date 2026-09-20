@@ -5,6 +5,7 @@
 //   interaction_x[], interaction_y[], failed_checks[], report[]
 // Report rows are { reference, calculation, output }.
 import React, { useState, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { exportElementToPdf } from "../utils/exportPdf";
 import {
@@ -20,6 +21,7 @@ const CARD = "bg-white dark:bg-[#1f2937] rounded-xl shadow-sm border border-[#e2
 const SUB = "text-[#64748b] dark:text-[#94a3b8]";
 const MAIN = "text-[#0F172A] dark:text-white";
 const TITLE = "text-[13px] font-bold uppercase tracking-wide text-[#0A2F44] dark:text-[#66a4c2]";
+const LABEL = "block text-xs font-medium text-[#475569] dark:text-[#94a3b8] mb-1";
 const ACCENT = "#0A2F44", ACCENT_D = "#66a4c2";
 
 const n1 = (v) => (v === null || v === undefined || Number.isNaN(v) ? "—" : Number(v).toFixed(1));
@@ -632,7 +634,11 @@ function AlternativesPanel({ shown }) {
 /* ---------------- REPORT ---------------- */
 function ReportModal({ r, onClose }) {
   const s = r.summary;
-  return (
+  // Rendered into <body> directly. Without that, the print rules below have
+  // to reach through whatever ancestors the page happens to have, and an
+  // absolutely-positioned modal inside a transformed or scrolled parent
+  // prints as a blank sheet.
+  const modal = (
     <div className="col-report-overlay fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/50 p-4"
       data-pdf-skip="Detailed report — use Print / PDF inside the report window"
       onClick={onClose}>
@@ -680,23 +686,43 @@ function ReportModal({ r, onClose }) {
       </div>
       <style>{`
         @media print {
+          @page { margin: 12mm; }
+          /* Hide the app, not by making it invisible -- invisible elements
+             still take up layout and push the report off the page -- but by
+             removing it from the flow entirely. The modal is a direct child
+             of <body> thanks to the portal, so this is exact. */
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            background: #fff !important;
+          }
+          body > *:not(.col-report-overlay) { display: none !important; }
           .col-no-print { display: none !important; }
-          body * { visibility: hidden; }
-          .col-report, .col-report * { visibility: visible; }
           .col-report-overlay {
+            display: block !important;
             position: static !important;
             overflow: visible !important;
             background: #fff !important;
             padding: 0 !important;
+            inset: auto !important;
           }
           .col-report {
-            position: absolute; left: 0; top: 0;
-            width: 100%; max-width: none !important;
+            position: static !important;
+            width: 100% !important;
+            max-width: none !important;
             max-height: none !important;
             overflow: visible !important;
             margin: 0 !important;
-            border: none !important; box-shadow: none !important;
-            background: #fff !important; color: #000 !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            background: #fff !important;
+            color: #000 !important;
+          }
+          /* force legible print colours regardless of the dark theme */
+          .col-report, .col-report * {
+            background: transparent !important;
+            color: #000 !important;
           }
           .col-report .col-row { break-inside: avoid; page-break-inside: avoid; }
           .col-report .col-section { break-inside: auto; }
@@ -705,6 +731,7 @@ function ReportModal({ r, onClose }) {
       `}</style>
     </div>
   );
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : modal;
 }
 
 /* ---------------- SHARED ---------------- */
