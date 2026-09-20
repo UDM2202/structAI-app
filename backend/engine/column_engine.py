@@ -30,6 +30,7 @@ Corrections applied relative to the three reference scripts:
 from __future__ import annotations
 
 import math
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -80,6 +81,14 @@ END_CONDITION_K: Dict[str, float] = {
 }
 
 AVAILABLE_BAR_DIAS = [12, 16, 20, 25, 32, 40]
+
+# Ordered smallest-area-first. Auto-sizing walks this and stops at the first
+# arrangement that satisfies every check, so the order is the policy.
+AUTOSIZE_CANDIDATES: List[Tuple[int, int]] = [
+    (12, 4), (12, 6), (16, 4), (12, 8), (16, 6), (20, 4), (16, 8),
+    (20, 6), (25, 4), (20, 8), (25, 6), (32, 4), (25, 8), (32, 6),
+    (32, 8), (32, 10), (32, 12),
+]
 AVAILABLE_LINK_DIAS = [6, 8, 10, 12]
 
 
@@ -128,6 +137,25 @@ def order_end_moments(m_a: float, m_b: float) -> Tuple[float, float]:
     if abs(m_a) >= abs(m_b):
         return m_b, m_a
     return m_a, m_b
+
+
+def bars_fit(geo: "Geometry") -> Tuple[bool, str]:
+    """
+    EN 1992-1-1 Cl. 8.2: clear spacing between bars must be at least
+    max(bar diameter, 20 mm). A cage that cannot physically be built is not a
+    candidate, however well it performs on paper.
+    """
+    edge = geo.cover + geo.link_dia
+    s_min = max(geo.bar_dia, 20.0)
+    for n, dim, label in ((geo.n_b_face, geo.b, "width b"),
+                          (geo.n_h_face, geo.h, "depth h")):
+        if n < 2:
+            continue
+        needed = 2 * edge + n * geo.bar_dia + (n - 1) * s_min
+        if needed > dim:
+            return False, (f"{n} bars of {geo.bar_dia:.0f} mm need {needed:.0f} mm "
+                           f"across the {label} of {dim:.0f} mm")
+    return True, ""
 
 
 def bar_area_mm2(d_mm: float) -> float:
@@ -212,10 +240,32 @@ class FloorTemplate:
 
 
 @dataclass
+class LevelSpec:
+    """
+    Per-storey overrides. Any field left None falls back to the column-wide
+    value, so a request that sets none of these behaves exactly as before.
+    """
+    b_mm: Optional[float] = None
+    h_mm: Optional[float] = None
+    main_bar_dia_mm: Optional[float] = None
+    n_bars_total: Optional[int] = None
+    n_bars_b_face: Optional[int] = None
+    n_bars_h_face: Optional[int] = None
+    link_dia_mm: Optional[float] = None
+    storey_height_m: Optional[float] = None
+    floor: Optional["FloorTemplate"] = None
+
+
+@dataclass
 class ColumnInput:
     # --- identity / route ---
     column_id: str = "C1"
     column_type: str = "biaxial"           # axial | uniaxial | biaxial
+    # Which axis a uniaxial column bends about. "x" means bending about the
+    # x-axis, so the section depth resisting it is h. Ignored for the other
+    # two routes. Without this a uniaxial column was always assumed to bend
+    # about x, and a y-axis moment could only be modelled by swapping b and h.
+    uniaxial_axis: str = "x"               # x | y
     design_code: str = "EC2"
 
     # --- section ---
@@ -298,6 +348,19 @@ class ColumnInput:
 
     include_min_eccentricity: bool = True
     effective_creep_ratio: float = 2.0      # phi_ef for the nominal curvature method
+
+    # --- automatic bar selection ---
+    # Off by default: the engine verifies what it is given. Switched on it
+    # proposes the smallest cage that passes every check at each storey, within
+    # whatever section that storey has. Sections are never changed -- if no
+    # candidate fits, that is the signal the section is too small.
+    autosize_bars: bool = False
+    autosize_candidates: Optional[List[Tuple[int, int]]] = None
+
+    # --- per-storey overrides, keyed by level name ---
+    # Empty means one section and one cage for the whole column, which is the
+    # original behaviour and the path the published worked examples verify.
+    level_specs: Dict[str, LevelSpec] = field(default_factory=dict)
 
     # --- OVERRIDES: bypass the take-down and design directly ---
     NEd_override_kN: Optional[float] = None
@@ -527,20 +590,29 @@ class Geometry:
 # ============================================================
 
 class LoadTakedown:
-    def __init__(self, d: ColumnInput, geo: Geometry):
+    def __init__(self, d: ColumnInput, geo: Geometry, geo_by_level=None):
         self.d = d
         self.geo = geo
+        # Each storey carries its own weight into everything beneath it, so a
+        # column that changes section up the building cannot use one figure.
+        self.geo_by_level = geo_by_level or {}
 
-    def column_self_weight_kN(self) -> float:
+    def _geo(self, level=None) -> Geometry:
+        return self.geo_by_level.get(level, self.geo) if level else self.geo
+
+    def column_self_weight_kN(self, level=None) -> float:
+        g = self._geo(level)
+        sp = self.d.level_specs.get(level) if level else None
+        H = (sp.storey_height_m if (sp and sp.storey_height_m) else self.d.storey_height_m)
         return (
             self.d.gamma_G
-            * (self.geo.b / 1000.0)
-            * (self.geo.h / 1000.0)
-            * self.d.storey_height_m
+            * (g.b / 1000.0)
+            * (g.h / 1000.0)
+            * H
             * self.d.concrete_density_kN_per_m3
         )
 
-    def floor_breakdown(self, floor: FloorTemplate) -> Dict[str, float]:
+    def floor_breakdown(self, floor: FloorTemplate, level=None) -> Dict[str, float]:
         rho_c = self.d.concrete_density_kN_per_m3
         rho_w = self.d.masonry_density_kN_per_m3
 
@@ -562,7 +634,7 @@ class LoadTakedown:
         bx_reaction = self.d.gamma_G * (bx_sw + bx_wall) * span_x
         by_reaction = self.d.gamma_G * (by_sw + by_wall) * span_y
 
-        col_sw = self.column_self_weight_kN()
+        col_sw = self.column_self_weight_kN(level)
         total = slab_to_column + bx_reaction + by_reaction + col_sw
 
         return {
@@ -576,11 +648,21 @@ class LoadTakedown:
             "total_floor_load": total,
         }
 
+    def floor_for(self, level: str) -> FloorTemplate:
+        sp = self.d.level_specs.get(level)
+        if sp is not None and sp.floor is not None:
+            return sp.floor
+        return self.d.roof_floor if level == "Roof" else self.d.typical_floor
+
     def typical(self) -> Dict[str, float]:
         return self.floor_breakdown(self.d.typical_floor)
 
     def roof(self) -> Dict[str, float]:
         return self.floor_breakdown(self.d.roof_floor)
+
+    def level_names(self) -> List[str]:
+        return ["Roof"] + [f"Typical_Floor_{i}"
+                           for i in range(self.d.number_of_typical_floors, 0, -1)]
 
     def axial_by_level(self) -> Dict[str, float]:
         """
@@ -589,12 +671,11 @@ class LoadTakedown:
         largest load. The critical level is taken by value, not position.
         """
         results: Dict[str, float] = {}
-        running = self.roof()["total_floor_load"]
-        results["Roof"] = running
-        per_floor = self.typical()["total_floor_load"]
-        for i in range(self.d.number_of_typical_floors, 0, -1):
-            running += per_floor
-            results[f"Typical_Floor_{i}"] = running
+        running = 0.0
+        for name in self.level_names():
+            # Each level's own floor template and own column section.
+            running += self.floor_breakdown(self.floor_for(name), name)["total_floor_load"]
+            results[name] = running
         return results
 
 
@@ -926,13 +1007,62 @@ class ColumnEngine:
         self.d = d
         self.mat = Materials(d)
         self.geo = Geometry(d, self.mat)
-        self.takedown = LoadTakedown(d, self.geo)
         self.slender = Slenderness(d, self.geo, self.mat)
         self.sec_x = SectionAnalysis(self.geo, self.mat, "x")
         self.sec_y = SectionAnalysis(self.geo, self.mat, "y")
+
+        # Per-storey objects. With no level_specs every entry is the base
+        # column, so this is the original single-section behaviour exactly.
+        self.geo_by_level: Dict[str, Geometry] = {}
+        self.slender_by_level: Dict[str, Slenderness] = {}
+        self.sec_by_level: Dict[str, Tuple[SectionAnalysis, SectionAnalysis]] = {}
+        names = ["Roof"] + [f"Typical_Floor_{i}"
+                            for i in range(d.number_of_typical_floors, 0, -1)]
+        if d.NEd_override_kN is not None:
+            names = ["Design"]
+        for name in names:
+            di = self._level_input(name)
+            if di is d:
+                g, sl, sx, sy = self.geo, self.slender, self.sec_x, self.sec_y
+            else:
+                g = Geometry(di, self.mat)
+                sl = Slenderness(di, g, self.mat)
+                sx = SectionAnalysis(g, self.mat, "x")
+                sy = SectionAnalysis(g, self.mat, "y")
+            self.geo_by_level[name] = g
+            self.slender_by_level[name] = sl
+            self.sec_by_level[name] = (sx, sy)
+
+        self.takedown = LoadTakedown(d, self.geo, self.geo_by_level)
         self.ctype = (d.column_type or "biaxial").strip().lower()
         if self.ctype not in ("axial", "uniaxial", "biaxial"):
             raise ValueError("column_type must be axial, uniaxial or biaxial")
+        self.uni_axis = (d.uniaxial_axis or "x").strip().lower()
+        if self.uni_axis not in ("x", "y"):
+            raise ValueError("uniaxial_axis must be x or y")
+
+    def _level_input(self, level: str) -> ColumnInput:
+        """A ColumnInput with this level's overrides applied, or the base one."""
+        sp = self.d.level_specs.get(level)
+        if sp is None:
+            return self.d
+        kw = {}
+        for f in ("b_mm", "h_mm", "main_bar_dia_mm", "n_bars_total",
+                  "n_bars_b_face", "n_bars_h_face", "link_dia_mm",
+                  "storey_height_m"):
+            v = getattr(sp, f, None)
+            if v is not None:
+                kw[f] = v
+        return dataclasses.replace(self.d, **kw) if kw else self.d
+
+    def geo_for(self, level: str) -> Geometry:
+        return self.geo_by_level.get(level, self.geo)
+
+    def sections_for(self, level: str):
+        return self.sec_by_level.get(level, (self.sec_x, self.sec_y))
+
+    def slender_for(self, level: str) -> Slenderness:
+        return self.slender_by_level.get(level, self.slender)
 
     # ---------- moments ----------
     @staticmethod
@@ -950,23 +1080,25 @@ class ColumnEngine:
         """Ordered (M01, M02) for the level and axis, zero on the axial route."""
         if self.ctype == "axial":
             return 0.0, 0.0
-        if axis == "y" and self.ctype != "biaxial":
+        if self.ctype == "uniaxial" and axis != self.uni_axis:
             return 0.0, 0.0
         src01 = self.d.M01x_kNm if axis == "x" else self.d.M01y_kNm
         src02 = self.d.M02x_kNm if axis == "x" else self.d.M02y_kNm
         return order_end_moments(src01.get(level, 0.0), src02.get(level, 0.0))
 
-    def min_ecc_moment(self, NEd_kN: float, axis: str) -> float:
-        e0 = self.geo.e0_x_mm() if axis == "x" else self.geo.e0_y_mm()
+    def min_ecc_moment(self, NEd_kN: float, axis: str, geo: Geometry = None) -> float:
+        g = geo or self.geo
+        e0 = g.e0_x_mm() if axis == "x" else g.e0_y_mm()
         return NEd_kN * e0 / 1000.0
 
     # ---------- biaxial exponent ----------
-    def biaxial_exponent(self, NEd_kN: float) -> Tuple[float, float]:
+    def biaxial_exponent(self, NEd_kN: float, geo: Geometry = None) -> Tuple[float, float]:
         """
         EC2 Cl. 5.8.9(4): a interpolated on NEd/NRd, where
         NRd = Ac*fcd + As*fyd (the code's own definition for this clause).
         """
-        NRd = (self.geo.Ac * self.mat.fcd + self.geo.As_total * self.mat.fyd) / 1000.0
+        g = geo or self.geo
+        NRd = (g.Ac * self.mat.fcd + g.As_total * self.mat.fyd) / 1000.0
         ratio = NEd_kN / NRd if NRd > 0 else 0.0
         pts = [(0.1, 1.0), (0.7, 1.5), (1.0, 2.0)]
         if ratio <= pts[0][0]:
@@ -983,28 +1115,38 @@ class ColumnEngine:
 
     # ---------- per-level design ----------
     def design_level(self, level: str, NEd_kN: float) -> Dict:
-        res: Dict = {"level": level, "NEd_kN": NEd_kN}
+        # This storey's own section, cage, slenderness and section analyses.
+        geo = self.geo_for(level)
+        sl = self.slender_for(level)
+        sec_x, sec_y = self.sections_for(level)
+        res: Dict = {"level": level, "NEd_kN": NEd_kN,
+                     "b_mm": geo.b, "h_mm": geo.h,
+                     "bar_dia_mm": geo.bar_dia, "n_bars": geo.n_bars,
+                     "link_dia_mm": geo.link_dia,
+                     "As_provided_mm2": round(geo.As_total, 1),
+                     "cover_mm": round(geo.cover, 1),
+                     "rho_pct": round(100.0 * geo.As_total / geo.Ac, 3)}
 
         for axis in ("x", "y"):
-            lam = self.slender.lambda_axis(axis)
+            lam = sl.lambda_axis(axis)
             # An axially loaded column is designed for minimum eccentricity
             # only, so its moment diagram is effectively uniform and the
             # frame moments must not leak into factor C. Same for the weak
             # axis of a uniaxial column.
             uses_frame_moments = (
                 self.ctype == "biaxial"
-                or (self.ctype == "uniaxial" and axis == "x")
+                or (self.ctype == "uniaxial" and axis == self.uni_axis)
             )
             if uses_frame_moments:
                 M01, M02 = self.end_moments(level, axis)
             else:
                 M01 = M02 = 0.0
-            lam_lim = self.slender.lambda_lim(NEd_kN, M01, M02)
+            lam_lim = sl.lambda_lim(NEd_kN, M01, M02)
             is_slender = lam > lam_lim
 
             # EC2 Cl. 5.2 geometric imperfection, added to the first order
             # moment before anything else.
-            ei = self.slender.imperfection_ecc_mm(axis)
+            ei = sl.imperfection_ecc_mm(axis)
             M_imp = NEd_kN * ei / 1000.0
 
             # Two distinct first order moments, both of which must be carried:
@@ -1012,9 +1154,9 @@ class ColumnEngine:
             #   M_eq   - the equivalent moment, the base for M2 on a slender one
             M_end = abs(M02) + M_imp
             M_eq = self.M0e(M01, M02) + M_imp
-            M_min = self.min_ecc_moment(NEd_kN, axis) if self.d.include_min_eccentricity else 0.0
+            M_min = self.min_ecc_moment(NEd_kN, axis, geo) if self.d.include_min_eccentricity else 0.0
 
-            so = self.slender.second_order_moment_kNm(NEd_kN, axis)
+            so = sl.second_order_moment_kNm(NEd_kN, axis)
             M2 = so["M2_kNm"] if is_slender else 0.0
 
             M_first = max(M_end, M_eq, M_min)
@@ -1024,7 +1166,7 @@ class ColumnEngine:
             if override is not None:
                 MEd = float(override)
 
-            sec = self.sec_x if axis == "x" else self.sec_y
+            sec = sec_x if axis == "x" else sec_y
             MRd = sec.MRd_at(NEd_kN)
 
             # MRd is zero when NEd already exceeds the axial capacity. Guard
@@ -1038,8 +1180,8 @@ class ColumnEngine:
 
             res[axis] = {
                 "lambda": lam, "lambda_lim": lam_lim, "slender": is_slender,
-                "l0_mm": self.slender.l0_axis_mm(axis),
-                "l0_source": self.slender.l0_source(axis),
+                "l0_mm": sl.l0_axis_mm(axis),
+                "l0_source": sl.l0_source(axis),
                 "M01": M01, "M02": M02, "M0e": self.M0e(M01, M02),
                 "ei_mm": ei, "M_imp": M_imp, "M_end": M_end, "M_eq": M_eq,
                 "M_min": M_min,
@@ -1049,14 +1191,14 @@ class ColumnEngine:
             }
 
         # axial capacity
-        NRd_max = self.sec_x.N_pure_compression()
+        NRd_max = sec_x.N_pure_compression()
         res["NRd_max_kN"] = NRd_max
-        res["NRd_simplified_kN"] = self.sec_x.N_simplified_kN()
+        res["NRd_simplified_kN"] = sec_x.N_simplified_kN()
         res["axial_utilisation"] = NEd_kN / NRd_max if NRd_max > 0 else float("inf")
 
         # interaction
         if self.ctype == "biaxial":
-            a, ratio = self.biaxial_exponent(NEd_kN)
+            a, ratio = self.biaxial_exponent(NEd_kN, geo)
             ux = res["x"]["utilisation"]
             uy = res["y"]["utilisation"]
             interaction = min(ux ** a + uy ** a, UTIL_CAP)
@@ -1073,7 +1215,7 @@ class ColumnEngine:
             )
 
         # steel limits
-        As_req, b1, b2 = As_min_mm2(NEd_kN, self.geo.Ac, self.mat.fyd)
+        As_req, b1, b2 = As_min_mm2(NEd_kN, geo.Ac, self.mat.fyd)
         res["As_min"] = As_req
         res["As_min_basis_1"] = b1
         res["As_min_basis_2"] = b2
@@ -1083,17 +1225,126 @@ class ColumnEngine:
         if self.ctype == "biaxial":
             checks.append(("Biaxial interaction", res["biaxial"]["interaction"] <= 1.0))
         elif self.ctype == "uniaxial":
-            checks.append(("Uniaxial bending Mx", res["x"]["utilisation"] <= 1.0))
-            checks.append(("Weak axis My (min ecc + 2nd order)", res["y"]["utilisation"] <= 1.0))
+            bend, other = self.uni_axis, ("y" if self.uni_axis == "x" else "x")
+            checks.append((f"Uniaxial bending M{bend}", res[bend]["utilisation"] <= 1.0))
+            checks.append((f"Other axis M{other} (min ecc + 2nd order)",
+                           res[other]["utilisation"] <= 1.0))
         else:
             checks.append(("Minimum eccentricity Mx", res["x"]["utilisation"] <= 1.0))
             checks.append(("Minimum eccentricity My", res["y"]["utilisation"] <= 1.0))
-        checks.append(("As,min", self.geo.As_total >= As_req))
-        checks.append(("As,max", self.geo.As_total <= As_max_mm2(self.geo.Ac)))
+        checks.append(("As,min", geo.As_total >= As_req))
+        checks.append(("As,max", geo.As_total <= As_max_mm2(geo.Ac)))
+
+        s_max = max_tie_spacing_mm(geo.bar_dia, geo.b, geo.h)
+        res["detailing"] = {
+            "phi_t_min_mm": min_tie_diameter_mm(geo.bar_dia),
+            "link_dia_mm": geo.link_dia,
+            "s_max_mm": s_max,
+            "s_reduced_mm": reduced_tie_spacing_mm(s_max),
+            "As_provided_mm2": geo.As_total,
+            "As_min_mm2": As_req,
+            "As_min_basis_1_mm2": b1,
+            "As_min_basis_2_mm2": b2,
+            "As_max_mm2": As_max_mm2(geo.Ac),
+            "rho_pct": 100.0 * geo.As_total / geo.Ac,
+            "n_bars_b_face": geo.n_b_face,
+            "n_bars_h_face": geo.n_h_face,
+            "d_prime_mm": geo.d_prime,
+            "Ac_mm2": geo.Ac,
+        }
+        res["interaction_x"] = sec_x.interaction_curve()
+        res["interaction_y"] = sec_y.interaction_curve()
 
         res["checks"] = [{"name": n, "pass": bool(p)} for n, p in checks]
         res["status"] = "PASS" if all(p for _n, p in checks) else "FAIL"
         return res
+
+    # ---------- automatic bar selection ----------
+    def _trial_level(self, level: str, dia: float, n: int):
+        """Build this level's objects for a trial cage, without committing."""
+        base = self.d.level_specs.get(level)
+        sp = (dataclasses.replace(base, main_bar_dia_mm=float(dia), n_bars_total=int(n),
+                                  n_bars_b_face=None, n_bars_h_face=None)
+              if base is not None else
+              LevelSpec(main_bar_dia_mm=float(dia), n_bars_total=int(n)))
+        saved = self.d.level_specs.get(level)
+        self.d.level_specs[level] = sp
+        try:
+            di = self._level_input(level)
+            g = Geometry(di, self.mat)
+            sl = Slenderness(di, g, self.mat)
+            return g, sl, SectionAnalysis(g, self.mat, "x"), SectionAnalysis(g, self.mat, "y")
+        finally:
+            if saved is None:
+                self.d.level_specs.pop(level, None)
+            else:
+                self.d.level_specs[level] = saved
+
+    def autosize_level(self, level: str, NEd_kN: float) -> Dict:
+        """
+        Walk the candidate list smallest-first and keep the first cage that
+        satisfies every check at this storey.
+
+        Bars do not change the take-down: N_Ed comes from the gross section, so
+        there is nothing to iterate. Every candidate is evaluated against the
+        same N_Ed.
+
+        Returns the chosen level result with an "autosize" block attached,
+        listing every candidate tried and whether it passed -- that list is what
+        a results-page dropdown offers, so an engineer can take a bigger cage
+        for bar continuity without leaving the app.
+        """
+        saved = (self.geo_by_level.get(level), self.slender_by_level.get(level),
+                 self.sec_by_level.get(level))
+        cands = self.d.autosize_candidates or AUTOSIZE_CANDIDATES
+        attempts: List[Dict] = []
+        chosen: Optional[Dict] = None
+
+        for dia, n in cands:
+            g, sl, sx, sy = self._trial_level(level, dia, n)
+            fits, why = bars_fit(g)
+            if not fits:
+                attempts.append({"bars": f"{g.n_bars}Y{int(dia)}", "bar_dia_mm": float(dia),
+                                 "n_bars": g.n_bars, "As_mm2": round(g.As_total, 1),
+                                 "passes": False, "reason": why, "utilisation": None})
+                continue
+            self.geo_by_level[level] = g
+            self.slender_by_level[level] = sl
+            self.sec_by_level[level] = (sx, sy)
+            res = self.design_level(level, NEd_kN)
+            ok = res["status"] == "PASS"
+            failed = [c["name"] for c in res["checks"] if not c["pass"]]
+            attempts.append({"bars": f"{g.n_bars}Y{int(dia)}", "bar_dia_mm": float(dia),
+                             "n_bars": g.n_bars, "As_mm2": round(g.As_total, 1),
+                             "passes": bool(ok),
+                             "reason": "" if ok else "; ".join(failed),
+                             "utilisation": round(res["governing_utilisation"], 4)})
+            if ok and chosen is None:
+                chosen = res
+                chosen_objs = (g, sl, (sx, sy))
+                # keep going so the dropdown can offer the larger options too
+
+        if chosen is None:
+            # Nothing worked. Restore and hand back the user's own cage with
+            # the attempt list, so the failure says why rather than just FAIL.
+            if saved[0] is not None:
+                self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = saved
+            res = self.design_level(level, NEd_kN)
+            res["autosize"] = {"applied": False, "chosen": None,
+                               "reason": "No candidate cage satisfies every check in this "
+                                         "section. Increase the section or the concrete grade.",
+                               "attempts": attempts}
+            return res
+
+        self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = \
+            chosen_objs[0], chosen_objs[1], chosen_objs[2]
+        chosen["autosize"] = {
+            "applied": True,
+            "chosen": f"{chosen['n_bars']}Y{int(chosen['bar_dia_mm'])}",
+            "reason": "smallest cage passing every check",
+            "attempts": attempts,
+        }
+        return chosen
 
     # ---------- orchestration ----------
     def run(self) -> Dict:
@@ -1109,7 +1360,10 @@ class ColumnEngine:
         critical_level = max(axial, key=lambda k: axial[k])
         NEd_crit = axial[critical_level]
 
-        levels = [self.design_level(lv, n) for lv, n in axial.items()]
+        if d.autosize_bars:
+            levels = [self.autosize_level(lv, n) for lv, n in axial.items()]
+        else:
+            levels = [self.design_level(lv, n) for lv, n in axial.items()]
         crit = next(r for r in levels if r["level"] == critical_level)
 
         failed = []
@@ -1124,6 +1378,7 @@ class ColumnEngine:
             "summary": {
                 "column_id": d.column_id,
                 "column_type": self.ctype,
+                "uniaxial_axis": self.uni_axis if self.ctype == "uniaxial" else None,
                 "design_code": d.design_code,
                 "b_mm": geo.b, "h_mm": geo.h,
                 "storey_height_m": d.storey_height_m,
@@ -1362,8 +1617,10 @@ class ColumnEngine:
                 rows.append(row("EN 1992-1-1 Cl. 5.8.9(4)", f"{lv}: (MEdx/MRdx)^a + (MEdy/MRdy)^a = ({f3(r['x']['MEd'])}/{f3(r['x']['MRd'])})^{f3(bi['a'])} + ({f3(r['y']['MEd'])}/{f3(r['y']['MRd'])})^{f3(bi['a'])}", f"{f3(bi['interaction'])}"))
                 rows.append(row("Design check", f"{lv}: interaction <= 1.0 ?", "PASS" if bi["interaction"] <= 1.0 else "FAIL"))
             elif self.ctype == "uniaxial":
-                rows.append(row("Uniaxial check, strong axis", f"{lv}: MEdx/MRdx = {f3(r['x']['MEd'])}/{f3(r['x']['MRd'])}", f"{f3(r['x']['utilisation'])}"))
-                rows.append(row("Weak axis, min ecc + 2nd order", f"{lv}: MEdy/MRdy = {f3(r['y']['MEd'])}/{f3(r['y']['MRd'])}", f"{f3(r['y']['utilisation'])}"))
+                bend = self.uni_axis
+                other = "y" if bend == "x" else "x"
+                rows.append(row(f"Uniaxial check, bending about {bend}", f"{lv}: MEd{bend}/MRd{bend} = {f3(r[bend]['MEd'])}/{f3(r[bend]['MRd'])}", f"{f3(r[bend]['utilisation'])}"))
+                rows.append(row(f"Other axis {other}, min ecc + 2nd order", f"{lv}: MEd{other}/MRd{other} = {f3(r[other]['MEd'])}/{f3(r[other]['MRd'])}", f"{f3(r[other]['utilisation'])}"))
                 rows.append(row("Design check", f"{lv}: both <= 1.0 ?", "PASS" if max(r['x']['utilisation'], r['y']['utilisation']) <= 1.0 else "FAIL"))
             else:
                 rows.append(row("Axial + min ecc", f"{lv}: MEdx/MRdx = {f3(r['x']['MEd'])}/{f3(r['x']['MRd'])}", f"{f3(r['x']['utilisation'])}"))

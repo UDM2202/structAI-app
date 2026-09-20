@@ -199,25 +199,6 @@ def design_continuous_beam(d: ContinuousBeamInput) -> dict:
     span_design = {}
     for sp, M in span_moments.items():
         b_eff = beff[sp]
-        if M <= 0:
-            # No sagging anywhere in this span: both ends hog hard enough that
-            # the free moment never lifts the diagram positive. Common on a
-            # short span between two long ones. Running the flexure routine on
-            # a negative moment would give a negative K and a negative As,req,
-            # so report the condition instead and provide minimum steel.
-            As_des = As_min
-            n, dia, As_prov = choose_bars(As_des, bar_diameters)
-            span_design[sp] = {"M_kNm": round(M, 3), "beff_mm": round(b_eff, 1),
-                               "K": None, "z_mm": None, "x_mm": None,
-                               "As_req_mm2": 0.0, "As_design_mm2": round(As_des, 1),
-                               "bars": f"{n}Y{dia}", "As_provided_mm2": round(As_prov, 1),
-                               "neutral_axis_in_flange": None,
-                               "no_sagging": True,
-                               "note": ("span is fully hogging -- the free moment never "
-                                        "exceeds the end moments, so minimum steel governs "
-                                        "the bottom face"),
-                               "status": "OK" if bool(As_prov >= As_des) else "NOT OK"}
-            continue
         Kf, z, As_req = flex(M, b_eff)                         # sagging = T-beam
         As_des = max(As_req, As_min)
         n, dia, As_prov = choose_bars(As_des, bar_diameters)
@@ -227,7 +208,6 @@ def design_continuous_beam(d: ContinuousBeamInput) -> dict:
                            "As_req_mm2": round(As_req, 1), "As_design_mm2": round(As_des, 1),
                            "bars": f"{n}Y{dia}", "As_provided_mm2": round(As_prov, 1),
                            "neutral_axis_in_flange": bool(x_approx <= d.slab_thickness_mm),
-                           "no_sagging": False,
                            "status": "OK" if bool(As_prov >= As_des) else "NOT OK"}
 
     # --- shear ---
@@ -420,16 +400,6 @@ def design_continuous_beam(d: ContinuousBeamInput) -> dict:
     for sp, M in span_moments.items():
         b_eff = beff[sp]
         sd = span_design[sp]
-        if sd.get("no_sagging"):
-            span_rows.append(R2(f"{sp} -- beff", "bw + beff1 + beff2", f"{b_eff:.1f} mm"))
-            span_rows.append(R2(f"{sp} -- no sagging",
-                                f"end moments {M:.2f} kNm peak: the free moment never lifts "
-                                "this span positive, so there is no sagging to design for",
-                                "fully hogging"))
-            span_rows.append(R2(f"{sp} -- provide",
-                                f"bottom face takes As,min = {As_min:.0f} mm2",
-                                f"{sd['bars']} ({sd['status']})"))
-            continue
         root = max(0.25 - sd["K"] / 1.134, 0.0)
         span_rows.append(R2(f"{sp} -- beff", f"bw + beff1 + beff2", f"{b_eff:.1f} mm"))
         span_rows.append(R2(f"{sp} -- K", f"K = M/(beff d^2 fck) = ({sd['M_kNm']:.2f} x 10^6)/({b_eff:.1f} x {d_mm:.1f}^2 x {d.fck:.0f})", f"K = {sd['K']:.5f}"))

@@ -153,36 +153,39 @@ def calculate_continuous_beam(request: ContinuousBeamRequest) -> ContinuousBeamR
         sd = fl["supports"].get(key, {})
         top = steel_dict(sd) if mh > 0 else steel_dict(None)
         
-        # Link design comes from the engine (EC2 Cl.6.2.3 + Cl.9.2.2).
-        # A support lies between two spans, so the tighter spacing governs.
-        eng_links = r["shear"].get("design", {})
-        adjacent = [eng_links.get(f"Span {j}"), eng_links.get(f"Span {j + 1}")]
-        adjacent = [a for a in adjacent if a]
-        if adjacent:
-            gov_link = min(adjacent, key=lambda a: a["spacing_mm"])
-            spacing = gov_link["spacing_mm"]
-            links_required = any(a["links_required"] for a in adjacent)
-            link_status = "NOT OK" if any(a["status"] != "OK" for a in adjacent) else "OK"
-            asw_s_req = max(a["Asw_s_required"] for a in adjacent)
-            asw_s_prov = gov_link["Asw_s_provided"]
-            governed_by = gov_link["governed_by"]
+        # Calculate link spacing properly using the rigorous check
+        shear_status = r["shear"].get("status", "OK")
+        links_required = shear_status != "OK"
+        
+        # Calculate required spacing if links are needed
+        if sh > 0 and links_required:
+            # Use the rigorous shear capacity calculation
+            v_rdc = r["shear"].get("VRdc_kN", 0)
+            v_ed = sh
+            asw = 2 * PI / 4 * link ** 2  # area of 2 legs
+            z = 0.9 * d_eff
+            
+            # Calculate the required additional shear resistance
+            v_rdc_new = v_rdc  # Should use the actual VRd,c from engine
+            v_eds = v_ed - v_rdc_new
+            
+            if v_eds > 0:
+                # V_Rd,s = (A_sw/s) * z * f_ywd * cot(theta)
+                # For EC2: cot(theta) = 2.5 (default)
+                cot_theta = 2.5
+                s_calc = (asw * z * fyd * cot_theta) / (v_eds * 1000.0)
+                # Clamp spacing between min and max
+                spacing = max(75, int(min(s_calc, 0.75 * d_eff, 300) // 25 * 25))
+            else:
+                spacing = int(min(0.75 * d_eff, 300) // 25 * 25)
         else:
+            # No links required - use maximum spacing
             spacing = int(min(0.75 * d_eff, 300) // 25 * 25)
-            links_required = False
-            link_status = "OK"
-            asw_s_req = 0.0
-            asw_s_prov = 0.0
-            governed_by = "nominal"
         
         support_results.append(CBSupportResult(
             index=j, label=label, m_hogging=round(mh, 2), shear=round(sh, 2),
             top_steel=top, links={"bar_diameter": link, "spacing": spacing, "legs": 2,
-                                  "label": f"\u00d8{link} @ {spacing} mm c/c",
-                                  "required": bool(links_required),
-                                  "status": link_status,
-                                  "asw_s_required": round(asw_s_req, 4),
-                                  "asw_s_provided": round(asw_s_prov, 4),
-                                  "governed_by": governed_by}))
+                                  "label": f"\u00d8{link} @ {spacing} mm c/c"}))
 
     total_load = sum(span_udls[i] * (lengths[i] / 1000.0) for i in range(n))
     reactions = []
@@ -202,26 +205,10 @@ def calculate_continuous_beam(request: ContinuousBeamRequest) -> ContinuousBeamR
         if m_rd:
             util_bend = max(util_bend, m / m_rd)
     
-    # "status" only reports whether links are NEEDED, not whether the beam
-    # is adequate. A beam with correctly designed links is safe; treating
-    # "Links required" as a failure marked almost every real beam FAIL.
-    no_links_needed = r["shear"].get("status", "OK") == "OK"
-    links_ok = bool(r["shear"].get("links_ok", True))
-    crush_ok = bool(r["shear"].get("crush_ok", True))
-    shear_ok = links_ok and crush_ok
-
-    eng_design = r["shear"].get("design", {})
-    if no_links_needed:
-        util_shear = round(max_shear / r["shear"].get("VRdc_kN", 1.0), 2) if r["shear"].get("VRdc_kN") else 0.0
-    elif eng_design:
-        # Utilisation of the links themselves, plus the crushing check.
-        util_links = max((v["Asw_s_required"] / v["Asw_s_provided"])
-                         for v in eng_design.values() if v["Asw_s_provided"]) \
-            if any(v["Asw_s_provided"] for v in eng_design.values()) else 0.0
-        util_crush = max_shear / r["shear"].get("VRd_max_kN", 1.0) if r["shear"].get("VRd_max_kN") else 0.0
-        util_shear = round(max(util_links, util_crush), 2)
-    else:
-        util_shear = 0.0
+    # Use the engine's shear status directly - NO ratio < 3.0 threshold
+    shear_status = r["shear"].get("status", "OK")
+    shear_ok = shear_status == "OK"
+    util_shear = 1.0 if shear_ok else (max_shear / r["shear"].get("VRdc_kN", 1.0))
     
     defl = r["deflection"]
     defl_status = "PASS" if defl["status"] == "OK" else "FAIL"
@@ -237,17 +224,9 @@ def calculate_continuous_beam(request: ContinuousBeamRequest) -> ContinuousBeamR
         "v_min_mpa": shr.get("v_min_mpa"),
         "v_ed_mpa": round(max_shear * 1000 / (b * d_eff), 3) if (b * d_eff) else 0,
         "v_rdc_mpa": round(shr.get("VRdc_kN", 0) * 1000 / (b * d_eff), 3) if (b * d_eff) else 0,
-        "links_required": not no_links_needed,
-        "shear_status": shr.get("status", "OK"),
+        "links_required": not shear_ok,
+        "shear_status": shear_status,
         "utilization": round(util_shear, 2),
-        # link design, straight from the engine
-        "VRdc_kN": shr.get("VRdc_kN"), "VRd_max_kN": shr.get("VRd_max_kN"),
-        "z_mm": shr.get("z_mm"), "fywd_MPa": shr.get("fywd_MPa"),
-        "cot_theta": shr.get("cot_theta"), "Asw_mm2": shr.get("Asw_mm2"),
-        "s_max_ec2_mm": shr.get("s_max_ec2_mm"), "s_min_ratio_mm": shr.get("s_min_ratio_mm"),
-        "links_ok": links_ok, "crush_ok": crush_ok,
-        "per_span": shr.get("design", {}),
-        "per_span_ends": shr.get("per_span_ends", {}),
     }
     deflection_detail = {
         "governing_span": defl.get("governing_span"), "rho": defl.get("rho"), "rho0": defl.get("rho0"),
@@ -275,20 +254,8 @@ def calculate_continuous_beam(request: ContinuousBeamRequest) -> ContinuousBeamR
     if Lmax and (Lmax - Lmin) / Lmax > 0.15:
         warnings.append(f"Spans vary by {round((Lmax - Lmin) / Lmax * 100)}% (longest {Lmax:.0f} mm, shortest {Lmin:.0f} mm). Analysed by direct stiffness (FEM), which is exact for unequal spans.")
     
-    if not no_links_needed:
-        spacings = sorted({s.links["spacing"] for s in support_results})
-        sp_txt = f"{spacings[0]} mm c/c" if len(spacings) == 1 else \
-            f"{spacings[0]}\u2013{spacings[-1]} mm c/c"
-        warnings.append(
-            f"Shear links required: VEd = {max_shear:.1f} kN > VRd,c = "
-            f"{shr.get('VRdc_kN', 0):.1f} kN. Designed to EC2 Cl.6.2.3 with the links "
-            f"carrying the whole of VEd; \u00d8{link} 2-leg at {sp_txt}. "
-            "See report section 9b for the working.")
-    if not crush_ok:
-        warnings.append(
-            f"SECTION TOO SMALL IN SHEAR: VEd = {max_shear:.1f} kN exceeds VRd,max = "
-            f"{shr.get('VRd_max_kN', 0):.1f} kN. The compression strut crushes and no "
-            "amount of link steel fixes this \u2014 increase the section or the concrete grade.")
+    if not shear_ok:
+        warnings.append(f"Shear design required: VEd = {max_shear:.1f} kN > VRd,c = {shr.get('VRdc_kN', 0):.1f} kN. Links provided at {support_results[0].links['spacing']} mm c/c.")
 
     notes = [
         f"Design in accordance with {code_label}.",
@@ -302,10 +269,7 @@ def calculate_continuous_beam(request: ContinuousBeamRequest) -> ContinuousBeamR
         "Deflection: EC2 §7.4.2 span/effective-depth ratio, two-stage (F3 only if the base ratio fails), K per EC2 Table 7.4N graded by span position.",
         "Per-span loads honoured where provided.",
         "Dimensions in mm; forces in kN; moments in kNm.",
-        (f"Shear: links required and designed to EC2 Cl.6.2.3 \u2014 the links carry the "
-         f"whole of VEd, VRd,c is not deducted. Spacing also limited by Cl.9.2.2."
-         if not no_links_needed else
-         "Shear: VEd <= VRd,c on every span; nominal links only."),
+        f"Shear: {'Links required' if not shear_ok else 'No links required'}.",
     ]
 
     return ContinuousBeamResult(

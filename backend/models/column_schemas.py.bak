@@ -23,11 +23,6 @@ class EffectiveLengthMethod(str, Enum):
     DIRECT = "direct"            # l0 entered per axis
 
 
-class UniaxialAxis(str, Enum):
-    X = "x"
-    Y = "y"
-
-
 class EndCondition(str, Enum):
     FIXED_FIXED = "fixed-fixed"
     FIXED_PINNED = "fixed-pinned"
@@ -215,52 +210,10 @@ class ColEffectiveLength(BaseModel):
         return self
 
 
-class ColAutosizeAttempt(BaseModel):
-    bars: str
-    bar_dia_mm: float
-    n_bars: int
-    As_mm2: float
-    passes: bool
-    reason: str
-    utilisation: Optional[float] = None
-
-
-class ColAutosize(BaseModel):
-    applied: bool
-    chosen: Optional[str] = None
-    reason: str
-    attempts: List[ColAutosizeAttempt]
-
-
-class ColFrameOptions(BaseModel):
-    """
-    How the design actions are obtained. Default is to derive them: the user
-    supplies building geometry and loads, never moments.
-    """
-    derive_moments: bool = True
-    base_fixed: bool = Field(
-        False,
-        description="True if the foundation is designed to resist moment. A pinned "
-                    "base carries none, so the lowest column has zero moment there.",
-    )
-    cracked_beam_stiffness: bool = Field(
-        True,
-        description="Halve beam I for cracking when distributing the joint moment. "
-                    "EC2 practice halves it; BS 8110 worked examples typically do not. "
-                    "Halving raises the column's share, so it is the conservative side.",
-    )
-
-
 class ColAnalysisOptions(BaseModel):
     include_min_eccentricity: bool = True
     include_geometric_imperfections: bool = True
     effective_creep_ratio: float = Field(2.0, ge=0, le=6.0)
-    autosize_bars: bool = Field(
-        False,
-        description="Propose the smallest cage that passes every check at each storey, "
-                    "within whatever section that storey has. Sections are never changed: "
-                    "if no candidate fits, the result says the section is too small.",
-    )
     use_default_A_B: bool = Field(
         True,
         description=(
@@ -317,35 +270,9 @@ class ColPartialFactors(BaseModel):
     alpha_cc: float = Field(0.85, gt=0, le=1.0)
 
 
-class ColLevelSpec(BaseModel):
-    """
-    Per-storey overrides. Anything left None falls back to the column-wide
-    value, so a request that sets none of these behaves exactly as before.
-    """
-    b_mm: Optional[float] = Field(None, gt=0)
-    h_mm: Optional[float] = Field(None, gt=0)
-    main_bar_dia_mm: Optional[float] = Field(None, gt=0)
-    n_bars_total: Optional[int] = Field(None, ge=4)
-    n_bars_b_face: Optional[int] = Field(None, ge=2)
-    n_bars_h_face: Optional[int] = Field(None, ge=2)
-    link_dia_mm: Optional[float] = Field(None, gt=0)
-    storey_height_m: Optional[float] = Field(None, gt=0)
-    floor: Optional[ColFloorTemplate] = None
-
-    @model_validator(mode="after")
-    def _faces_together(self):
-        if (self.n_bars_b_face is None) != (self.n_bars_h_face is None):
-            raise ValueError(
-                "Set both n_bars_b_face and n_bars_h_face for a level, or neither."
-            )
-        return self
-
-
 class ColumnDesignRequest(BaseModel):
     column_id: str = "C1"
     column_type: ColumnType = ColumnType.BIAXIAL
-    # Which axis a uniaxial column bends about. Ignored on the other routes.
-    uniaxial_axis: UniaxialAxis = UniaxialAxis.X
     design_code: DesignCode = DesignCode.EC2
 
     end_condition: EndCondition = EndCondition.FIXED_FIXED
@@ -354,11 +281,6 @@ class ColumnDesignRequest(BaseModel):
     geometry: ColGeometry = ColGeometry()
     effective_length: ColEffectiveLength = ColEffectiveLength()
     analysis: ColAnalysisOptions = ColAnalysisOptions()
-    frame: ColFrameOptions = ColFrameOptions()
-
-    # Per-storey edits, keyed by level name ("Roof", "Typical_Floor_3", ...).
-    # Empty means one section and one cage for the whole column.
-    levels: Dict[str, ColLevelSpec] = Field(default_factory=dict)
     reinforcement: ColReinforcement = ColReinforcement()
     materials: ColMaterials = ColMaterials()
     durability: ColDurability = ColDurability()
@@ -423,21 +345,6 @@ class ColumnDesignRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _levels_known(self):
-        if not self.levels:
-            return self
-        valid = {"Roof"} | {f"Typical_Floor_{i}"
-                            for i in range(1, self.number_of_typical_floors + 1)}
-        unknown = sorted(set(self.levels) - valid - {"Design"})
-        if unknown:
-            raise ValueError(
-                f"Unknown level name(s): {', '.join(unknown)}. Expected "
-                f"'Roof' or 'Typical_Floor_1'..'Typical_Floor_"
-                f"{self.number_of_typical_floors}'."
-            )
-        return self
-
-    @model_validator(mode="after")
     def _tributary_present(self):
         if self.NEd_override_kN is not None:
             return self
@@ -454,27 +361,13 @@ class ColumnDesignRequest(BaseModel):
     def _moments_match_route(self):
         if self.column_type == ColumnType.AXIAL:
             return self
-        if self.frame.derive_moments:
-            # The sub-frame produces them; demanding them as input would
-            # defeat the point of deriving them.
-            return self
-        if self.column_type == ColumnType.UNIAXIAL:
-            ax = self.uniaxial_axis.value
-            src = self.M02x_kNm if ax == "x" else self.M02y_kNm
-            ovr = self.MEdx_override_kNm if ax == "x" else self.MEdy_override_kNm
-            if not src and ovr is None:
-                raise ValueError(
-                    f"A uniaxial column bending about {ax} needs first order moments "
-                    f"about {ax}. Supply M02{ax}_kNm per level, or MEd{ax}_override_kNm, "
-                    "or switch the column type to 'axial' for a minimum-eccentricity "
-                    "design."
-                )
-        if self.column_type == ColumnType.BIAXIAL:
+        if self.column_type in (ColumnType.UNIAXIAL, ColumnType.BIAXIAL):
             has_x = bool(self.M02x_kNm) or self.MEdx_override_kNm is not None
             if not has_x:
                 raise ValueError(
-                    "A biaxial column needs first order moments about x. Supply "
-                    "M02x_kNm per level, or MEdx_override_kNm."
+                    "A uniaxial or biaxial column needs first order moments about "
+                    "x. Supply M02x_kNm per level, or MEdx_override_kNm, or switch "
+                    "the column type to 'axial' for a minimum-eccentricity design."
                 )
         if self.column_type == ColumnType.BIAXIAL:
             has_y = bool(self.M02y_kNm) or self.MEdy_override_kNm is not None
@@ -553,42 +446,9 @@ class ColCheck(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-class ColInteractionPoint(BaseModel):
-    N_kN: float
-    M_kNm: float
-    x_mm: float
-
-
-class ColDetailing(BaseModel):
-    phi_t_min_mm: float
-    link_dia_mm: float
-    s_max_mm: float
-    s_reduced_mm: float
-    As_provided_mm2: float
-    As_min_mm2: float
-    As_min_basis_1_mm2: float
-    As_min_basis_2_mm2: float
-    As_max_mm2: float
-    rho_pct: float
-    n_bars_b_face: int
-    n_bars_h_face: int
-    d_prime_mm: float
-    Ac_mm2: float
-
-
 class ColLevelResult(BaseModel):
     level: str
     NEd_kN: float
-    # This storey's own section and cage. With no per-level edits these are
-    # the same on every level.
-    b_mm: float
-    h_mm: float
-    bar_dia_mm: float
-    n_bars: int
-    link_dia_mm: float
-    As_provided_mm2: float
-    cover_mm: float
-    rho_pct: float
     x: ColAxisResult
     y: ColAxisResult
     NRd_max_kN: float
@@ -600,17 +460,12 @@ class ColLevelResult(BaseModel):
     As_min_basis_1: float
     As_min_basis_2: float
     checks: List[ColCheck]
-    autosize: Optional[ColAutosize] = None
-    detailing: ColDetailing
-    interaction_x: List[ColInteractionPoint]
-    interaction_y: List[ColInteractionPoint]
     status: str
 
 
 class ColSummary(BaseModel):
     column_id: str
     column_type: str
-    uniaxial_axis: Optional[str] = None
     design_code: str
     b_mm: float
     h_mm: float
@@ -640,6 +495,29 @@ class ColMaterialsOut(BaseModel):
     eps_c3: float
     lambda_block: float
     eta_block: float
+
+
+class ColInteractionPoint(BaseModel):
+    N_kN: float
+    M_kNm: float
+    x_mm: float
+
+
+class ColDetailing(BaseModel):
+    phi_t_min_mm: float
+    link_dia_mm: float
+    s_max_mm: float
+    s_reduced_mm: float
+    As_provided_mm2: float
+    As_min_mm2: float
+    As_min_basis_1_mm2: float
+    As_min_basis_2_mm2: float
+    As_max_mm2: float
+    rho_pct: float
+    n_bars_b_face: int
+    n_bars_h_face: int
+    d_prime_mm: float
+    Ac_mm2: float
 
 
 class ColumnDesignResult(BaseModel):
