@@ -185,6 +185,13 @@ function App() {
                         </MainLayout>
                       </ProtectedRoute>
                     } />
+                    <Route path="/continuous-beam" element={
+                      <ProtectedRoute>
+                        <MainLayout currentModule="beam" breadcrumb="Beam Design > Continuous Beam > Input">
+                          <BeamInput />
+                        </MainLayout>
+                      </ProtectedRoute>
+                    } />
 
                     <Route path="/beam-results" element={
                       <ProtectedRoute>

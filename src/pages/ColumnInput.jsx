@@ -35,6 +35,10 @@ const END_CONDITIONS = [
   { value: "fixed-free", label: "Fixed–Free (K = 2.0)" },
 ];
 const BRACING = [{ value: "braced", label: "Braced" }, { value: "unbraced", label: "Unbraced" }];
+const UNIAXIAL_AXES = [
+  { value: "x", label: "About x — section depth h resists it" },
+  { value: "y", label: "About y — section width b resists it" },
+];
 const EL_METHODS = [
   { value: "idealised", label: "Idealised K from end condition" },
   { value: "k_factors", label: "Joint flexibilities k₁, k₂ (Eq. 5.15 / 5.16)" },
@@ -52,10 +56,10 @@ const BUILDING_USES = [
   "plant_room", "roof_no_access", "roof_access",
 ];
 
-const STEPS_FULL = ["Column", "Section", "Slenderness", "Loads", "Moments", "Review"];
-// An axially loaded column is designed for minimum eccentricity only, so the
-// Moments step has nothing to collect. Dropping it beats showing an empty card.
-const STEPS_AXIAL = ["Column", "Section", "Slenderness", "Loads", "Review"];
+// Design actions are never typed in. N_Ed comes from the take-down and the
+// first-order moments from the sub-frame, so there is no Moments step at all.
+const STEPS_FULL = ["Column", "Section", "Slenderness", "Floors", "Review"];
+const STEPS_AXIAL = STEPS_FULL;
 
 const beamDefault = () => ({
   width_m: "0.23", depth_m: "0.45",
@@ -71,7 +75,7 @@ const floorDefault = (use, imposed, walls) => ({
 });
 
 const DEFAULTS = {
-  column_id: "C1", column_type: "biaxial", design_code: "EC2",
+  column_id: "C1", column_type: "biaxial", uniaxial_axis: "x", design_code: "EC2",
   end_condition: "fixed-fixed", bracing: "braced",
   storey_height_m: "3.5",
 
@@ -91,10 +95,14 @@ const DEFAULTS = {
   k1_x: "0.1", k2_x: "1.0", k1_y: "0.1", k2_y: "1.0",
   l0_x_mm: "", l0_y_mm: "",
 
+  autosize_bars: false,
   include_min_eccentricity: true,
   include_geometric_imperfections: true,
   effective_creep_ratio: "2.0",
   use_default_A_B: true,
+
+  base_fixed: false,
+  cracked_beam_stiffness: true,
 
   load_mode: "takedown",              // takedown | direct
   // In direct mode: "ends" sends first order end moments and lets the engine
@@ -104,13 +112,13 @@ const DEFAULTS = {
   // over-classified as slender.
   direct_moment_mode: "ends",         // ends | final
   NEd_override_kN: "",
-  MEdx_override_kNm: "", MEdy_override_kNm: "",
 
   number_of_typical_floors: "3",
   typical_floor: floorDefault("office", "3.0", true),
   roof_floor: floorDefault("roof_no_access", "0.75", false),
 
-  moments: {},                        // level -> {M01x,M02x,M01y,M02y}
+  // Per-storey edits, keyed by level name. Absent means "inherit".
+  levelEdits: {},
 };
 
 /* engine's bar distribution, mirrored so the preview shows the real cage */
@@ -149,6 +157,21 @@ export default function ColumnInput() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setFloor = (which, patch) => setForm((f) => ({ ...f, [which]: { ...f[which], ...patch } }));
+  // Per-storey edits. `which` is the level name.
+  const setLevel = (lvl, patch) =>
+    setForm((f) => ({ ...f, levelEdits: { ...f.levelEdits, [lvl]: { ...(f.levelEdits[lvl] || {}), ...patch } } }));
+  const setLevelFloor = (lvl, patch) =>
+    setForm((f) => {
+      const cur = f.levelEdits[lvl] || {};
+      return { ...f, levelEdits: { ...f.levelEdits, [lvl]: { ...cur, floor: { ...(cur.floor || {}), ...patch } } } };
+    });
+  const setLevelBeam = (lvl, axis, patch) =>
+    setForm((f) => {
+      const cur = f.levelEdits[lvl] || {};
+      const fl = cur.floor || {};
+      return { ...f, levelEdits: { ...f.levelEdits, [lvl]: { ...cur, floor: { ...fl, [axis]: { ...(fl[axis] || {}), ...patch } } } } };
+    });
+
   const setBeam = (which, axis, patch) =>
     setForm((f) => ({ ...f, [which]: { ...f[which], [axis]: { ...f[which][axis], ...patch } } }));
 
@@ -163,6 +186,8 @@ export default function ColumnInput() {
     setMaxReached((m) => Math.min(m, STEPS.length - 1));
   }, [STEPS.length]);
   const isBiaxial = form.column_type === "biaxial";
+  const isUniaxial = form.column_type === "uniaxial";
+  const uniAx = form.uniaxial_axis === "y" ? "y" : "x";
   const directLoad = form.load_mode === "direct";
   const useFinalMEd = directLoad && form.direct_moment_mode === "final";
 
@@ -203,17 +228,6 @@ export default function ColumnInput() {
       if (directLoad) return pos(form.NEd_override_kN);
       return (parseInt(form.number_of_typical_floors) || 0) >= 1;
     }
-    if (s === 4) {
-      if (isAxial) return true;
-      if (useFinalMEd) {
-        if (numOrNull(form.MEdx_override_kNm) === null) return false;
-        return !isBiaxial || numOrNull(form.MEdy_override_kNm) !== null;
-      }
-      const hasX = levels.some((l) => numOrNull(form.moments[l]?.M02x) !== null);
-      if (!hasX) return false;
-      if (!isBiaxial) return true;
-      return levels.some((l) => numOrNull(form.moments[l]?.M02y) !== null);
-    }
     return true;
   };
   const firstInvalidBefore = (target) => {
@@ -252,16 +266,65 @@ export default function ColumnInput() {
       beam_y: beam(fl.beam_y),
     });
 
+    // Moments are derived by the sub-frame, never sent from here.
     const M01x = {}, M02x = {}, M01y = {}, M02y = {};
-    if (!isAxial && !useFinalMEd) {
+
+    // Per-storey edits. Only levels ticked "custom" are sent, and within
+    // those only the fields actually filled in -- everything else inherits,
+    // which is what the backend's None-means-fall-back contract expects.
+    const levelsOut = {};
+    if (!directLoad) {
       for (const lvl of levels) {
-        const m = f.moments[lvl] || {};
-        if (numOrNull(m.M01x) !== null) M01x[lvl] = numOrNull(m.M01x);
-        if (numOrNull(m.M02x) !== null) M02x[lvl] = numOrNull(m.M02x);
-        if (isBiaxial) {
-          if (numOrNull(m.M01y) !== null) M01y[lvl] = numOrNull(m.M01y);
-          if (numOrNull(m.M02y) !== null) M02y[lvl] = numOrNull(m.M02y);
+        const e = f.levelEdits[lvl];
+        if (!e || !e.custom) continue;
+        const spec = {};
+        for (const [k, v] of [["b_mm", e.b_mm], ["h_mm", e.h_mm],
+                              ["main_bar_dia_mm", e.main_bar_dia_mm],
+                              ["n_bars_total", e.n_bars_total],
+                              ["link_dia_mm", e.link_dia_mm],
+                              ["storey_height_m", e.storey_height_m]]) {
+          const n = numOrNull(v);
+          if (n !== null) spec[k] = k === "n_bars_total" ? parseInt(n) : n;
         }
+        if (e._ownLoads) {
+          const base = f.typical_floor;
+          const fl = e.floor || {};
+          // The per-storey beam block holds overrides only, so an empty box
+          // must fall back to the typical floor rather than become NaN.
+          const bm = (which) => {
+            const b0 = base[which], own = fl[which] || {};
+            const pick = (k, dflt) => {
+              const v = numOrNull(own[k]);
+              if (v !== null) return v;
+              const t = numOrNull(b0[k]);
+              return t !== null ? t : dflt;
+            };
+            return {
+              width_m: pick("width_m", 0.23),
+              depth_m: pick("depth_m", 0.45),
+              wall: {
+                present: own.wall_present === undefined ? !!b0.wall_present : !!own.wall_present,
+                thickness_m: pick("wall_thickness_m", 0.15),
+                // null here means "use the masonry density from step 1"
+                density_kN_per_m3: numOrNull(own.wall_density_kN_per_m3)
+                  ?? numOrNull(b0.wall_density_kN_per_m3),
+                opening_ratio: pick("wall_opening_ratio", 0),
+              },
+            };
+          };
+          spec.floor = {
+            building_use: fl.building_use ?? base.building_use,
+            slab_thickness_m: numOrNull(fl.slab_thickness_m) ?? parseFloat(base.slab_thickness_m),
+            finishes_kN_per_m2: numOrNull(fl.finishes_kN_per_m2) ?? parseFloat(base.finishes_kN_per_m2),
+            services_kN_per_m2: numOrNull(fl.services_kN_per_m2) ?? parseFloat(base.services_kN_per_m2),
+            partitions_kN_per_m2: numOrNull(fl.partitions_kN_per_m2) ?? parseFloat(base.partitions_kN_per_m2),
+            imposed_override_kN_per_m2: numOrNull(fl.imposed_override_kN_per_m2)
+              ?? numOrNull(base.imposed_override_kN_per_m2),
+            beam_x: bm("beam_x"),
+            beam_y: bm("beam_y"),
+          };
+        }
+        if (Object.keys(spec).length) levelsOut[lvl] = spec;
       }
     }
 
@@ -276,6 +339,7 @@ export default function ColumnInput() {
     return {
       column_id: f.column_id,
       column_type: f.column_type,
+      uniaxial_axis: uniAx,
       design_code: f.design_code,
       end_condition: f.end_condition,
       braced: f.bracing === "braced",
@@ -286,7 +350,14 @@ export default function ColumnInput() {
         top_y_m: parseFloat(f.top_y_m) || 0, bottom_y_m: parseFloat(f.bottom_y_m) || 0,
       },
       effective_length: el,
+      levels: levelsOut,
+      frame: {
+        derive_moments: true,
+        base_fixed: !!f.base_fixed,
+        cracked_beam_stiffness: !!f.cracked_beam_stiffness,
+      },
       analysis: {
+        autosize_bars: !!f.autosize_bars,
         include_min_eccentricity: !!f.include_min_eccentricity,
         include_geometric_imperfections: !!f.include_geometric_imperfections,
         effective_creep_ratio: numOrNull(f.effective_creep_ratio) ?? 2.0,
@@ -315,8 +386,8 @@ export default function ColumnInput() {
       roof_floor: floor(f.roof_floor),
       M01x_kNm: M01x, M02x_kNm: M02x, M01y_kNm: M01y, M02y_kNm: M02y,
       NEd_override_kN: directLoad ? numOrNull(f.NEd_override_kN) : null,
-      MEdx_override_kNm: useFinalMEd ? numOrNull(f.MEdx_override_kNm) : null,
-      MEdy_override_kNm: useFinalMEd && isBiaxial ? numOrNull(f.MEdy_override_kNm) : null,
+      MEdx_override_kNm: null,
+      MEdy_override_kNm: null,
     };
   };
 
@@ -388,11 +459,10 @@ export default function ColumnInput() {
           </div>
         )}
 
-        {stepName(step) === "Column" && <StepColumn form={form} set={set} directLoad={directLoad} />}
+        {stepName(step) === "Column" && <StepColumn form={form} set={set} directLoad={directLoad} isUniaxial={isUniaxial} />}
         {stepName(step) === "Section" && <StepSection form={form} set={set} layout={layout} directLoad={directLoad} />}
         {stepName(step) === "Slenderness" && <StepSlenderness form={form} set={set} />}
-        {stepName(step) === "Loads" && <StepLoads form={form} set={set} setFloor={setFloor} setBeam={setBeam} directLoad={directLoad} useFinalMEd={useFinalMEd} isBiaxial={isBiaxial} isAxial={isAxial} />}
-        {stepName(step) === "Moments" && <StepMoments form={form} set={set} levels={levels} isAxial={isAxial} isBiaxial={isBiaxial} directLoad={directLoad} useFinalMEd={useFinalMEd} />}
+        {stepName(step) === "Floors" && <StepFloors form={form} set={set} setFloor={setFloor} setBeam={setBeam} setLevel={setLevel} setLevelFloor={setLevelFloor} setLevelBeam={setLevelBeam} levels={levels} directLoad={directLoad} isAxial={isAxial} />}
         {stepName(step) === "Review" && <StepReview form={form} levels={levels} layout={layout} isAxial={isAxial} isBiaxial={isBiaxial} directLoad={directLoad} useFinalMEd={useFinalMEd} />}
 
         <div className="mt-6 flex items-center justify-between">
@@ -418,7 +488,7 @@ export default function ColumnInput() {
 }
 
 /* ================= STEP 1 ================= */
-function StepColumn({ form, set, directLoad }) {
+function StepColumn({ form, set, directLoad, isUniaxial }) {
   return (
     <div className="space-y-5">
       <Card title="Column & Classification">
@@ -434,6 +504,19 @@ function StepColumn({ form, set, directLoad }) {
           <div><label className={LABEL}>End Condition</label><Dropdown value={form.end_condition} onChange={(v) => set({ end_condition: v })} options={END_CONDITIONS} /></div>
           <Num label="Storey Height" unit="m" value={form.storey_height_m} onChange={(v) => set({ storey_height_m: v })} step="0.1" />
         </div>
+        {isUniaxial && (
+          <>
+            <p className={`mt-4 mb-1 text-xs font-semibold ${SUB}`}>Which axis carries the moment?</p>
+            <div className="max-w-md">
+              <Dropdown value={form.uniaxial_axis} onChange={(v) => set({ uniaxial_axis: v })} options={UNIAXIAL_AXES} />
+            </div>
+            <Note>
+              A uniaxial column must say which way it bends. The other axis still gets minimum
+              eccentricity and, if slender, a second-order moment — it is checked, just not for an
+              applied moment.
+            </Note>
+          </>
+        )}
       </Card>
 
       <Card title="Source of Design Actions">
@@ -528,10 +611,55 @@ function StepSection({ form, set, layout, directLoad }) {
                 <Num label="Bottom span (y)" unit="m" value={form.bottom_y_m} onChange={(v) => set({ bottom_y_m: v })} step="0.5" />
               </div>
               <Note>Four beams frame into the column. Each delivers w·L/2, so the x pair contributes w·(left + right)/2 and the y pair w·(top + bottom)/2. Beam spans come from these values, not from a separate field.</Note>
+              <SpanSymmetryHint form={form} />
             </div>
           </div>
         </Card>
       )}
+    </div>
+  );
+}
+
+/**
+ * Unequal spans either side of a column give unbalanced beam end moments,
+ * which is the usual source of column moment. Equal spans therefore sit oddly
+ * with a biaxial design, and this flags that.
+ *
+ * It is a warning and not a block on purpose. Moments also come from pattern
+ * loading on equal spans, from wind, and from unequal beam sizes, so equal
+ * spans are perfectly legitimate. And in this engine the tributary spans only
+ * produce N_Ed — the moments are entered separately — so blocking here would
+ * reject valid input without changing any result.
+ */
+function SpanSymmetryHint({ form }) {
+  const eq = (a, b) => {
+    const x = parseFloat(a), y = parseFloat(b);
+    return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) < 1e-9;
+  };
+  const xSym = eq(form.left_x_m, form.right_x_m);
+  const ySym = eq(form.top_y_m, form.bottom_y_m);
+  const type = form.column_type;
+  let msg = null;
+
+  if (type === "biaxial" && xSym && ySym) {
+    msg = "Both span pairs are equal, which usually gives a balanced frame and little applied moment either way. If the moments come from pattern loading or wind rather than geometry that is fine — otherwise check whether this column is really biaxial.";
+  } else if (type === "biaxial" && (xSym || ySym)) {
+    msg = `The ${xSym ? "x" : "y"} spans are equal, so that direction is balanced. A biaxial design expects moment about both axes; confirm where the ${xSym ? "x" : "y"} moment comes from.`;
+  } else if (type === "uniaxial") {
+    const bendAx = form.uniaxial_axis === "y" ? "y" : "x";
+    const bendSym = bendAx === "x" ? xSym : ySym;
+    if (bendSym) {
+      msg = `You are designing for moment about ${bendAx}, but the ${bendAx} spans are equal, so that direction is balanced. Check the axis selection on step 1.`;
+    }
+  } else if (type === "axial" && (!xSym || !ySym)) {
+    msg = "The spans are unequal, which normally produces a moment at the column. An axial design ignores applied moments and uses minimum eccentricity only — consider uniaxial or biaxial.";
+  }
+
+  if (!msg) return null;
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-lg border-l-4 border-amber-400 bg-amber-50 p-3 dark:bg-amber-900/20">
+      <FiAlertTriangle className="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" size={14} />
+      <p className="text-xs text-amber-800 dark:text-amber-300">{msg}</p>
     </div>
   );
 }
@@ -575,6 +703,28 @@ function StepSlenderness({ form, set }) {
         )}
       </Card>
 
+      <Card title="Frame &amp; Moment Derivation">
+        <div className="space-y-3">
+          <Check label="Foundation designed to resist moment (fixed base)" checked={form.base_fixed} onChange={(v) => set({ base_fixed: v })} />
+          <Check label="Halve beam stiffness for cracking when sharing the joint moment" checked={form.cracked_beam_stiffness} onChange={(v) => set({ cracked_beam_stiffness: v })} />
+        </div>
+        <Note>
+          Halving beam stiffness raises the column's share of the out-of-balance moment, so it
+          is the conservative choice and matches EC2 practice. Published BS 8110 examples
+          usually take the full I/L; untick to compare against one.
+        </Note>
+      </Card>
+
+      <Card title="Reinforcement Selection">
+        <Check label="Let the engine choose the bars" checked={form.autosize_bars}
+          onChange={(v) => set({ autosize_bars: v })} />
+        <Note>
+          {form.autosize_bars
+            ? "Each storey gets the smallest cage that passes every check, within the section you set. Sections are never changed — if nothing fits, the result says the section is too small. The bars on step 2 become a starting point rather than the design, and the results page lists every option that works so you can take a bigger cage for bar continuity."
+            : "The engine checks the bars you specified on step 2 and on any storey you edited. It will not tell you if they are larger than necessary — tick this to have it propose a size instead."}
+        </Note>
+      </Card>
+
       <Card title="Analysis Options">
         <div className="space-y-3">
           <Check label="Include minimum eccentricity e₀ = max(h/30, 20 mm)" checked={form.include_min_eccentricity} onChange={(v) => set({ include_min_eccentricity: v })} />
@@ -599,7 +749,8 @@ function StepSlenderness({ form, set }) {
 }
 
 /* ================= STEP 4 ================= */
-function StepLoads({ form, set, setFloor, setBeam, directLoad, useFinalMEd, isBiaxial, isAxial }) {
+function StepFloors({ form, set, setFloor, setBeam, setLevel, setLevelFloor, setLevelBeam,
+                     levels, directLoad, isAxial }) {
   return (
     <div className="space-y-5">
       {directLoad ? (
@@ -607,30 +758,11 @@ function StepLoads({ form, set, setFloor, setBeam, directLoad, useFinalMEd, isBi
           <div className="max-w-[240px]">
             <Num label="N_Ed" unit="kN" value={form.NEd_override_kN} onChange={(v) => set({ NEd_override_kN: v })} step="10" />
           </div>
-          {!isAxial && (
-            <>
-              <p className={`mt-4 mb-2 text-xs font-semibold ${SUB}`}>Moments</p>
-              <div className="flex flex-wrap gap-2">
-                <Pill on={!useFinalMEd} onClick={() => set({ direct_moment_mode: "ends" })}>First-order end moments</Pill>
-                <Pill on={useFinalMEd} onClick={() => set({ direct_moment_mode: "final" })}>Final M_Ed, already complete</Pill>
-              </div>
-              {useFinalMEd ? (
-                <>
-                  <div className="mt-3 grid grid-cols-2 gap-4 md:max-w-md">
-                    <Num label="M_Ed,x" unit="kNm" value={form.MEdx_override_kNm} onChange={(v) => set({ MEdx_override_kNm: v })} step="1" />
-                    {isBiaxial && <Num label="M_Ed,y" unit="kNm" value={form.MEdy_override_kNm} onChange={(v) => set({ MEdy_override_kNm: v })} step="1" />}
-                  </div>
-                  <Note>
-                    These replace the computed moments entirely, so they must already include
-                    imperfections and any second-order contribution. Note that without end moments the
-                    factor C in λlim falls back to 0.7, which classifies more columns as slender.
-                  </Note>
-                </>
-              ) : (
-                <Note>Enter M01 and M02 on the Moments step. The engine adds eᵢ and, where the column is slender, M₂.</Note>
-              )}
-            </>
-          )}
+          <Note>
+            Moments are not entered. The engine derives them from the frame: the beams at
+            each joint carry fixed end moments wL²/12, and any out-of-balance is shared
+            between the members meeting there in proportion to stiffness.
+          </Note>
         </Card>
       ) : (
         <>
@@ -638,10 +770,173 @@ function StepLoads({ form, set, setFloor, setBeam, directLoad, useFinalMEd, isBi
             <div className="max-w-[240px]">
               <Num label="Number of typical floors" value={form.number_of_typical_floors} onChange={(v) => set({ number_of_typical_floors: v })} step="1" />
             </div>
+            <Note>
+              Set the floor count first, then edit any storey below. Each one starts from the
+              typical floor and the section on step 2 — you only fill in what differs.
+            </Note>
           </Card>
-          <FloorCard title="Typical Floor" which="typical_floor" floor={form.typical_floor} setFloor={setFloor} setBeam={setBeam} />
+
+          <FloorCard title="Typical Floor — the starting point for every storey"
+            which="typical_floor" floor={form.typical_floor} setFloor={setFloor} setBeam={setBeam} />
           <FloorCard title="Roof" which="roof_floor" floor={form.roof_floor} setFloor={setFloor} setBeam={setBeam} />
+
+          <Card title="Per-Storey Edits">
+            <Note>
+              A storey left as "inherits" uses the section and bars from step 2 and the
+              template above. Tick a storey to give it its own section, cage or loads.
+            </Note>
+            <SectionGrowthWarning form={form} levels={levels} />
+            <div className="mt-3 space-y-2">
+              {levels.map((lvl) => (
+                <LevelRow key={lvl} lvl={lvl} form={form}
+                  setLevel={setLevel} setLevelFloor={setLevelFloor} setLevelBeam={setLevelBeam} />
+              ))}
+            </div>
+          </Card>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A column that gets bigger as it goes up is almost always a typo, so this
+ * says so rather than blocking it -- there are legitimate reasons (a transfer
+ * structure, a setback) and the engine does not care either way.
+ */
+function SectionGrowthWarning({ form, levels }) {
+  const secOf = (lvl) => {
+    const e = form.levelEdits[lvl] || {};
+    const b = e.custom ? (parseFloat(e.b_mm) || parseFloat(form.b_mm)) : parseFloat(form.b_mm);
+    const h = e.custom ? (parseFloat(e.h_mm) || parseFloat(form.h_mm)) : parseFloat(form.h_mm);
+    return { b, h, area: b * h };
+  };
+  const bad = [];
+  // `levels` runs top down, so each entry should be no larger than the next.
+  for (let i = 0; i < levels.length - 1; i++) {
+    const up = secOf(levels[i]), down = secOf(levels[i + 1]);
+    if (Number.isFinite(up.area) && Number.isFinite(down.area) && up.area > down.area + 1) {
+      bad.push(`${levels[i].replace(/_/g, " ")} (${up.b}×${up.h}) is larger than ${levels[i + 1].replace(/_/g, " ")} (${down.b}×${down.h})`);
+    }
+  }
+  if (!bad.length) return null;
+  return (
+    <div className="mt-3 rounded-lg border-l-4 border-amber-400 bg-amber-50 p-3 dark:bg-amber-900/20">
+      <p className="mb-1 text-xs font-semibold text-amber-800 dark:text-amber-300">
+        A storey is larger than the one beneath it
+      </p>
+      <ul className="ml-4 list-disc text-xs text-amber-800 dark:text-amber-300">
+        {bad.map((t, i) => <li key={i}>{t}</li>)}
+      </ul>
+      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+        Usually a typo. Leave it if the frame really does that.
+      </p>
+    </div>
+  );
+}
+
+function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
+  const e = form.levelEdits[lvl] || {};
+  const custom = !!e.custom;
+  const open = !!e._open;
+  const label = lvl.replace(/_/g, " ");
+  const sec = custom && (e.b_mm || e.h_mm)
+    ? `${e.b_mm || form.b_mm}×${e.h_mm || form.h_mm}`
+    : `${form.b_mm}×${form.h_mm}`;
+  const bars = custom && (e.n_bars_total || e.main_bar_dia_mm)
+    ? `${e.n_bars_total || form.n_bars_total}Ø${e.main_bar_dia_mm || form.main_bar_dia_mm}`
+    : `${form.n_bars_total}Ø${form.main_bar_dia_mm}`;
+  const fl = e.floor || {};
+  const ownLoads = !!e._ownLoads;
+
+  return (
+    <div className={`rounded-lg border ${custom
+      ? "border-[#0A2F44] dark:border-[#66a4c2]"
+      : "border-[#e2e8f0] dark:border-[#334155]"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" checked={custom} className="h-4 w-4 accent-[#0A2F44]"
+            onChange={(ev) => setLevel(lvl, { custom: ev.target.checked, _open: ev.target.checked })} />
+          <span className={`text-sm font-medium ${MAIN}`}>{label}</span>
+        </label>
+        <div className="flex items-center gap-3">
+          <span className={`font-mono text-xs ${SUB}`}>
+            {custom ? `${sec} · ${bars}${ownLoads ? " · own loads" : ""}` : "inherits"}
+          </span>
+          {custom && (
+            <button type="button" onClick={() => setLevel(lvl, { _open: !open })}
+              className={`text-xs ${SUB} hover:underline`}>{open ? "hide" : "edit"}</button>
+          )}
+        </div>
+      </div>
+
+      {custom && open && (
+        <div className="border-t border-[#e2e8f0] px-3 py-3 dark:border-[#334155]">
+          <p className={`mb-2 text-xs font-semibold ${SUB}`}>
+            Section &amp; bars — greyed numbers are inherited from step 2
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Num label="b" unit="mm" value={e.b_mm ?? ""} placeholder={form.b_mm} onChange={(v) => setLevel(lvl, { b_mm: v })} step="25" />
+            <Num label="h" unit="mm" value={e.h_mm ?? ""} placeholder={form.h_mm} onChange={(v) => setLevel(lvl, { h_mm: v })} step="25" />
+            <div>
+              <label className={LABEL}>Bar Ø <span className="text-[#94a3b8]">(mm)</span></label>
+              <Dropdown value={e.main_bar_dia_mm ?? form.main_bar_dia_mm}
+                onChange={(v) => setLevel(lvl, { main_bar_dia_mm: v })} options={BAR_DIAS} />
+            </div>
+            <Num label="No. of bars" value={e.n_bars_total ?? ""} placeholder={form.n_bars_total} onChange={(v) => setLevel(lvl, { n_bars_total: v })} step="2" />
+            <div>
+              <label className={LABEL}>Link Ø <span className="text-[#94a3b8]">(mm)</span></label>
+              <Dropdown value={e.link_dia_mm ?? form.link_dia_mm}
+                onChange={(v) => setLevel(lvl, { link_dia_mm: v })} options={LINK_DIAS} />
+            </div>
+          </div>
+          <Num label="Storey height" unit="m" value={e.storey_height_m ?? ""}
+            placeholder={form.storey_height_m}
+            onChange={(v) => setLevel(lvl, { storey_height_m: v })} step="0.1" />
+
+          <Check label="This storey carries different loads" checked={ownLoads}
+            onChange={(v) => setLevel(lvl, { _ownLoads: v })} />
+          {ownLoads && (
+            <div className="mt-2 rounded-lg border border-[#e2e8f0] p-3 dark:border-[#334155]">
+              <p className={`mb-2 text-[11px] ${SUB}`}>
+                Greyed numbers are what this storey inherits from the Typical Floor.
+                Leave a box empty to keep it; type to override just that one.
+              </p>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                <div><label className={LABEL}>Building use</label>
+                  <Dropdown value={fl.building_use ?? form.typical_floor.building_use}
+                    onChange={(v) => setLevelFloor(lvl, { building_use: v })} options={BUILDING_USES} /></div>
+                <Num label="Slab thickness" unit="m" value={fl.slab_thickness_m ?? ""}
+                  placeholder={form.typical_floor.slab_thickness_m}
+                  onChange={(v) => setLevelFloor(lvl, { slab_thickness_m: v })} step="0.01" />
+                <Num label="Imposed override" unit="kN/m²" value={fl.imposed_override_kN_per_m2 ?? ""}
+                  placeholder={form.typical_floor.imposed_override_kN_per_m2}
+                  onChange={(v) => setLevelFloor(lvl, { imposed_override_kN_per_m2: v })} step="0.25" />
+                <Num label="Finishes" unit="kN/m²" value={fl.finishes_kN_per_m2 ?? ""}
+                  placeholder={form.typical_floor.finishes_kN_per_m2}
+                  onChange={(v) => setLevelFloor(lvl, { finishes_kN_per_m2: v })} step="0.25" />
+                <Num label="Services" unit="kN/m²" value={fl.services_kN_per_m2 ?? ""}
+                  placeholder={form.typical_floor.services_kN_per_m2}
+                  onChange={(v) => setLevelFloor(lvl, { services_kN_per_m2: v })} step="0.25" />
+                <Num label="Partitions" unit="kN/m²" value={fl.partitions_kN_per_m2 ?? ""}
+                  placeholder={form.typical_floor.partitions_kN_per_m2}
+                  onChange={(v) => setLevelFloor(lvl, { partitions_kN_per_m2: v })} step="0.25" />
+              </div>
+              <p className={`mt-3 mb-1 text-[11px] ${SUB}`}>
+                Both beam pairs carry load into the column, so a wall on only one of
+                them must be set on that one alone.
+              </p>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <BeamBlock label="X-direction pair (left + right)"
+                  b={form.typical_floor.beam_x} inherit={fl.beam_x || {}}
+                  onChange={(pp) => setLevelBeam(lvl, "beam_x", pp)} />
+                <BeamBlock label="Y-direction pair (top + bottom)"
+                  b={form.typical_floor.beam_y} inherit={fl.beam_y || {}}
+                  onChange={(pp) => setLevelBeam(lvl, "beam_y", pp)} />
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -667,81 +962,43 @@ function FloorCard({ title, which, floor, setFloor, setBeam }) {
   );
 }
 
-function BeamBlock({ label, b, onChange }) {
+/**
+ * `inherit` turns the block into override mode: fields sit blank and show the
+ * inherited value greyed as a placeholder, so an empty box reads as "same as
+ * the typical floor" rather than as something you forgot to fill in.
+ */
+function BeamBlock({ label, b, onChange, inherit }) {
+  const own = inherit || {};
+  const val = (k) => (inherit ? (own[k] ?? "") : b[k]);
+  const ph = (k) => (inherit ? b[k] : undefined);
+  const wallOn = inherit ? (own.wall_present ?? b.wall_present) : b.wall_present;
   return (
     <div className="rounded-lg border border-[#e2e8f0] p-3 dark:border-[#334155]">
       <div className={`mb-2 text-xs font-semibold ${MAIN}`}>{label}</div>
       <div className="grid grid-cols-2 gap-2">
-        <Num label="width" unit="m" value={b.width_m} onChange={(v) => onChange({ width_m: v })} step="0.01" />
-        <Num label="depth" unit="m" value={b.depth_m} onChange={(v) => onChange({ depth_m: v })} step="0.01" />
+        <Num label="width" unit="m" value={val("width_m")} placeholder={ph("width_m")} onChange={(v) => onChange({ width_m: v })} step="0.01" />
+        <Num label="depth" unit="m" value={val("depth_m")} placeholder={ph("depth_m")} onChange={(v) => onChange({ depth_m: v })} step="0.01" />
       </div>
-      <Check label="Wall on these beams" checked={!!b.wall_present} onChange={(v) => onChange({ wall_present: v })} small />
-      {b.wall_present && (
+      <Check
+        label={inherit
+          ? `Wall on these beams${own.wall_present === undefined ? "  (inherited)" : ""}`
+          : "Wall on these beams"}
+        checked={!!wallOn} onChange={(v) => onChange({ wall_present: v })} small />
+      {wallOn && (
         <div className="mt-2 grid grid-cols-3 gap-2">
-          <Num label="thickness" unit="m" value={b.wall_thickness_m} onChange={(v) => onChange({ wall_thickness_m: v })} step="0.05" />
-          <Num label="density" unit="kN/m³" value={b.wall_density_kN_per_m3} onChange={(v) => onChange({ wall_density_kN_per_m3: v })} step="1" />
-          <Num label="openings" unit="0–0.9" value={b.wall_opening_ratio} onChange={(v) => onChange({ wall_opening_ratio: v })} step="0.1" />
+          <Num label="thickness" unit="m" value={val("wall_thickness_m")} placeholder={ph("wall_thickness_m")} onChange={(v) => onChange({ wall_thickness_m: v })} step="0.05" />
+          <Num label="density" unit="kN/m³" value={val("wall_density_kN_per_m3")}
+            placeholder={inherit ? (b.wall_density_kN_per_m3 || form_masonry_hint) : undefined}
+            onChange={(v) => onChange({ wall_density_kN_per_m3: v })} step="1" />
+          <Num label="openings" unit="0–0.9" value={val("wall_opening_ratio")} placeholder={ph("wall_opening_ratio")} onChange={(v) => onChange({ wall_opening_ratio: v })} step="0.1" />
         </div>
       )}
     </div>
   );
 }
 
-/* ================= STEP 5 ================= */
-function StepMoments({ form, set, levels, isAxial, isBiaxial, directLoad, useFinalMEd }) {
-  if (isAxial) {
-    return (
-      <Card title="Moments">
-        <Note>Axially loaded column. No applied moments are taken; the design uses minimum eccentricity about both axes, plus geometric imperfections if enabled.</Note>
-      </Card>
-    );
-  }
-  if (useFinalMEd) {
-    return (
-      <Card title="Moments">
-        <Note>Final M_Ed values were entered on the Loads step, so the end-moment table does not apply.</Note>
-      </Card>
-    );
-  }
-  const setM = (lvl, key, v) => set({ moments: { ...form.moments, [lvl]: { ...(form.moments[lvl] || {}), [key]: v } } });
-  return (
-    <Card title={`First-Order End Moments — ${isBiaxial ? "x and y" : "x only"}`}>
-      <Note>
-        Enter both end moments with their signs. Opposite signs mean double curvature, which lowers M0e
-        and raises λlim. The engine sorts them so that |M02| ≥ |M01| as Cl. 5.8.8.2 requires, so it does
-        not matter which column you put the larger value in. Blank counts as zero.
-      </Note>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className={`border-b border-[#e2e8f0] text-left dark:border-[#334155] ${SUB}`}>
-              <th className="py-2 pr-3 font-medium">Level</th>
-              <th className="py-2 pr-3 font-medium">M01x (kNm)</th>
-              <th className="py-2 pr-3 font-medium">M02x (kNm)</th>
-              {isBiaxial && <th className="py-2 pr-3 font-medium">M01y (kNm)</th>}
-              {isBiaxial && <th className="py-2 pr-3 font-medium">M02y (kNm)</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {levels.map((lvl) => {
-              const m = form.moments[lvl] || {};
-              return (
-                <tr key={lvl} className="border-b border-[#f1f5f9] dark:border-[#2a3646]">
-                  <td className={`py-1.5 pr-3 ${MAIN}`}>{lvl.replace(/_/g, " ")}</td>
-                  {["M01x", "M02x", ...(isBiaxial ? ["M01y", "M02y"] : [])].map((k) => (
-                    <td key={k} className="py-1.5 pr-3">
-                      <input type="number" step="0.1" className={INPUT} value={m[k] ?? ""} onChange={(e) => setM(lvl, k, e.target.value)} />
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
+// Blank wall density falls back to the masonry density on step 1.
+const form_masonry_hint = "step 1 masonry density";
 
 /* ================= STEP 6 ================= */
 function StepReview({ form, levels, layout, isAxial, isBiaxial, directLoad, useFinalMEd }) {
@@ -750,7 +1007,7 @@ function StepReview({ form, levels, layout, isAxial, isBiaxial, directLoad, useF
     <div className="space-y-5">
       <Card title="Review">
         <div className="grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-3">
-          <RV label="Column" value={`${form.column_id} · ${form.column_type}`} />
+          <RV label="Column" value={`${form.column_id} · ${form.column_type}${form.column_type === "uniaxial" ? ` (about ${form.uniaxial_axis})` : ""}`} />
           <RV label="End / bracing" value={`${form.end_condition} · ${form.bracing}`} />
           <RV label="Storey height" value={`${form.storey_height_m} m`} />
           <RV label="Section" value={`${form.b_mm} × ${form.h_mm} mm`} />
@@ -765,39 +1022,18 @@ function StepReview({ form, levels, layout, isAxial, isBiaxial, directLoad, useF
           <RV label="λlim factors" value={form.use_default_A_B ? "A = 0.7, B = 1.1 (default)" : "computed"} />
           <RV label="Imperfections" value={form.include_geometric_imperfections ? "included" : "omitted"} />
           <RV label="Actions" value={directLoad
-            ? `N_Ed = ${form.NEd_override_kN} kN (direct, ${useFinalMEd ? "final M_Ed" : "end moments"})`
+            ? `N_Ed = ${form.NEd_override_kN} kN (direct)`
             : `take-down · ${form.number_of_typical_floors} typical + roof`} />
+          <RV label="Moments" value="derived by sub-frame" />
+          <RV label="Bar selection" value={form.autosize_bars ? "engine chooses" : "as specified"} />
+          <RV label="Per-storey edits" value={(() => {
+            const n = levels.filter((l) => form.levelEdits[l]?.custom).length;
+            return n ? `${n} of ${levels.length} storeys edited` : "none — one section throughout";
+          })()} />
+          <RV label="Base" value={form.base_fixed ? "fixed" : "pinned"} />
           {!directLoad && <RV label="Tributary" value={`x ${form.left_x_m}/${form.right_x_m}, y ${form.top_y_m}/${form.bottom_y_m} m`} />}
         </div>
       </Card>
-
-      {!isAxial && !useFinalMEd && (
-        <Card title="Moments">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className={`border-b border-[#e2e8f0] text-left dark:border-[#334155] ${SUB}`}>
-                  <th className="py-2 pr-3">Level</th><th className="py-2 pr-3">M01x</th><th className="py-2 pr-3">M02x</th>
-                  {isBiaxial && <th className="py-2 pr-3">M01y</th>}{isBiaxial && <th className="py-2 pr-3">M02y</th>}
-                </tr>
-              </thead>
-              <tbody className={MAIN}>
-                {levels.map((lvl) => {
-                  const m = form.moments[lvl] || {};
-                  return (
-                    <tr key={lvl} className="border-b border-[#f1f5f9] dark:border-[#2a3646]">
-                      <td className="py-1.5 pr-3">{lvl.replace(/_/g, " ")}</td>
-                      {["M01x", "M02x", ...(isBiaxial ? ["M01y", "M02y"] : [])].map((k) => (
-                        <td key={k} className="py-1.5 pr-3 font-mono">{m[k] || 0}</td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
 
       <div className="rounded-lg border-l-4 border-[#0A2F44] bg-[#e6f0f5] p-3 dark:bg-[#1e3a4a]">
         <p className="text-xs text-[#0A2F44] dark:text-[#cce1eb]">
@@ -819,11 +1055,13 @@ function Card({ title, children }) {
     </div>
   );
 }
-function Num({ label, unit, value, onChange, step, disabled }) {
+function Num({ label, unit, value, onChange, step, disabled, placeholder }) {
   return (
     <div>
       <label className={LABEL}>{label} {unit ? <span className="text-[#94a3b8]">({unit})</span> : null}</label>
-      <input type="number" step={step} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={INPUT} />
+      <input type="number" step={step} value={value} disabled={disabled}
+        placeholder={placeholder === undefined || placeholder === null ? undefined : String(placeholder)}
+        onChange={(e) => onChange(e.target.value)} className={INPUT} />
     </div>
   );
 }

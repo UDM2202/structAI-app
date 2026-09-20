@@ -35,6 +35,9 @@ export default function ColumnResults() {
   const r = location.state?.designResult;
   const [tab, setTab] = useState("overview");
   const [showReport, setShowReport] = useState(false);
+  // Sections, bars, detailing and the N-M curve are all per storey now, so
+  // the tabs that show them need to know which storey is being looked at.
+  const [levelIdx, setLevelIdx] = useState(null);
 
   if (!r || !r.summary) {
     return (
@@ -57,6 +60,12 @@ export default function ColumnResults() {
   const crit = levels.find((l) => l.level === s.critical_level) || levels[0] || {};
   const failed = r.failed_checks || [];
   const isBiaxial = s.column_type === "biaxial";
+  const critIdx = Math.max(0, levels.findIndex((l) => l.level === s.critical_level));
+  const shownIdx = levelIdx === null ? critIdx : levelIdx;
+  const shown = levels[shownIdx] || crit;
+  const varies = levels.some((l) => l.b_mm !== levels[0].b_mm || l.h_mm !== levels[0].h_mm
+                                 || l.n_bars !== levels[0].n_bars
+                                 || l.bar_dia_mm !== levels[0].bar_dia_mm);
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] px-6 py-6 dark:bg-[#111827]">
@@ -90,10 +99,10 @@ export default function ColumnResults() {
               </span>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <Mini label="Section" value={`${n1(s.b_mm)} × ${n1(s.h_mm)}`} />
+              <Mini label="Section" value={varies ? "varies by storey" : `${n1(s.b_mm)} × ${n1(s.h_mm)}`} />
               <Mini label="Concrete" value={s.concrete_grade} />
-              <Mini label="Bars" value={`${s.n_bars}Ø${n1(s.bar_dia_mm)}`} />
-              <Mini label="ρ" value={`${n2(r.detailing?.rho_pct)}%`} />
+              <Mini label="Bars" value={varies ? "varies by storey" : `${s.n_bars}Ø${n1(s.bar_dia_mm)}`} />
+              <Mini label="ρ" value={`${n2(crit.rho_pct ?? r.detailing?.rho_pct)}%`} />
             </div>
           </div>
 
@@ -110,6 +119,7 @@ export default function ColumnResults() {
                 </div>
                 <div className={`text-xs ${SUB}`}>
                   {s.used_takedown ? "Load take-down" : "N_Ed supplied directly"}
+                  {(levels[0] || {}).autosize?.applied ? " · bars chosen by engine" : ""}
                 </div>
               </div>
             </div>
@@ -148,10 +158,16 @@ export default function ColumnResults() {
           ))}
         </div>
 
-        {tab === "overview" && <OverviewTab r={r} crit={crit} />}
-        {tab === "interaction" && <InteractionTab r={r} crit={crit} isBiaxial={isBiaxial} />}
+        {tab === "overview" && <OverviewTab r={r} crit={crit} levels={levels} varies={varies} />}
+        {tab === "interaction" && (
+          <InteractionTab r={r} levels={levels} shown={shown} shownIdx={shownIdx}
+            setLevelIdx={setLevelIdx} isBiaxial={isBiaxial} varies={varies} />
+        )}
         {tab === "levels" && <LevelsTab r={r} isBiaxial={isBiaxial} />}
-        {tab === "checks" && <ChecksTab r={r} crit={crit} />}
+        {tab === "checks" && (
+          <ChecksTab r={r} levels={levels} shown={shown} shownIdx={shownIdx}
+            setLevelIdx={setLevelIdx} varies={varies} />
+        )}
 
         <p className={`pt-2 text-center text-xs ${SUB}`}>
           Section capacity by strain compatibility (EC2 Cl. 3.1.7 stress block, Cl. 3.2.7 bilinear steel).
@@ -165,8 +181,9 @@ export default function ColumnResults() {
 }
 
 /* ---------------- OVERVIEW ---------------- */
-function OverviewTab({ r, crit }) {
-  const s = r.summary, m = r.materials, d = r.detailing || {};
+function OverviewTab({ r, crit, levels, varies }) {
+  const s = r.summary, m = r.materials;
+  const d = crit.detailing || r.detailing || {};
   const gap = (crit.NRd_simplified_kN || 0) - (crit.NRd_max_kN || 0);
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
@@ -176,23 +193,8 @@ function OverviewTab({ r, crit }) {
         <KV label="Bracing" value={s.braced ? "Braced" : "Unbraced"} />
         <KV label="End condition" value={s.end_condition} />
         <KV label="Storey height" value={`${n2(s.storey_height_m)} m`} />
-        <KV label="Section" value={`${n1(s.b_mm)} × ${n1(s.h_mm)} mm`} />
         <KV label="Exposure class" value={s.exposure_class} />
-      </Panel>
-
-      <Panel title="Section & Reinforcement">
-        <div className="flex items-center gap-4">
-          <SectionSVG s={s} d={d} />
-          <div className="flex-1 space-y-1.5">
-            <KV label="Bars" value={`${s.n_bars} × Ø${n1(s.bar_dia_mm)}`} />
-            <KV label="Layout" value={`${d.n_bars_b_face}/b-face, ${d.n_bars_h_face}/h-face`} />
-            <KV label="As provided" value={`${n1(d.As_provided_mm2)} mm²`} />
-            <KV label="ρ" value={`${n2(d.rho_pct)}%`} />
-            <KV label="Cover" value={`${n1(s.cover_mm)} mm`} />
-            <KV label="d′" value={`${n1(d.d_prime_mm)} mm`} />
-            <KV label="Links" value={`Ø${n1(s.link_dia_mm)}`} />
-          </div>
-        </div>
+        <KV label="Storeys" value={`${levels.length}${varies ? " — section and/or cage varies" : " — one section throughout"}`} />
       </Panel>
 
       <Panel title="Materials">
@@ -204,15 +206,56 @@ function OverviewTab({ r, crit }) {
         <KV label="εcu3 / εc3" value={`${m.eps_cu3} / ${m.eps_c3}`} />
       </Panel>
 
-      <Panel title="Axial Capacity">
-        <KV label="N_Ed (critical)" value={`${n2(crit.NEd_kN)} kN`} strong />
+      <div className="md:col-span-2">
+        <Panel title="Reinforcement Schedule">
+          <Table
+            head={["Level", "Section", "Bars", "As (mm²)", "ρ", "Cover", "Links", "Spacing", "Source"]}
+            rows={levels.map((l) => {
+              const ld = l.detailing || {};
+              return [
+                l.level.replace(/_/g, " "),
+                `${n1(l.b_mm)} × ${n1(l.h_mm)}`,
+                `${l.n_bars}Ø${n1(l.bar_dia_mm)}`,
+                n1(l.As_provided_mm2),
+                `${n2(l.rho_pct)}%`,
+                `${n1(l.cover_mm)}`,
+                `Ø${n1(l.link_dia_mm)}`,
+                `${n1(ld.s_max_mm)} / ${n1(ld.s_reduced_mm)} reduced`,
+                l.autosize?.applied ? "engine" : "specified",
+              ];
+            })} />
+          <Note>
+            Each storey is designed with its own section and cage. Tie spacing follows that
+            storey's own min(20φ, lesser dimension, 400). Use the reduced spacing within a
+            distance equal to the larger column dimension above and below a beam or slab,
+            and through lap lengths.
+          </Note>
+        </Panel>
+      </div>
+
+      <Panel title="Section — Critical Storey">
+        <div className="flex items-center gap-4">
+          <SectionSVG s={{ b_mm: crit.b_mm, h_mm: crit.h_mm }} d={d} />
+          <div className="flex-1 space-y-1.5">
+            <KV label="Level" value={crit.level.replace(/_/g, " ")} strong />
+            <KV label="Section" value={`${n1(crit.b_mm)} × ${n1(crit.h_mm)} mm`} />
+            <KV label="Bars" value={`${crit.n_bars} × Ø${n1(crit.bar_dia_mm)}`} />
+            <KV label="Layout" value={`${d.n_bars_b_face}/b-face, ${d.n_bars_h_face}/h-face`} />
+            <KV label="As provided" value={`${n1(crit.As_provided_mm2)} mm²`} />
+            <KV label="d′" value={`${n1(d.d_prime_mm)} mm`} />
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Axial Capacity — Critical Storey">
+        <KV label="N_Ed" value={`${n2(crit.NEd_kN)} kN`} strong />
         <KV label="N_Rd,max — strain compatibility" value={`${n2(crit.NRd_max_kN)} kN`} strong />
         <KV label="N_Rd — textbook form Ac·fcd + As·fyd" value={`${n2(crit.NRd_simplified_kN)} kN`} />
         <KV label="Difference" value={`${n2(gap)} kN`} />
         <KV label="Utilisation" value={utilText(crit.axial_utilisation)} warn={crit.axial_utilisation > 1} />
         <Note>
-          The governing value deducts the concrete displaced by the bars and caps the steel stress at
-          Es·εc3, which is below fyd for B500. The textbook form does neither, so it reads higher.
+          The governing value deducts the concrete displaced by the bars and caps the steel
+          stress at Es·εc3, which is below fyd for B500. The textbook form does neither.
         </Note>
       </Panel>
     </div>
@@ -220,28 +263,66 @@ function OverviewTab({ r, crit }) {
 }
 
 /* ---------------- INTERACTION ---------------- */
-function InteractionTab({ r, crit, isBiaxial }) {
-  const bi = crit.biaxial;
+function LevelPicker({ levels, shownIdx, setLevelIdx, note }) {
+  if (levels.length <= 1) return null;
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap gap-2">
+        {levels.map((l, i) => (
+          <button key={l.level} type="button" onClick={() => setLevelIdx(i)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              i === shownIdx
+                ? "border-[#0A2F44] bg-[#e6f0f5] text-[#0A2F44] dark:border-[#66a4c2] dark:bg-[#1e3a4a] dark:text-[#66a4c2]"
+                : `border-[#e2e8f0] dark:border-[#334155] ${SUB} hover:border-[#94a3b8]`}`}>
+            {l.level.replace(/_/g, " ")}
+            <span className="ml-1.5 font-mono opacity-70">{n1(l.b_mm)}×{n1(l.h_mm)}</span>
+          </button>
+        ))}
+      </div>
+      {note && <p className={`mt-2 text-xs ${SUB}`}>{note}</p>}
+    </div>
+  );
+}
+
+
+function InteractionTab({ r, levels, shown, shownIdx, setLevelIdx, isBiaxial, varies }) {
+  const bi = shown.biaxial;
+  // Per-storey curves where the engine supplies them; the column-wide pair is
+  // the fallback for a result produced before sections could vary.
+  const curveX = shown.interaction_x || r.interaction_x;
+  const curveY = shown.interaction_y || r.interaction_y;
   return (
     <div className="space-y-5">
+      <Panel title="Storey">
+        <LevelPicker levels={levels} shownIdx={shownIdx} setLevelIdx={setLevelIdx}
+          note={varies
+            ? "The section changes up the building, so each storey has its own N–M envelope."
+            : "One section throughout, so every storey shares the same envelope; only N_Ed moves."} />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 md:grid-cols-4">
+          <KV label="Section" value={`${n1(shown.b_mm)} × ${n1(shown.h_mm)} mm`} />
+          <KV label="Bars" value={`${shown.n_bars}Ø${n1(shown.bar_dia_mm)}`} />
+          <KV label="N_Ed" value={`${n2(shown.NEd_kN)} kN`} strong />
+          <KV label="Utilisation" value={utilText(shown.governing_utilisation)}
+            warn={shown.governing_utilisation > 1} />
+        </div>
+      </Panel>
+
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <Panel title="N–M interaction, x axis (depth h)">
-          <NMChart points={r.interaction_x} NEd={crit.NEd_kN}
-            MEd={crit.x?.MEd} MRd={crit.x?.MRd} />
+          <NMChart points={curveX} NEd={shown.NEd_kN} MEd={shown.x?.MEd} MRd={shown.x?.MRd} />
           <div className="mt-2 space-y-1.5">
-            <KV label="M_Ed,x" value={`${n2(crit.x?.MEd)} kNm`} />
-            <KV label="M_Rd,x at this N_Ed" value={`${n2(crit.x?.MRd)} kNm`} strong />
-            <KV label="Utilisation" value={utilText(crit.x?.utilisation)} warn={crit.x?.utilisation > 1} />
+            <KV label="M_Ed,x" value={`${n2(shown.x?.MEd)} kNm`} />
+            <KV label="M_Rd,x at this N_Ed" value={`${n2(shown.x?.MRd)} kNm`} strong />
+            <KV label="Utilisation" value={utilText(shown.x?.utilisation)} warn={shown.x?.utilisation > 1} />
           </div>
         </Panel>
 
         <Panel title="N–M interaction, y axis (depth b)">
-          <NMChart points={r.interaction_y} NEd={crit.NEd_kN}
-            MEd={crit.y?.MEd} MRd={crit.y?.MRd} />
+          <NMChart points={curveY} NEd={shown.NEd_kN} MEd={shown.y?.MEd} MRd={shown.y?.MRd} />
           <div className="mt-2 space-y-1.5">
-            <KV label="M_Ed,y" value={`${n2(crit.y?.MEd)} kNm`} />
-            <KV label="M_Rd,y at this N_Ed" value={`${n2(crit.y?.MRd)} kNm`} strong />
-            <KV label="Utilisation" value={utilText(crit.y?.utilisation)} warn={crit.y?.utilisation > 1} />
+            <KV label="M_Ed,y" value={`${n2(shown.y?.MEd)} kNm`} />
+            <KV label="M_Rd,y at this N_Ed" value={`${n2(shown.y?.MRd)} kNm`} strong />
+            <KV label="Utilisation" value={utilText(shown.y?.utilisation)} warn={shown.y?.utilisation > 1} />
           </div>
         </Panel>
       </div>
@@ -252,8 +333,8 @@ function InteractionTab({ r, crit, isBiaxial }) {
             <div className="space-y-1.5">
               <KV label="N_Ed / N_Rd" value={n3(bi.N_ratio)} />
               <KV label="Exponent a" value={n3(bi.a)} />
-              <KV label="(M_Edx/M_Rdx)^a" value={n3(Math.pow(safeRatio(crit.x), bi.a))} />
-              <KV label="(M_Edy/M_Rdy)^a" value={n3(Math.pow(safeRatio(crit.y), bi.a))} />
+              <KV label="(M_Edx/M_Rdx)^a" value={n3(Math.pow(safeRatio(shown.x), bi.a))} />
+              <KV label="(M_Edy/M_Rdy)^a" value={n3(Math.pow(safeRatio(shown.y), bi.a))} />
               <KV label="Sum" value={utilText(bi.interaction)} strong warn={bi.interaction > 1} />
             </div>
             <div>
@@ -269,11 +350,12 @@ function InteractionTab({ r, crit, isBiaxial }) {
 
       <Panel title="Reading M_Rd against a design chart">
         <Note>
-          M_Rd here is solved from the section, so it changes with N_Ed rather than being one fixed
-          number. Published design charts are plotted for symmetrical steel on two opposite faces at a
-          fixed d₂/h and fyk = 500. Where the real cage puts bars on all four faces, or d₂/h differs,
-          a chart reading will not match this curve and is usually the conservative side. Treat a
-          difference as something to reconcile, not as slack to design into.
+          M_Rd here is solved from the section, so it changes with N_Ed rather than being one
+          fixed number. Published design charts are plotted for symmetrical steel on two
+          opposite faces at a fixed d₂/h and fyk = 500. Where the real cage puts bars on all
+          four faces, or d₂/h differs, a chart reading will not match this curve and is
+          usually the conservative side. Treat a difference as something to reconcile, not as
+          slack to design into.
         </Note>
       </Panel>
     </div>
@@ -326,9 +408,11 @@ function LevelsTab({ r, isBiaxial }) {
   return (
     <div className="space-y-5">
       <Panel title="Axial Load Take-down">
-        <Table head={["Level", "N_Ed (kN)", "N_Rd,max (kN)", "Axial util.", "Governing util.", "Status"]}
+        <Table head={["Level", "Section", "Bars", "N_Ed (kN)", "N_Rd,max (kN)", "Axial util.", "Governing util.", "Status"]}
           rows={levels.map((l) => [
-            l.level.replace(/_/g, " "), n2(l.NEd_kN), n2(l.NRd_max_kN),
+            l.level.replace(/_/g, " "), `${n1(l.b_mm)}×${n1(l.h_mm)}`,
+            `${l.n_bars}Ø${n1(l.bar_dia_mm)}`,
+            n2(l.NEd_kN), n2(l.NRd_max_kN),
             n3(l.axial_utilisation), utilText(l.governing_utilisation),
             <Badge key="b" ok={l.status === "PASS"}>{l.status}</Badge>,
           ])} />
@@ -384,12 +468,25 @@ function LevelsTab({ r, isBiaxial }) {
 }
 
 /* ---------------- CHECKS ---------------- */
-function ChecksTab({ r, crit }) {
-  const d = r.detailing || {};
+function ChecksTab({ r, levels, shown, shownIdx, setLevelIdx, varies }) {
+  const d = shown.detailing || r.detailing || {};
   const asOk = d.As_provided_mm2 >= d.As_min_mm2 && d.As_provided_mm2 <= d.As_max_mm2;
   const tieOk = d.link_dia_mm >= d.phi_t_min_mm;
   return (
     <div className="space-y-5">
+      <Panel title="Storey">
+        <LevelPicker levels={levels} shownIdx={shownIdx} setLevelIdx={setLevelIdx}
+          note={varies
+            ? "As,min depends on this storey's N_Ed and Ac, and tie spacing on its own section, so both are checked per storey."
+            : undefined} />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 md:grid-cols-4">
+          <KV label="Level" value={shown.level.replace(/_/g, " ")} strong />
+          <KV label="Section" value={`${n1(shown.b_mm)} × ${n1(shown.h_mm)} mm`} />
+          <KV label="Bars" value={`${shown.n_bars}Ø${n1(shown.bar_dia_mm)}`} />
+          <KV label="ρ" value={`${n2(shown.rho_pct)}%`} />
+        </div>
+      </Panel>
+
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <Panel title="Longitudinal Reinforcement (Cl. 9.5.2)">
           <KV label="Basis 1 — 0.10·N_Ed/fyd" value={`${n1(d.As_min_basis_1_mm2)} mm²`} />
@@ -407,15 +504,17 @@ function ChecksTab({ r, crit }) {
           <KV label="s_cl,tmax = min(20φ, min(b,h), 400)" value={`${n1(d.s_max_mm)} mm`} strong />
           <KV label="Reduced zones (0.6 × s_max)" value={`${n1(d.s_reduced_mm)} mm`} />
           <Note>
-            Use the reduced spacing within a distance equal to the larger column dimension above and
-            below a beam or slab, and through lap lengths.
+            Use the reduced spacing within a distance equal to the larger column dimension
+            above and below a beam or slab, and through lap lengths.
           </Note>
         </Panel>
       </div>
 
+      <AlternativesPanel shown={shown} />
+
       <Panel title="All Checks by Level">
         <Table head={["Level", "Check", "Result"]}
-          rows={(r.levels || []).flatMap((l) =>
+          rows={(levels || []).flatMap((l) =>
             (l.checks || []).map((c) => [
               l.level.replace(/_/g, " "), c.name,
               <Badge key="b" ok={c.pass}>{c.pass ? "PASS" : "FAIL"}</Badge>,
@@ -423,13 +522,110 @@ function ChecksTab({ r, crit }) {
           )} />
       </Panel>
 
-      <Panel title="Capacity Utilisation (Critical Level)">
-        <UtilBar label="Axial" value={crit.axial_utilisation} detail={`${n2(crit.NEd_kN)} / ${n2(crit.NRd_max_kN)} kN`} />
-        <UtilBar label="Moment about x" value={crit.x?.utilisation} detail={`${n2(crit.x?.MEd)} / ${n2(crit.x?.MRd)} kNm`} />
-        <UtilBar label="Moment about y" value={crit.y?.utilisation} detail={`${n2(crit.y?.MEd)} / ${n2(crit.y?.MRd)} kNm`} />
-        {crit.biaxial && <UtilBar label="Biaxial interaction" value={crit.biaxial.interaction} detail={`exponent a = ${n3(crit.biaxial.a)}`} />}
+      <Panel title={`Capacity Utilisation — ${shown.level.replace(/_/g, " ")}`}>
+        <UtilBar label="Axial" value={shown.axial_utilisation} detail={`${n2(shown.NEd_kN)} / ${n2(shown.NRd_max_kN)} kN`} />
+        <UtilBar label="Moment about x" value={shown.x?.utilisation} detail={`${n2(shown.x?.MEd)} / ${n2(shown.x?.MRd)} kNm`} />
+        <UtilBar label="Moment about y" value={shown.y?.utilisation} detail={`${n2(shown.y?.MEd)} / ${n2(shown.y?.MRd)} kNm`} />
+        {shown.biaxial && <UtilBar label="Biaxial interaction" value={shown.biaxial.interaction} detail={`exponent a = ${n3(shown.biaxial.a)}`} />}
       </Panel>
     </div>
+  );
+}
+
+/**
+ * Every candidate the engine tried, with what each one gives.
+ *
+ * The engine evaluated all of them against the same N_Ed, so selecting an
+ * option shows its real utilisation with no round trip. It does NOT redesign:
+ * the checks, M_Rd and tie spacing elsewhere on this page belong to the cage
+ * the engine chose. To build with a different one, set it on the input page.
+ */
+function AlternativesPanel({ shown }) {
+  const az = shown.autosize;
+  const [pick, setPick] = useState(null);
+  if (!az) return null;
+
+  const opts = az.attempts || [];
+  const passing = opts.filter((o) => o.passes);
+  const chosenIdx = opts.findIndex((o) => o.bars === az.chosen);
+  const sel = pick === null ? (chosenIdx >= 0 ? opts[chosenIdx] : null) : opts.find((o) => o.bars === pick);
+  const chosen = chosenIdx >= 0 ? opts[chosenIdx] : null;
+
+  if (!az.applied) {
+    return (
+      <Panel title="Reinforcement Selection">
+        <div className="rounded-lg border-l-4 border-red-400 bg-red-50 p-3 dark:bg-red-900/20">
+          <p className="text-xs font-semibold text-red-700 dark:text-red-300">
+            No cage works in this section
+          </p>
+          <p className="mt-1 text-xs text-red-700 dark:text-red-300">{az.reason}</p>
+        </div>
+        <div className="mt-3">
+          <Table head={["Bars", "As (mm²)", "Why it fails"]}
+            rows={opts.slice(0, 8).map((o) => [o.bars, n1(o.As_mm2), o.reason || "—"])} />
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title={`Reinforcement Selection — ${shown.level.replace(/_/g, " ")}`}>
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="min-w-[220px] flex-1">
+          <label className={LABEL}>Cage</label>
+          <select value={sel ? sel.bars : ""} onChange={(e) => setPick(e.target.value)}
+            className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 font-mono text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#0A2F44] dark:border-[#334155] dark:bg-[#1f2937] dark:text-white">
+            {passing.map((o) => (
+              <option key={o.bars} value={o.bars}>
+                {o.bars} — As {n1(o.As_mm2)} mm², util {n3(o.utilisation)}
+                {o.bars === az.chosen ? "  (engine's choice)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        {sel && chosen && (
+          <div className="flex gap-6">
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-[#94a3b8]">Utilisation</div>
+              <div className={`text-sm font-semibold ${sel.utilisation > 1 ? "text-red-600 dark:text-red-400" : MAIN}`}>
+                {n3(sel.utilisation)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-[#94a3b8]">Steel vs chosen</div>
+              <div className={`text-sm font-semibold ${MAIN}`}>
+                {sel.As_mm2 === chosen.As_mm2 ? "—"
+                  : `${sel.As_mm2 > chosen.As_mm2 ? "+" : ""}${n1(sel.As_mm2 - chosen.As_mm2)} mm²`}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-[#94a3b8]">Tie spacing 20φ</div>
+              <div className={`text-sm font-semibold ${MAIN}`}>
+                {n1(Math.min(20 * sel.bar_dia_mm, Math.min(shown.b_mm, shown.h_mm), 400))} mm
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <Note>
+        {passing.length} of {opts.length} candidates pass every check here. The engine took{" "}
+        <strong>{az.chosen}</strong> as the smallest. Selecting another shows what it would give —
+        every option was evaluated at the same N_Ed — but the checks and M_Rd elsewhere on this
+        page belong to {az.chosen}. To build with a different cage, set it on the input page.
+      </Note>
+
+      <div className="mt-3">
+        <Table head={["Bars", "As (mm²)", "Utilisation", "Result"]}
+          rows={opts.map((o) => [
+            o.bars === az.chosen ? `${o.bars}  ←` : o.bars,
+            n1(o.As_mm2),
+            o.utilisation === null || o.utilisation === undefined ? "—" : n3(o.utilisation),
+            o.passes ? <Badge key="b" ok>PASS</Badge>
+                     : <span key="r" className={`text-xs ${SUB}`}>{o.reason}</span>,
+          ])} />
+      </div>
+    </Panel>
   );
 }
 
@@ -437,12 +633,17 @@ function ChecksTab({ r, crit }) {
 function ReportModal({ r, onClose }) {
   const s = r.summary;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/50 p-4" onClick={onClose}>
-      <div className={`${CARD} my-4 max-h-[88vh] w-full max-w-5xl overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e2e8f0] bg-white px-5 py-3 dark:border-[#334155] dark:bg-[#1f2937]">
+    <div className="col-report-overlay fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/50 p-4"
+      data-pdf-skip="Detailed report — use Print / PDF inside the report window"
+      onClick={onClose}>
+      <div className={`col-report ${CARD} my-4 max-h-[88vh] w-full max-w-5xl overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+        <div className="col-no-print sticky top-0 z-10 flex items-center justify-between border-b border-[#e2e8f0] bg-white px-5 py-3 dark:border-[#334155] dark:bg-[#1f2937]">
           <div>
             <h3 className={TITLE}>Detailed Calculation Report</h3>
-            <p className={`text-xs ${SUB}`}>{s.column_id} · {s.design_code} · {s.column_type}</p>
+            <p className={`text-xs ${SUB}`}>
+              {s.column_id} · {s.design_code} · {s.column_type} · {(r.report || []).length} sections,{" "}
+              {(r.report || []).reduce((a, x) => a + (x.rows || []).length, 0)} rows
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => window.print()}
@@ -458,12 +659,12 @@ function ReportModal({ r, onClose }) {
             <div className={`text-right ${MAIN}`}>Output</div>
           </div>
           {(r.report || []).map((sec, i) => (
-            <div key={i}>
+            <div key={i} className="col-section">
               <h4 className="mb-2 text-[13px] font-bold uppercase tracking-wide text-[#0A2F44] dark:text-[#66a4c2]">
                 {sec.title}
               </h4>
               {(sec.rows || []).map((row, j) => (
-                <div key={j} className="grid grid-cols-[170px_1fr_180px] gap-4 border-b border-[#f1f5f9] py-2 text-[13px] dark:border-[#2a3646]">
+                <div key={j} className="col-row grid grid-cols-[170px_1fr_180px] gap-4 border-b border-[#f1f5f9] py-2 text-[13px] dark:border-[#2a3646]">
                   <div className={`font-mono text-[11px] ${SUB}`}>{row.reference}</div>
                   <div className={`whitespace-pre-line font-mono text-[12px] ${MAIN}`}>{row.calculation}</div>
                   <div className="whitespace-pre-line text-right font-mono font-semibold text-[#0A2F44] dark:text-[#66a4c2]">{row.output}</div>
@@ -477,6 +678,31 @@ function ReportModal({ r, onClose }) {
           </p>
         </div>
       </div>
+      <style>{`
+        @media print {
+          .col-no-print { display: none !important; }
+          body * { visibility: hidden; }
+          .col-report, .col-report * { visibility: visible; }
+          .col-report-overlay {
+            position: static !important;
+            overflow: visible !important;
+            background: #fff !important;
+            padding: 0 !important;
+          }
+          .col-report {
+            position: absolute; left: 0; top: 0;
+            width: 100%; max-width: none !important;
+            max-height: none !important;
+            overflow: visible !important;
+            margin: 0 !important;
+            border: none !important; box-shadow: none !important;
+            background: #fff !important; color: #000 !important;
+          }
+          .col-report .col-row { break-inside: avoid; page-break-inside: avoid; }
+          .col-report .col-section { break-inside: auto; }
+          .col-report h4 { break-after: avoid; page-break-after: avoid; }
+        }
+      `}</style>
     </div>
   );
 }
