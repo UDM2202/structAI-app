@@ -1478,6 +1478,16 @@ class ColumnEngine:
             row("Bar layout", f"As = {geo.n_bars} x pi x {f1(geo.bar_dia)}^2 / 4", f"{f1(geo.As_total)} mm2"),
             row("Bar layout", f"d' = cover + link + phi/2 = {f1(geo.cover)} + {f1(geo.link_dia)} + {f1(geo.bar_dia/2)}", f"{f1(geo.d_prime)} mm"),
         ]
+        if d.level_specs:
+            rows.append(row("Per-storey", "the values above are the base column; these storeys "
+                                          "differ and are designed with their own section",
+                            f"{len(d.level_specs)} storey(s) edited"))
+            for lv2 in self.geo_by_level:
+                g2 = self.geo_by_level[lv2]
+                rows.append(row(f"{lv2}",
+                                f"b x h = {f1(g2.b)} x {f1(g2.h)}, {g2.n_bars} x Y{int(g2.bar_dia)}, "
+                                f"links Y{int(g2.link_dia)}, cover {f1(g2.cover)}, d' = {f1(g2.d_prime)}",
+                                f"ix {f3(g2.ix)}, iy {f3(g2.iy)} mm"))
         sec_list.append(section("3. GEOMETRY, COVER AND BAR LAYOUT", rows))
 
         # 4 / 5 --------------------------------------------------
@@ -1541,9 +1551,13 @@ class ColumnEngine:
         rows = []
         for r in levels:
             lv = r["level"]
+            # Each storey may have its own section and height, so the working
+            # must quote THAT storey's values, not the base column's.
+            gl = self.geo_for(lv)
+            sl_lv = self.slender_for(lv)
             for axis, i_sym in (("x", "ix"), ("y", "iy")):
                 a = r[axis]
-                i_val = geo.ix if axis == "x" else geo.iy
+                i_val = gl.ix if axis == "x" else gl.iy
                 src = a["l0_source"]
                 if src == "override":
                     calc = f"{lv} l0,{axis} supplied directly"
@@ -1551,21 +1565,21 @@ class ColumnEngine:
                     k1 = d.k1_x if axis == "x" else d.k1_y
                     k2 = d.k2_x if axis == "x" else d.k2_y
                     eq = "5.15 (braced)" if d.braced else "5.16 (unbraced)"
-                    calc = (f"{lv} l0,{axis} by Eq. {eq} with l = {f3(self.slender.clear_height_mm)} mm, "
+                    calc = (f"{lv} l0,{axis} by Eq. {eq} with l = {f3(sl_lv.clear_height_mm)} mm, "
                             f"k1 = {f3(max(float(k1), 0.1))}, k2 = {f3(max(float(k2), 0.1))}")
                 else:
-                    calc = (f"{lv} l0,{axis} = K x l = {f3(self.slender.K)} x "
-                            f"{self.slender.clear_height_mm:,.0f}")
+                    calc = (f"{lv} l0,{axis} = K x l = {f3(sl_lv.K)} x "
+                            f"{sl_lv.clear_height_mm:,.0f}")
                 rows.append(row("EN 1992-1-1 Cl. 5.8.3.2", calc, f"{f3(a['l0_mm'])} mm"))
                 rows.append(row("EN 1992-1-1 Cl. 5.8.3.2", f"{lv} lambda_{axis} = l0 / {i_sym} = {f3(a['l0_mm'])} / {f3(i_val)}", f"{f3(a['lambda'])}"))
                 if d.use_default_A_B:
-                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "A = 0.7 (code default, phi_ef taken as not known)", f"{f3(self.slender.factor_A())}"))
-                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = 1.1 (code default, omega taken as not known)", f"{f3(self.slender.factor_B())}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "A = 0.7 (code default, phi_ef taken as not known)", f"{f3(sl_lv.factor_A())}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = 1.1 (code default, omega taken as not known)", f"{f3(sl_lv.factor_B())}"))
                 else:
-                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"A = 1/(1+0.2*phi_ef) = 1/(1+0.2x{d.effective_creep_ratio})", f"{f3(self.slender.factor_A())}"))
-                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = sqrt(1+2*omega), computed from the provided steel", f"{f3(self.slender.factor_B())}"))
-                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"C = 1.7 - rm (0.7 if unknown/unbraced)", f"{f3(self.slender.factor_C(a['M01'], a['M02']))}"))
-                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"{lv} n = NEd/(Ac*fcd) = {f3(r['NEd_kN']*1000)}/({f1(geo.Ac)} x {f3(mat.fcd)})", f"{f3(self.slender.n_relative(r['NEd_kN']))}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"A = 1/(1+0.2*phi_ef) = 1/(1+0.2x{d.effective_creep_ratio})", f"{f3(sl_lv.factor_A())}"))
+                    rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "B = sqrt(1+2*omega), computed from the provided steel", f"{f3(sl_lv.factor_B())}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", "C = 1.7 - rm (0.7 if unknown/unbraced)", f"{f3(sl_lv.factor_C(a['M01'], a['M02']))}"))
+                rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"{lv} n = NEd/(Ac*fcd) = {f3(r['NEd_kN']*1000)}/({f1(gl.Ac)} x {f3(mat.fcd)})", f"{f3(sl_lv.n_relative(r['NEd_kN']))}"))
                 rows.append(row("EN 1992-1-1 Cl. 5.8.3.1", f"{lv} lambda_lim = 20*A*B*C/sqrt(n)", f"{f3(a['lambda_lim'])}"))
                 rows.append(row("Classification", f"{lv} lambda_{axis} {'>' if a['slender'] else '<='} lambda_lim", "SLENDER" if a["slender"] else "SHORT"))
         sec_list.append(section("8. SLENDERNESS — BOTH AXES", rows))
@@ -1629,20 +1643,21 @@ class ColumnEngine:
         sec_list.append(section("11. INTERACTION CHECK", rows))
 
         # 12 -----------------------------------------------------
-        As_max = As_max_mm2(geo.Ac)
+        gcrit = self.geo_for(critical_level)
+        As_max = As_max_mm2(gcrit.Ac)
         rows = [
             row("EN 1992-1-1 Cl. 9.5.2(2)", f"Basis 1 — axial: 0.10*NEd/fyd = 0.10 x {f3(crit['NEd_kN']*1000)} / {f3(mat.fyd)}", f"{f1(crit['As_min_basis_1'])} mm2"),
-            row("EN 1992-1-1 Cl. 9.5.2(2)", f"Basis 2 — 0.2% of section: 0.002 x {f1(geo.Ac)}", f"{f1(crit['As_min_basis_2'])} mm2"),
+            row("EN 1992-1-1 Cl. 9.5.2(2)", f"Basis 2 — 0.2% of section: 0.002 x {f1(gcrit.Ac)}", f"{f1(crit['As_min_basis_2'])} mm2"),
             row("EN 1992-1-1 Cl. 9.5.2(2)", "As,min = max(Basis 1, Basis 2)", f"{f1(crit['As_min'])} mm2"),
-            row("EN 1992-1-1 Cl. 9.5.2(3)", f"As,max = 0.04 x {f1(geo.Ac)}", f"{f1(As_max)} mm2"),
-            row("Provided", f"As = {geo.n_bars} x Y{int(geo.bar_dia)}", f"{f1(geo.As_total)} mm2"),
-            row("Design check", f"As,min <= As <= As,max ?", "PASS" if crit['As_min'] <= geo.As_total <= As_max else "FAIL"),
+            row("EN 1992-1-1 Cl. 9.5.2(3)", f"As,max = 0.04 x {f1(gcrit.Ac)}", f"{f1(As_max)} mm2"),
+            row("Provided", f"As = {gcrit.n_bars} x Y{int(gcrit.bar_dia)} ({critical_level})", f"{f1(gcrit.As_total)} mm2"),
+            row("Design check", "As,min <= As <= As,max ?", "PASS" if crit['As_min'] <= gcrit.As_total <= As_max else "FAIL"),
         ]
         sec_list.append(section("12. LONGITUDINAL REINFORCEMENT LIMITS", rows))
 
         # 13 -----------------------------------------------------
-        phi_t_min = min_tie_diameter_mm(geo.bar_dia)
-        s_max = max_tie_spacing_mm(geo.bar_dia, geo.b, geo.h)
+        phi_t_min = min_tie_diameter_mm(gcrit.bar_dia)
+        s_max = max_tie_spacing_mm(gcrit.bar_dia, gcrit.b, gcrit.h)
         s_red = reduced_tie_spacing_mm(s_max)
         sec_list.append(section("13. TRANSVERSE REINFORCEMENT (TIES)", [
             row("EN 1992-1-1 Cl. 9.5.3(1)", f"phi_t,min = max(6, phi_long/4) = max(6, {f1(geo.bar_dia)}/4)", f"{f3(phi_t_min)} mm"),
