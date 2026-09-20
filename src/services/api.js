@@ -16,7 +16,18 @@ function extractErrorMessage(errBody, fallback) {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
     const msgs = detail
-      .map((d) => (d && typeof d.msg === "string" ? d.msg.replace(/^Value error,\s*/, "") : null))
+      .map((d) => {
+        if (!d || typeof d.msg !== "string") return null;
+        const msg = d.msg.replace(/^Value error,\s*/, "");
+        // Pydantic's `loc` names the offending field. Dropping it leaves
+        // messages like "Input should be greater than or equal to 0" with
+        // nothing to act on, which is the difference between a two-second
+        // fix and hunting through five steps of a form.
+        const loc = Array.isArray(d.loc)
+          ? d.loc.filter((x) => x !== "body" && typeof x !== "number").join(" \u2192 ")
+          : "";
+        return loc ? `${loc}: ${msg}` : msg;
+      })
       .filter(Boolean);
     if (msgs.length) return msgs.join("; ");
   }
