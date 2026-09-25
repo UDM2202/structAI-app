@@ -103,6 +103,10 @@ const DEFAULTS = {
 
   base_fixed: false,
   cracked_beam_stiffness: true,
+  // Both blank by design: the backend applies 1/6 and 300 mm on its own when
+  // these are omitted, so an empty box here means "use that default", not zero.
+  crank_max_slope: "",
+  crank_zone_mm: "",
 
   load_mode: "takedown",              // takedown | direct
   // In direct mode: "ends" sends first order end moments and lets the engine
@@ -351,6 +355,10 @@ export default function ColumnInput() {
       },
       effective_length: el,
       levels: levelsOut,
+      ...(numOrNull(f.crank_max_slope) !== null
+        ? { crank_max_slope: numOrNull(f.crank_max_slope) } : {}),
+      ...(numOrNull(f.crank_zone_mm) !== null
+        ? { crank_zone_mm: numOrNull(f.crank_zone_mm) } : {}),
       frame: {
         derive_moments: true,
         base_fixed: !!f.base_fixed,
@@ -786,6 +794,7 @@ function StepFloors({ form, set, setFloor, setBeam, setLevel, setLevelFloor, set
               template above. Tick a storey to give it its own section, cage or loads.
             </Note>
             <SectionGrowthWarning form={form} levels={levels} />
+            <CrankZoneFields form={form} set={set} />
             <div className="mt-3 space-y-2">
               {levels.map((lvl) => (
                 <LevelRow key={lvl} lvl={lvl} form={form}
@@ -804,6 +813,34 @@ function StepFloors({ form, set, setFloor, setBeam, setLevel, setLevelFloor, set
  * says so rather than blocking it -- there are legitimate reasons (a transfer
  * structure, a setback) and the engine does not care either way.
  */
+/**
+ * Optional. Left blank, the backend applies its own defaults (1/6 slope,
+ * 300 mm zone) -- these boxes only matter once an engineer has checked an
+ * actual crank detail and wants to design against that instead.
+ */
+function CrankZoneFields({ form, set }) {
+  return (
+    <div className="mt-3 rounded-lg border border-[#e2e8f0] p-3 dark:border-[#334155]">
+      <p className={`mb-2 text-xs font-semibold ${MAIN}`}>
+        Bar crank limits <span className={`font-normal ${SUB}`}>(optional)</span>
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Num label="Max crank slope, rise:run" value={form.crank_max_slope}
+          placeholder="1 / 6 \u2248 0.167" onChange={(v) => set({ crank_max_slope: v })} step="0.01" />
+        <Num label="Assumed crank zone" unit="mm" value={form.crank_zone_mm}
+          placeholder="300" onChange={(v) => set({ crank_zone_mm: v })} step="10" />
+      </div>
+      <Note>
+        Leave both blank to use the defaults: a 1-in-6 slope over an assumed 300 mm
+        above the lap. Change these only once an engineer has checked the actual
+        crank detail on this job and it allows something different \u2014 a wider
+        zone or a shallower slope lets a bigger section step pass between two
+        storeys; tightening either makes the check stricter.
+      </Note>
+    </div>
+  );
+}
+
 function SectionGrowthWarning({ form, levels }) {
   const secOf = (lvl) => {
     const e = form.levelEdits[lvl] || {};

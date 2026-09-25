@@ -359,6 +359,23 @@ class ColumnDesignRequest(BaseModel):
     # Per-storey edits, keyed by level name ("Roof", "Typical_Floor_3", ...).
     # Empty means one section and one cage for the whole column.
     levels: Dict[str, ColLevelSpec] = Field(default_factory=dict)
+
+    crank_max_slope: float = Field(
+        1.0 / 6.0, gt=0, le=1.0,
+        description="Maximum bar crank slope (rise:run) allowed between storeys with "
+                    "different sections. 1/6 is common UK detailing practice, not a "
+                    "numbered EC2 clause -- widen it only where a shallower crank has "
+                    "been checked separately.",
+    )
+    crank_zone_mm: float = Field(
+        300.0, gt=0,
+        description="Assumed vertical length available to form the crank, just above "
+                    "the lap. A fixed assumption, not derived from storey height -- a "
+                    "tall storey does not usually leave more room to crank in, since "
+                    "the bars still need a straight run into the beam-column joint "
+                    "above and out of the starter below. Raise it only where the "
+                    "actual detail has been checked to allow more.",
+    )
     reinforcement: ColReinforcement = ColReinforcement()
     materials: ColMaterials = ColMaterials()
     durability: ColDurability = ColDurability()
@@ -420,6 +437,101 @@ class ColumnDesignRequest(BaseModel):
                     f"(EN 1992-1-1 Cl. 8.2). Increase the section, reduce the bar "
                     f"count, or use a smaller diameter."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _storey_sections_can_lap(self):
+        """
+        Column bars carry on from one storey to the next by lapping just above
+        each floor. Where the section changes size, the bars cannot simply run
+        straight through -- they have to be bent inward or outward ("cranked")
+        to reach the new position, over a short length just above the lap.
+
+        There is no single EC2 clause that sets a crank slope; the 1-in-6 limit
+        used here is common UK column-detailing practice (see e.g. the
+        Standard Method of Detailing). It is deliberately conservative and can
+        be widened with crank_max_slope on a request where a shallower crank
+        has been checked separately.
+
+        This blocks a section step the bars cannot physically reach across in
+        the assumed zone -- it does not forbid stepping the section, which is
+        normal and often necessary going up a tall building.
+        """
+        g = self.geometry
+        names = ["Roof"] + [f"Typical_Floor_{i}"
+                            for i in range(self.number_of_typical_floors, 0, -1)]
+        if len(names) < 2:
+            return self
+
+        def eff(name):
+            sp = self.levels.get(name)
+            b = sp.b_mm if (sp and sp.b_mm is not None) else g.b_mm
+            h = sp.h_mm if (sp and sp.h_mm is not None) else g.h_mm
+            sh = sp.storey_height_m if (sp and sp.storey_height_m is not None) else g.storey_height_m
+            return b, h, sh
+
+        slope = self.crank_max_slope
+        for i in range(len(names) - 1):
+            b_a, h_a, _ = eff(names[i])
+            b_b, h_b, _sh_b = eff(names[i + 1])  # storey height not used in the zone assumption
+            if b_a == b_b and h_a == h_b:
+                continue
+            available_mm = self.crank_zone_mm
+            for axis, dim_a, dim_b in (("b", b_a, b_b), ("h", h_a, h_b)):
+                offset = abs(dim_b - dim_a) / 2.0
+                if offset < 1e-6:
+                    continue
+                required_mm = offset / slope
+                if required_mm > available_mm:
+                    raise ValueError(
+                        f"{names[i]} ({b_a:.0f}x{h_a:.0f}) to {names[i + 1]} "
+                        f"({b_b:.0f}x{h_b:.0f}): the {axis} face moves "
+                        f"{offset:.0f} mm, needing a crank at least "
+                        f"{required_mm:.0f} mm long at a {slope:.3f} slope. "
+                        f"Only about {available_mm:.0f} mm is assumed available "
+                        f"in {names[i + 1]}'s storey height. Step the section "
+                        f"more gradually, or raise crank_max_slope if a "
+                        f"shallower crank has been checked separately."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _bar_diameter_non_decreasing(self):
+        """
+        A lap is limited by its weaker bar, so standard detailing does not let
+        the main bar diameter drop going down a building: the storey above
+        must not ask for a bigger bar than the one below it provides.
+
+        Only applies when autosize is off. With it on, diameters are chosen by
+        the engine at run time and continuity is enforced there instead (see
+        ColumnEngine.autosize_level), because the value being checked does not
+        exist yet at request time.
+        """
+        if self.analysis.autosize_bars:
+            return self
+        names = ["Roof"] + [f"Typical_Floor_{i}"
+                            for i in range(self.number_of_typical_floors, 0, -1)]
+        if len(names) < 2:
+            return self
+
+        def dia(name):
+            sp = self.levels.get(name)
+            return sp.main_bar_dia_mm if (sp and sp.main_bar_dia_mm is not None) \
+                else self.reinforcement.main_bar_dia_mm
+
+        prev_name, prev_dia = names[0], dia(names[0])
+        for name in names[1:]:
+            this_dia = dia(name)
+            if this_dia < prev_dia:
+                raise ValueError(
+                    f"{name} specifies Y{this_dia:.0f}, smaller than Y{prev_dia:.0f} "
+                    f"on {prev_name} above it. A lap is limited by its weaker bar, so "
+                    f"the main bar diameter must not decrease going down the "
+                    f"building. Raise {name}'s bar diameter to at least "
+                    f"Y{prev_dia:.0f}, or increase it on {prev_name} instead if "
+                    f"that storey was meant to match."
+                )
+            prev_name, prev_dia = name, this_dia
         return self
 
     @model_validator(mode="after")

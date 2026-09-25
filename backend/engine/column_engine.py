@@ -1280,10 +1280,21 @@ class ColumnEngine:
             else:
                 self.d.level_specs[level] = saved
 
-    def autosize_level(self, level: str, NEd_kN: float) -> Dict:
+    def autosize_level(self, level: str, NEd_kN: float, min_dia: float = 0.0) -> Dict:
         """
-        Walk the candidate list smallest-first and keep the first cage that
-        satisfies every check at this storey.
+        Walk the candidate list and keep the first cage that satisfies every
+        check at this storey.
+
+        The user's own chosen diameter for this storey is tried FIRST, at
+        rising bar counts, before falling back to the general candidate list.
+        Someone who picked Y20 on step 2 gets a Y20 cage if one fits -- not
+        whatever diameter happens to sit first in AUTOSIZE_CANDIDATES.
+
+        min_dia enforces bar continuity up the column: a lap can only pass as
+        much force as its weaker bar, and standard detailing does not let bar
+        size drop going down a building. run() carries the diameter chosen at
+        the storey above into this one, top down, and no candidate below that
+        diameter is offered here.
 
         Bars do not change the take-down: N_Ed comes from the gross section, so
         there is nothing to iterate. Every candidate is evaluated against the
@@ -1296,7 +1307,17 @@ class ColumnEngine:
         """
         saved = (self.geo_by_level.get(level), self.slender_by_level.get(level),
                  self.sec_by_level.get(level))
-        cands = self.d.autosize_candidates or AUTOSIZE_CANDIDATES
+        base_cands = self.d.autosize_candidates or AUTOSIZE_CANDIDATES
+
+        # This storey's own chosen diameter, tried first at rising counts.
+        di = self._level_input(level)
+        own_dia = int(di.main_bar_dia_mm)
+        own_counts = sorted({n for dia, n in base_cands if dia == own_dia} | {4, 6, 8})
+        preferred = [(own_dia, n) for n in own_counts]
+        cands = preferred + [c for c in base_cands if c not in preferred]
+        # Bar continuity: nothing offered below what the storey above used.
+        cands = [c for c in cands if c[0] >= min_dia]
+
         attempts: List[Dict] = []
         chosen: Optional[Dict] = None
 
@@ -1329,19 +1350,30 @@ class ColumnEngine:
             # the attempt list, so the failure says why rather than just FAIL.
             if saved[0] is not None:
                 self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = saved
+            reason = ("No candidate cage satisfies every check in this section. "
+                      "Increase the section or the concrete grade.")
+            if min_dia > 0 and not any(a["bar_dia_mm"] >= min_dia for a in attempts):
+                reason = (f"No candidate at or above Y{int(min_dia)} was even tried in this "
+                         f"section -- the bar list does not reach the diameter carried down "
+                         f"from the storey above. Widen the section or raise the candidate list.")
             res = self.design_level(level, NEd_kN)
-            res["autosize"] = {"applied": False, "chosen": None,
-                               "reason": "No candidate cage satisfies every check in this "
-                                         "section. Increase the section or the concrete grade.",
+            res["autosize"] = {"applied": False, "chosen": None, "reason": reason,
                                "attempts": attempts}
             return res
 
         self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = \
             chosen_objs[0], chosen_objs[1], chosen_objs[2]
+        used_own = abs(chosen["bar_dia_mm"] - own_dia) < 1e-6
+        reason = (f"smallest count at your Y{own_dia} that passes every check"
+                  if used_own else
+                  f"Y{own_dia} does not fit or pass here, so the smallest cage that does "
+                  f"is offered instead")
+        if min_dia > 0:
+            reason += f" (Y{int(min_dia)} minimum, carried down from the storey above)"
         chosen["autosize"] = {
             "applied": True,
             "chosen": f"{chosen['n_bars']}Y{int(chosen['bar_dia_mm'])}",
-            "reason": "smallest cage passing every check",
+            "reason": reason,
             "attempts": attempts,
         }
         return chosen
@@ -1361,7 +1393,17 @@ class ColumnEngine:
         NEd_crit = axial[critical_level]
 
         if d.autosize_bars:
-            levels = [self.autosize_level(lv, n) for lv, n in axial.items()]
+            # axial.items() is already ordered top down (Roof first, then each
+            # floor below it), which is exactly the order bar continuity needs:
+            # each storey's minimum diameter is whatever was chosen for the one
+            # above it.
+            levels = []
+            min_dia = 0.0
+            for lv, n in axial.items():
+                res = self.autosize_level(lv, n, min_dia=min_dia)
+                if res.get("autosize", {}).get("applied"):
+                    min_dia = res["bar_dia_mm"]
+                levels.append(res)
         else:
             levels = [self.design_level(lv, n) for lv, n in axial.items()]
         crit = next(r for r in levels if r["level"] == critical_level)
