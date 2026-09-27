@@ -58,6 +58,30 @@ VALID_BUILDING_USE = {
 }
 
 
+def _distribute_faces(n_total: int, b_mm: float, h_mm: float):
+    """
+    Face counts only, mirroring column_engine.distribute_bars exactly.
+
+    Kept in step with the engine on purpose: a validator that distributes
+    bars differently from the engine would reject cages the engine would
+    have built, and accept ones it would not.
+    """
+    n = max(4, int(n_total))
+    if n % 2 == 1:
+        n += 1
+    s = n // 2 + 2
+    n_h = int(round(s * h_mm / (b_mm + h_mm)))
+    n_h = max(2, min(s - 2, n_h))
+    return s - n_h, n_h
+
+
+def _effective_faces(b_mm, h_mm, n_total, n_b, n_h):
+    """An explicit face split wins; otherwise the engine's distribution."""
+    if n_b is not None and n_h is not None:
+        return int(n_b), int(n_h)
+    return _distribute_faces(n_total, b_mm, h_mm)
+
+
 # ============================================================
 # REQUEST
 # ============================================================
@@ -532,6 +556,127 @@ class ColumnDesignRequest(BaseModel):
                     f"that storey was meant to match."
                 )
             prev_name, prev_dia = name, this_dia
+        return self
+
+    def _level_names(self):
+        return ["Roof"] + [f"Typical_Floor_{i}"
+                           for i in range(self.number_of_typical_floors, 0, -1)]
+
+    def _faces_at(self, name):
+        """
+        (n_b_face, n_h_face, set_by_hand) for one storey, after inheritance.
+
+        set_by_hand says the split came from the request rather than from the
+        engine's distribution, which matters because a hand-set split is not
+        touched by auto-size.
+        """
+        g, rf = self.geometry, self.reinforcement
+        sp = self.levels.get(name)
+        b = sp.b_mm if (sp and sp.b_mm is not None) else g.b_mm
+        h = sp.h_mm if (sp and sp.h_mm is not None) else g.h_mm
+        n_b = sp.n_bars_b_face if sp else None
+        n_h = sp.n_bars_h_face if sp else None
+        by_hand = n_b is not None and n_h is not None
+        if not by_hand:
+            n_b, n_h = rf.n_bars_b_face, rf.n_bars_h_face
+            by_hand = n_b is not None and n_h is not None
+        n_total = (sp.n_bars_total if (sp and sp.n_bars_total is not None)
+                   else rf.n_bars_total)
+        n_b, n_h = _effective_faces(b, h, n_total, n_b, n_h)
+        return n_b, n_h, by_hand
+
+    @model_validator(mode="after")
+    def _level_bars_fit_in_section(self):
+        """
+        EN 1992-1-1 Cl. 8.2 again, this time per storey.
+
+        _bars_fit_in_section checks the base column only. Once a storey can
+        carry its own face split, a cage that cannot physically be tied can
+        be entered on a storey whose section is smaller than the base one,
+        and nothing downstream catches it: design_level checks capacity, not
+        buildability.
+
+        Only storeys actually edited are checked, so this cannot newly reject
+        a request that sets no per-storey values. With auto-size on, a storey
+        whose bars the engine will choose is skipped -- the entered count is a
+        starting point there, not the cage.
+        """
+        g, rf, dur = self.geometry, self.reinforcement, self.durability
+        cover = dur.clear_cover_override_mm
+        if cover is None:
+            cover = 45.0  # upper-bound placeholder; engine derives the real value
+
+        for name, sp in self.levels.items():
+            touched = any(v is not None for v in (
+                sp.b_mm, sp.h_mm, sp.main_bar_dia_mm, sp.n_bars_total,
+                sp.n_bars_b_face, sp.n_bars_h_face, sp.link_dia_mm))
+            if not touched:
+                continue
+            by_hand = sp.n_bars_b_face is not None and sp.n_bars_h_face is not None
+            if self.analysis.autosize_bars and not by_hand:
+                continue
+
+            b = sp.b_mm if sp.b_mm is not None else g.b_mm
+            h = sp.h_mm if sp.h_mm is not None else g.h_mm
+            dia = sp.main_bar_dia_mm if sp.main_bar_dia_mm is not None \
+                else rf.main_bar_dia_mm
+            link = sp.link_dia_mm if sp.link_dia_mm is not None else rf.link_dia_mm
+            n_b, n_h, _ = self._faces_at(name)
+
+            edge = cover + link
+            s_min = max(dia, 20.0)
+            for n, dim, label in ((n_b, b, "width b"), (n_h, h, "depth h")):
+                if n < 2:
+                    continue
+                needed = 2 * edge + n * dia + (n - 1) * s_min
+                if needed > dim:
+                    raise ValueError(
+                        f"{name}: {n} bars of {dia:.0f} mm will not fit across the "
+                        f"{label} of {dim:.0f} mm. Minimum required is {needed:.0f} mm "
+                        f"allowing cover, links and {s_min:.0f} mm clear spacing "
+                        f"(EN 1992-1-1 Cl. 8.2). Reduce that face's bar count on "
+                        f"{name}, use a smaller diameter, or widen the section."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _bar_count_per_face_non_decreasing(self):
+        """
+        Every bar laps into a bar in the storey below, so a face that loses a
+        bar going down the building leaves the extra bar above it with nothing
+        to continue into.
+
+        Same detailing principle as _bar_diameter_non_decreasing, applied to
+        the count rather than the size. Note the count can drop without anyone
+        typing it: the engine puts more bars on the longer face, so a storey
+        that widens redistributes the same total and can end up with fewer on
+        one face.
+
+        Skipped when auto-size is on, because the counts it will choose do not
+        exist yet at request time; ColumnEngine.autosize_level carries the
+        face counts down instead, and checks a hand-set storey against them.
+        """
+        if self.analysis.autosize_bars:
+            return self
+        names = self._level_names()
+        if len(names) < 2:
+            return self
+
+        prev_name = names[0]
+        prev_b, prev_h, _ = self._faces_at(prev_name)
+        for name in names[1:]:
+            n_b, n_h, _ = self._faces_at(name)
+            for face, above, below in (("b", prev_b, n_b), ("h", prev_h, n_h)):
+                if below < above:
+                    raise ValueError(
+                        f"{name} has {below} bars on each {face}-face, fewer than the "
+                        f"{above} on {prev_name} above it. A lap needs a bar beneath "
+                        f"each bar it continues from, so the count on a face must not "
+                        f"decrease going down the building. Raise {name}'s {face}-face "
+                        f"count to at least {above}, or lower it on {prev_name} if that "
+                        f"storey was the one meant to change."
+                    )
+            prev_name, prev_b, prev_h = name, n_b, n_h
         return self
 
     @model_validator(mode="after")

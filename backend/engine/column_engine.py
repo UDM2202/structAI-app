@@ -1280,15 +1280,23 @@ class ColumnEngine:
             else:
                 self.d.level_specs[level] = saved
 
-    def autosize_level(self, level: str, NEd_kN: float, min_dia: float = 0.0) -> Dict:
+    def autosize_level(self, level: str, NEd_kN: float, min_dia: float = 0.0,
+                       min_nb: int = 0, min_nh: int = 0) -> Dict:
         """
         Walk the candidate list and keep the first cage that satisfies every
         check at this storey.
 
-        The user's own chosen diameter for this storey is tried FIRST, at
-        rising bar counts, before falling back to the general candidate list.
-        Someone who picked Y20 on step 2 gets a Y20 cage if one fits -- not
-        whatever diameter happens to sit first in AUTOSIZE_CANDIDATES.
+        The cage the user entered for this storey is a FLOOR, not a starting
+        suggestion. Their own diameter is tried first at rising counts, and no
+        candidate is offered with less steel than their own diameter and count
+        provide. Someone who asked for 6Y20 gets 6Y20 if it works and a larger
+        cage if it does not; they never get 4Y20 back. A storey that sets no
+        count of its own inherits the one from step 2, so that count is the
+        floor there.
+
+        Before this, own_counts was built from the candidate list alone and
+        always began at 4, so an entered count of 6 was silently replaced by
+        the first passing 4-bar cage.
 
         min_dia enforces bar continuity up the column: a lap can only pass as
         much force as its weaker bar, and standard detailing does not let bar
@@ -1312,11 +1320,24 @@ class ColumnEngine:
         # This storey's own chosen diameter, tried first at rising counts.
         di = self._level_input(level)
         own_dia = int(di.main_bar_dia_mm)
-        own_counts = sorted({n for dia, n in base_cands if dia == own_dia} | {4, 6, 8})
+        # The entered count has to be in the list, or a count the general list
+        # does not happen to carry (10Y20, say) could never be tried at all.
+        own_n = max(4, int(di.n_bars_total))
+        if own_n % 2 == 1:
+            own_n += 1
+        own_counts = sorted(
+            {n for dia, n in base_cands if dia == own_dia} | {4, 6, 8, own_n})
         preferred = [(own_dia, n) for n in own_counts]
         cands = preferred + [c for c in base_cands if c not in preferred]
         # Bar continuity: nothing offered below what the storey above used.
         cands = [c for c in cands if c[0] >= min_dia]
+        # The entered cage is a floor. Auto-size proposes the smallest cage
+        # that passes, but "smallest" starts from what the engineer asked for,
+        # not from the bottom of the candidate list. Comparing area rather
+        # than count keeps this honest across diameters: 4Y25 is more steel
+        # than 6Y20 even though it is fewer bars.
+        As_floor = own_n * bar_area_mm2(own_dia)
+        cands = [c for c in cands if c[1] * bar_area_mm2(c[0]) >= As_floor - 1e-6]
 
         attempts: List[Dict] = []
         chosen: Optional[Dict] = None
@@ -1324,6 +1345,16 @@ class ColumnEngine:
         for dia, n in cands:
             g, sl, sx, sy = self._trial_level(level, dia, n)
             fits, why = bars_fit(g)
+            # Bar continuity on COUNT, not just diameter. Every bar laps into
+            # one below it, so a face may not lose a bar going down. The test
+            # has to happen here rather than on the candidate list, because
+            # how a total splits across the two faces depends on the section.
+            if fits and (g.n_b_face < min_nb or g.n_h_face < min_nh):
+                fits = False
+                why = (f"{g.n_b_face} per b-face and {g.n_h_face} per h-face is "
+                       f"fewer than the {min_nb}/{min_nh} carried down from the "
+                       f"storey above, so a bar there would have nothing to lap "
+                       f"into")
             if not fits:
                 attempts.append({"bars": f"{g.n_bars}Y{int(dia)}", "bar_dia_mm": float(dia),
                                  "n_bars": g.n_bars, "As_mm2": round(g.As_total, 1),
@@ -1350,8 +1381,9 @@ class ColumnEngine:
             # the attempt list, so the failure says why rather than just FAIL.
             if saved[0] is not None:
                 self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = saved
-            reason = ("No candidate cage satisfies every check in this section. "
-                      "Increase the section or the concrete grade.")
+            reason = (f"No candidate cage at or above the {own_n}Y{own_dia} entered "
+                      f"for this storey satisfies every check in this section. "
+                      f"Increase the section or the concrete grade.")
             if min_dia > 0 and not any(a["bar_dia_mm"] >= min_dia for a in attempts):
                 reason = (f"No candidate at or above Y{int(min_dia)} was even tried in this "
                          f"section -- the bar list does not reach the diameter carried down "
@@ -1364,10 +1396,11 @@ class ColumnEngine:
         self.geo_by_level[level], self.slender_by_level[level], self.sec_by_level[level] = \
             chosen_objs[0], chosen_objs[1], chosen_objs[2]
         used_own = abs(chosen["bar_dia_mm"] - own_dia) < 1e-6
-        reason = (f"smallest count at your Y{own_dia} that passes every check"
+        reason = (f"smallest cage at your Y{own_dia}, at or above the {own_n} bars "
+                  f"entered for this storey, that passes every check"
                   if used_own else
-                  f"Y{own_dia} does not fit or pass here, so the smallest cage that does "
-                  f"is offered instead")
+                  f"Y{own_dia} does not fit or pass here, so the smallest cage with "
+                  f"at least as much steel as {own_n}Y{own_dia} is offered instead")
         if min_dia > 0:
             reason += f" (Y{int(min_dia)} minimum, carried down from the storey above)"
         chosen["autosize"] = {
@@ -1399,10 +1432,59 @@ class ColumnEngine:
             # above it.
             levels = []
             min_dia = 0.0
+            min_nb = min_nh = 0
             for lv, n in axial.items():
-                res = self.autosize_level(lv, n, min_dia=min_dia)
-                if res.get("autosize", {}).get("applied"):
-                    min_dia = res["bar_dia_mm"]
+                sp = d.level_specs.get(lv)
+                by_hand = (sp is not None and sp.n_bars_b_face is not None
+                           and sp.n_bars_h_face is not None)
+                if by_hand:
+                    # A face split entered for this storey is the engineer's
+                    # own cage, bar for bar. Auto-size does not overwrite it:
+                    # the storey is checked exactly as entered, and still takes
+                    # part in the continuity carry in both directions -- it must
+                    # honour the storey above, and it sets the floor below.
+                    res = self.design_level(lv, n)
+                    gl = self.geo_for(lv)
+                    short = (gl.bar_dia < min_dia or gl.n_b_face < min_nb
+                             or gl.n_h_face < min_nh)
+                    if short:
+                        res["checks"].append({
+                            "name": (f"Bar continuity with the storey above "
+                                     f"(needs at least Y{int(min_dia)}, {min_nb} per "
+                                     f"b-face, {min_nh} per h-face; this storey has "
+                                     f"Y{int(gl.bar_dia)}, {gl.n_b_face}/{gl.n_h_face})"),
+                            "pass": False})
+                        res["status"] = "FAIL"
+                    res["autosize"] = {
+                        "applied": False,
+                        "chosen": None,
+                        "attempts": [],
+                        "reason": (f"bars set by hand for this storey "
+                                   f"({gl.n_b_face} per b-face, {gl.n_h_face} per "
+                                   f"h-face, {gl.n_bars}Y{int(gl.bar_dia)}), so "
+                                   f"auto-size left it alone and checked it as "
+                                   f"entered"),
+                    }
+                    min_dia = max(min_dia, gl.bar_dia)
+                    min_nb = max(min_nb, gl.n_b_face)
+                    min_nh = max(min_nh, gl.n_h_face)
+                else:
+                    res = self.autosize_level(lv, n, min_dia=min_dia,
+                                              min_nb=min_nb, min_nh=min_nh)
+                    # Carry from what this storey actually ended up with,
+                    # whether auto-size chose that cage or handed back the
+                    # entered one after finding nothing. A failed search
+                    # leaves the storey FAILing either way, but the storeys
+                    # below still have to be measured against the cage that
+                    # is actually drawn above them -- otherwise a second,
+                    # unreported continuity break rides along underneath the
+                    # first failure. max() is a no-op when the search
+                    # succeeded, since the candidate filters already
+                    # guarantee the chosen cage clears the carry.
+                    gl = self.geo_for(lv)
+                    min_dia = max(min_dia, gl.bar_dia)
+                    min_nb = max(min_nb, gl.n_b_face)
+                    min_nh = max(min_nh, gl.n_h_face)
                 levels.append(res)
         else:
             levels = [self.design_level(lv, n) for lv, n in axial.items()]
@@ -1530,8 +1612,12 @@ class ColumnEngine:
         # search, and never touches self.geo, the base object, so a mismatch
         # here is real divergence, not a stale read).
         def _differs(g2):
+            # The face split counts as divergence in its own right: two cages
+            # can share a total and a diameter and still be different cages,
+            # and the one the report prints must be the one that was designed.
             return (abs(g2.b - geo.b) > 1e-6 or abs(g2.h - geo.h) > 1e-6
                     or abs(g2.bar_dia - geo.bar_dia) > 1e-6 or g2.n_bars != geo.n_bars
+                    or g2.n_b_face != geo.n_b_face or g2.n_h_face != geo.n_h_face
                     or abs(g2.link_dia - geo.link_dia) > 1e-6 or abs(g2.cover - geo.cover) > 1e-6)
 
         diverging = [lv2 for lv2, g2 in self.geo_by_level.items() if _differs(g2)]
@@ -1550,7 +1636,8 @@ class ColumnEngine:
                 g2 = self.geo_by_level[lv2]
                 flag = "" if g2 in (geo,) or not _differs(g2) else "  <- differs from base"
                 rows.append(row(f"{lv2}",
-                                f"b x h = {f1(g2.b)} x {f1(g2.h)}, {g2.n_bars} x Y{int(g2.bar_dia)}, "
+                                f"b x h = {f1(g2.b)} x {f1(g2.h)}, {g2.n_bars} x Y{int(g2.bar_dia)} "
+                                f"({g2.n_b_face} per b-face, {g2.n_h_face} per h-face), "
                                 f"links Y{int(g2.link_dia)}, cover {f1(g2.cover)}, d' = {f1(g2.d_prime)}",
                                 f"ix {f3(g2.ix)}, iy {f3(g2.iy)} mm{flag}"))
         sec_list.append(section("3. GEOMETRY, COVER AND BAR LAYOUT", rows))

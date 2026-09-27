@@ -65,9 +65,13 @@ export default function ColumnResults() {
   const critIdx = Math.max(0, levels.findIndex((l) => l.level === s.critical_level));
   const shownIdx = levelIdx === null ? critIdx : levelIdx;
   const shown = levels[shownIdx] || crit;
+  // Two storeys can share a total and a diameter and still be different
+  // cages, so the face split counts as variation in its own right.
+  const faceKey = (l) => `${l.detailing?.n_bars_b_face ?? "?"}/${l.detailing?.n_bars_h_face ?? "?"}`;
   const varies = levels.some((l) => l.b_mm !== levels[0].b_mm || l.h_mm !== levels[0].h_mm
                                  || l.n_bars !== levels[0].n_bars
-                                 || l.bar_dia_mm !== levels[0].bar_dia_mm);
+                                 || l.bar_dia_mm !== levels[0].bar_dia_mm
+                                 || faceKey(l) !== faceKey(levels[0]));
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] px-6 py-6 dark:bg-[#111827]">
@@ -211,13 +215,14 @@ function OverviewTab({ r, crit, levels, varies }) {
       <div className="md:col-span-2">
         <Panel title="Reinforcement Schedule">
           <Table
-            head={["Level", "Section", "Bars", "As (mm²)", "ρ", "Cover", "Links", "Spacing", "Source"]}
+            head={["Level", "Section", "Bars", "Layout", "As (mm²)", "ρ", "Cover", "Links", "Spacing", "Source"]}
             rows={levels.map((l) => {
               const ld = l.detailing || {};
               return [
                 l.level.replace(/_/g, " "),
                 `${n1(l.b_mm)} × ${n1(l.h_mm)}`,
                 `${l.n_bars}Ø${n1(l.bar_dia_mm)}`,
+                `${ld.n_bars_b_face ?? "—"}/b · ${ld.n_bars_h_face ?? "—"}/h`,
                 n1(l.As_provided_mm2),
                 `${n2(l.rho_pct)}%`,
                 `${n1(l.cover_mm)}`,
@@ -552,6 +557,17 @@ function AlternativesPanel({ shown }) {
   const chosenIdx = opts.findIndex((o) => o.bars === az.chosen);
   const sel = pick === null ? (chosenIdx >= 0 ? opts[chosenIdx] : null) : opts.find((o) => o.bars === pick);
   const chosen = chosenIdx >= 0 ? opts[chosenIdx] : null;
+
+  // A storey whose bars were placed face by face is not auto-sized at all.
+  // That is a choice, not a failure, so it must not render as one — the red
+  // panel below is for a section where nothing fits.
+  if (!az.applied && !opts.length) {
+    return (
+      <Panel title={`Reinforcement Selection — ${shown.level.replace(/_/g, " ")}`}>
+        <Note>{az.reason}</Note>
+      </Panel>
+    );
+  }
 
   if (!az.applied) {
     return (

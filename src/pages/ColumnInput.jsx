@@ -82,8 +82,10 @@ const DEFAULTS = {
   b_mm: "300", h_mm: "500",
   left_x_m: "4.0", right_x_m: "5.0", top_y_m: "3.5", bottom_y_m: "3.5",
 
-  main_bar_dia_mm: 20, n_bars_total: "8", link_dia_mm: 8,
-  custom_faces: false, n_bars_b_face: "2", n_bars_h_face: "4",
+  // 4, not 8. Auto-size treats this count as a floor rather than a
+  // starting suggestion, so a default of 8 would stop it from ever
+  // proposing a smaller cage to anyone who left the field alone.
+  main_bar_dia_mm: 20, n_bars_total: "4", link_dia_mm: 8,
 
   concrete_grade: "C25/30", steel_grade: "B500",
   concrete_density_kN_per_m3: "25", masonry_density_kN_per_m3: "20",
@@ -146,7 +148,13 @@ export default function ColumnInput() {
   const [form, setForm] = useState(() => {
     try {
       const saved = sessionStorage.getItem(DRAFT_KEY);
-      return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : DEFAULTS;
+      if (!saved) return DEFAULTS;
+      // A draft saved before the face split moved to Step 4 still carries
+      // custom_faces / n_bars_b_face / n_bars_h_face at the top level, and a
+      // spread merge lets those stale keys beat the new defaults. Drop them
+      // on the way in rather than bumping DRAFT_KEY, so the rest survives.
+      const { custom_faces, n_bars_b_face, n_bars_h_face, ...rest } = JSON.parse(saved);
+      return { ...DEFAULTS, ...rest };
     } catch { return DEFAULTS; }
   });
   const [step, setStep] = useState(0);
@@ -282,13 +290,28 @@ export default function ColumnInput() {
         const e = f.levelEdits[lvl];
         if (!e || !e.custom) continue;
         const spec = {};
-        for (const [k, v] of [["b_mm", e.b_mm], ["h_mm", e.h_mm],
-                              ["main_bar_dia_mm", e.main_bar_dia_mm],
-                              ["n_bars_total", e.n_bars_total],
-                              ["link_dia_mm", e.link_dia_mm],
-                              ["storey_height_m", e.storey_height_m]]) {
+        const pairs = [["b_mm", e.b_mm], ["h_mm", e.h_mm],
+                       ["main_bar_dia_mm", e.main_bar_dia_mm],
+                       ["link_dia_mm", e.link_dia_mm],
+                       ["storey_height_m", e.storey_height_m]];
+        // A face split and a total are mutually exclusive: with faces set the
+        // total is derived from them, so sending both lets the two contradict
+        // each other and leaves which one wins up to the engine.
+        if (e._customFaces) {
+          pairs.push(["n_bars_b_face", e.n_bars_b_face], ["n_bars_h_face", e.n_bars_h_face]);
+        } else {
+          pairs.push(["n_bars_total", e.n_bars_total]);
+        }
+        const INT_KEYS = ["n_bars_total", "n_bars_b_face", "n_bars_h_face"];
+        for (const [k, v] of pairs) {
           const n = numOrNull(v);
-          if (n !== null) spec[k] = k === "n_bars_total" ? parseInt(n) : n;
+          if (n !== null) spec[k] = INT_KEYS.includes(k) ? parseInt(n) : n;
+        }
+        // The backend rejects a half-set pair, so an unfinished face split is
+        // dropped rather than sent and 422'd.
+        if (spec.n_bars_b_face === undefined || spec.n_bars_h_face === undefined) {
+          delete spec.n_bars_b_face;
+          delete spec.n_bars_h_face;
         }
         if (e._ownLoads) {
           const base = f.typical_floor;
@@ -374,8 +397,11 @@ export default function ColumnInput() {
       reinforcement: {
         main_bar_dia_mm: parseFloat(f.main_bar_dia_mm),
         n_bars_total: parseInt(f.n_bars_total),
-        n_bars_b_face: f.custom_faces ? parseInt(f.n_bars_b_face) : null,
-        n_bars_h_face: f.custom_faces ? parseInt(f.n_bars_h_face) : null,
+        // The base column always lets the engine distribute now; face
+        // splits are per storey. The schema still accepts these two, so a
+        // payload saved before the move keeps working.
+        n_bars_b_face: null,
+        n_bars_h_face: null,
         link_dia_mm: parseFloat(f.link_dia_mm),
       },
       materials: {
@@ -562,31 +588,27 @@ function StepSection({ form, set, layout, directLoad }) {
           <SectionSVG b={parseFloat(form.b_mm) || 0} h={parseFloat(form.h_mm) || 0}
             cover={manual ? parseFloat(form.clear_cover_override_mm) || 0 : 30}
             dia={parseFloat(form.main_bar_dia_mm) || 16} link={parseFloat(form.link_dia_mm) || 8}
-            nB={form.custom_faces ? parseInt(form.n_bars_b_face) || 2 : layout.nB}
-            nH={form.custom_faces ? parseInt(form.n_bars_h_face) || 2 : layout.nH} />
+            nB={layout.nB} nH={layout.nH} />
           <div className="grid grid-cols-2 gap-4">
             <Num label="Width b" unit="mm" value={form.b_mm} onChange={(v) => set({ b_mm: v })} step="25" />
             <Num label="Depth h" unit="mm" value={form.h_mm} onChange={(v) => set({ h_mm: v })} step="25" />
             <div><label className={LABEL}>Main bar Ø (mm)</label><Dropdown value={form.main_bar_dia_mm} onChange={(v) => set({ main_bar_dia_mm: v })} options={BAR_DIAS} /></div>
             <div><label className={LABEL}>Link Ø (mm)</label><Dropdown value={form.link_dia_mm} onChange={(v) => set({ link_dia_mm: v })} options={LINK_DIAS} /></div>
-            <Num label="Total number of bars" value={form.n_bars_total} onChange={(v) => set({ n_bars_total: v })} step="2" disabled={form.custom_faces} />
+            <Num label="Total number of bars" value={form.n_bars_total} onChange={(v) => set({ n_bars_total: v })} step="2" />
             <div />
           </div>
         </div>
 
-        {!form.custom_faces && nTyped >= 4 && (
+        {nTyped >= 4 && (
           <p className={`mt-3 text-xs ${SUB}`}>
             Distributed as {layout.nB} per b-face and {layout.nH} per h-face, corners shared, giving {layout.used} bars.
             {layout.used !== nTyped && ` Rounded up from ${nTyped} to keep the cage symmetric.`}
           </p>
         )}
-        <Check label="Set bars per face manually" checked={form.custom_faces} onChange={(v) => set({ custom_faces: v })} />
-        {form.custom_faces && (
-          <div className="mt-2 grid grid-cols-2 gap-4">
-            <Num label="Bars per b-face (incl. corners)" value={form.n_bars_b_face} onChange={(v) => set({ n_bars_b_face: v })} step="1" />
-            <Num label="Bars per h-face (incl. corners)" value={form.n_bars_h_face} onChange={(v) => set({ n_bars_h_face: v })} step="1" />
-          </div>
-        )}
+        <Note>
+          Placing the bars face by face is a per-storey setting, on the Floors step.
+          Tick a storey there and the two face fields appear for that storey alone.
+        </Note>
       </Card>
 
       <Card title="Cover & Durability">
@@ -880,9 +902,15 @@ function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
   const sec = custom && (e.b_mm || e.h_mm)
     ? `${e.b_mm || form.b_mm}×${e.h_mm || form.h_mm}`
     : `${form.b_mm}×${form.h_mm}`;
-  const bars = custom && (e.n_bars_total || e.main_bar_dia_mm)
-    ? `${e.n_bars_total || form.n_bars_total}Ø${e.main_bar_dia_mm || form.main_bar_dia_mm}`
-    : `${form.n_bars_total}Ø${form.main_bar_dia_mm}`;
+  const faceB = parseInt(e.n_bars_b_face) || 0;
+  const faceH = parseInt(e.n_bars_h_face) || 0;
+  const faceTotal = faceB >= 2 && faceH >= 2 ? 2 * (faceB + faceH) - 4 : 0;
+  const barDia = e.main_bar_dia_mm || form.main_bar_dia_mm;
+  const bars = custom && e._customFaces
+    ? `${faceTotal || "?"}Ø${barDia} (${faceB || "?"}/b, ${faceH || "?"}/h)`
+    : custom && (e.n_bars_total || e.main_bar_dia_mm)
+      ? `${e.n_bars_total || form.n_bars_total}Ø${barDia}`
+      : `${form.n_bars_total}Ø${form.main_bar_dia_mm}`;
   const fl = e.floor || {};
   const ownLoads = !!e._ownLoads;
 
@@ -920,13 +948,36 @@ function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
               <Dropdown value={e.main_bar_dia_mm ?? form.main_bar_dia_mm}
                 onChange={(v) => setLevel(lvl, { main_bar_dia_mm: v })} options={BAR_DIAS} />
             </div>
-            <Num label="No. of bars" value={e.n_bars_total ?? ""} placeholder={form.n_bars_total} onChange={(v) => setLevel(lvl, { n_bars_total: v })} step="2" />
+            {e._customFaces ? (
+              <>
+                <Num label="Bars / b-face" value={e.n_bars_b_face ?? ""} placeholder="2"
+                  onChange={(v) => setLevel(lvl, { n_bars_b_face: v })} step="1" />
+                <Num label="Bars / h-face" value={e.n_bars_h_face ?? ""} placeholder="2"
+                  onChange={(v) => setLevel(lvl, { n_bars_h_face: v })} step="1" />
+              </>
+            ) : (
+              <Num label="No. of bars" value={e.n_bars_total ?? ""} placeholder={form.n_bars_total} onChange={(v) => setLevel(lvl, { n_bars_total: v })} step="2" />
+            )}
             <div>
               <label className={LABEL}>Link Ø <span className="text-[#94a3b8]">(mm)</span></label>
               <Dropdown value={e.link_dia_mm ?? form.link_dia_mm}
                 onChange={(v) => setLevel(lvl, { link_dia_mm: v })} options={LINK_DIAS} />
             </div>
           </div>
+          <Check label="Set bars per face manually, this storey only"
+            checked={!!e._customFaces} small
+            onChange={(v) => setLevel(lvl, { _customFaces: v })} />
+          {e._customFaces && (
+            <p className={`mt-1 text-xs ${SUB}`}>
+              {faceTotal
+                ? `2 × (${faceB} + ${faceH}) − 4 = ${faceTotal} bars here, corners shared.`
+                : "Enter both face counts — each needs at least 2, corners included."}
+              {form.autosize_bars
+                ? " Auto-size leaves this storey alone and checks the cage as entered."
+                : ""}
+            </p>
+          )}
+
           <Num label="Storey height" unit="m" value={e.storey_height_m ?? ""}
             placeholder={form.storey_height_m}
             onChange={(v) => setLevel(lvl, { storey_height_m: v })} step="0.1" />
@@ -1048,9 +1099,7 @@ function StepReview({ form, levels, layout, isAxial, isBiaxial, directLoad, useF
           <RV label="End / bracing" value={`${form.end_condition} · ${form.bracing}`} />
           <RV label="Storey height" value={`${form.storey_height_m} m`} />
           <RV label="Section" value={`${form.b_mm} × ${form.h_mm} mm`} />
-          <RV label="Bars" value={form.custom_faces
-            ? `${form.n_bars_b_face}/b-face, ${form.n_bars_h_face}/h-face × Ø${form.main_bar_dia_mm}`
-            : `${layout.used} × Ø${form.main_bar_dia_mm}`} />
+          <RV label="Bars" value={`${layout.used} × Ø${form.main_bar_dia_mm}`} />
           <RV label="Links" value={`Ø${form.link_dia_mm}`} />
           <RV label="Materials" value={`${form.concrete_grade} · ${form.steel_grade}`} />
           <RV label="Cover" value={form.cover_mode === "manual" ? `${form.clear_cover_override_mm} mm (manual)` : `derived · ${form.exposure_class}`} />
