@@ -30,7 +30,10 @@ Corrections applied relative to the three reference scripts:
 from __future__ import annotations
 
 import math
+import os
+import re
 import dataclasses
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -90,6 +93,56 @@ AUTOSIZE_CANDIDATES: List[Tuple[int, int]] = [
     (32, 8), (32, 10), (32, 12),
 ]
 AVAILABLE_LINK_DIAS = [6, 8, 10, 12]
+
+# Printed on the report so a submission can name the software it came from.
+PRODUCT_NAME = "SDH (Structural Design Hub)"
+REPORT_TITLE = "Structural Engineering Calculation Report"
+CALC_ID_PREFIX = "SDH"
+# Bump when the calculation logic changes. There is no release process behind
+# this number yet, so it is only as trustworthy as the habit of bumping it. The
+# build id printed beside it, the deployed git commit where the host provides
+# one, is what actually pins the code.
+SOFTWARE_VERSION = "1.0.0"
+
+
+def _build_id():
+    """Short git commit of the running deployment, or None if the host gives none."""
+    sha = (os.environ.get("RENDER_GIT_COMMIT") or "").strip()
+    return sha[:7] if sha else None
+
+# What the report says about verification. Kept here, not buried in the report
+# code, because it must be edited the moment the M_Rd difference is reconciled.
+VERIFICATION_MATCHED = (
+    "Compared with the worked examples for columns E5 and G6 in Ubani: 39 of 40 "
+    "values match. The one difference is an arithmetic slip in the book, which "
+    "reuses the x-direction ei in the z-direction. Sub-frame moments reproduce "
+    "Engr Eazy column C3 exactly."
+)
+
+# Result of verify_mrd_independent.py: the largest difference of the engine's
+# M_Rd from the EC2 parabola-rectangle reference, up to and above this share of
+# N_Rd,max. Rerun the script and update these three numbers together if the
+# engine's section analysis ever changes.
+MRD_CROSSCHECK_N_SPLIT = 0.45
+MRD_CROSSCHECK_LOW_PCT = 1.4
+MRD_CROSSCHECK_HIGH_PCT = 5.4
+
+VERIFICATION_SECTION = (
+    "The calculation is the reference for M_Rd, not a chart. It was cross-checked "
+    "against an independent method, the EC2 parabola-rectangle law integrated in "
+    "layers (verify_mrd_independent.py, 72 cases): within "
+    f"{MRD_CROSSCHECK_LOW_PCT}% up to {MRD_CROSSCHECK_N_SPLIT:.0%} of N_Rd,max and within "
+    f"{MRD_CROSSCHECK_HIGH_PCT}% above it. The engine is the higher of the two, most "
+    "at heavy axial load, so utilisation may be understated by up to about that much."
+)
+VERIFICATION_E5 = (
+    "Recorded difference: for column E5 the calculation gives M_Rd = 37.72 kNm and "
+    "the published chart reading is 24.334 kNm (interaction 0.548 against the "
+    "book's 0.935). A chart is read by eye and is not used as the reference. The "
+    "difference is not explained by the calculation method, which the cross-check "
+    "above supports, and the assumptions that were tried (bar arrangement, d2/h, "
+    "steel grade) did not close it. It is recorded here, not resolved."
+)
 
 
 def get_fck(grade: str) -> float:
@@ -366,6 +419,9 @@ class ColumnInput:
     NEd_override_kN: Optional[float] = None
     MEdx_override_kNm: Optional[float] = None
     MEdy_override_kNm: Optional[float] = None
+
+    # --- names printed on the design basis page; never filled in for the user ---
+    design_basis: Dict[str, Optional[str]] = field(default_factory=dict)
 
 
 # ============================================================
@@ -1040,6 +1096,8 @@ class ColumnEngine:
         self.uni_axis = (d.uniaxial_axis or "x").strip().lower()
         if self.uni_axis not in ("x", "y"):
             raise ValueError("uniaxial_axis must be x or y")
+        # Fixed once per run, so every place that prints it agrees.
+        self.meta = self._make_meta()
 
     def _level_input(self, level: str) -> ColumnInput:
         """A ColumnInput with this level's overrides applied, or the base one."""
@@ -1548,14 +1606,280 @@ class ColumnEngine:
                 "Ac_mm2": geo.Ac,
             },
             "failed_checks": failed,
+            "report_meta": dict(self.meta),
             "report": self.build_report(axial, levels, critical_level, used_takedown),
         }
         return result
+
+    # ---------- report: identification ----------
+    def _make_meta(self) -> Dict[str, str]:
+        """
+        Identity of this run. The calculation ID is the date and time the run
+        was made (UTC), so two runs of the same inputs get different IDs and
+        the ID says when the numbers were produced. It does not identify the
+        inputs; the report lists those separately.
+        """
+        now = datetime.now(timezone.utc)
+        member = re.sub(r"[^A-Za-z0-9_-]+", "-", (self.d.column_id or "C").strip()).strip("-") or "C"
+        return {
+            "product": PRODUCT_NAME,
+            "title": REPORT_TITLE,
+            "software_version": SOFTWARE_VERSION,
+            "build": _build_id() or "not recorded",
+            "calculation_id": f"{CALC_ID_PREFIX}-{member}-{now:%Y%m%d-%H%M%S}",
+            "generated_utc": f"{now.day} {now:%B %Y}, {now:%H:%M} UTC",
+        }
+
+    def _utilisation_row(self, crit) -> Dict[str, str]:
+        """
+        The governing utilisation with the accuracy it can honestly claim. The
+        M_Rd cross-check found the engine at most a little high, and more so at
+        heavy axial load, so the figure carries that, not a bare number.
+        """
+        util = crit["governing_utilisation"]
+        shown = "no capacity" if util >= UTIL_CAP else f3(util)
+        ratio = crit["axial_utilisation"]
+        if ratio > MRD_CROSSCHECK_N_SPLIT:
+            basis = (f"Axial load here is {ratio:.0%} of N_Rd,max, above the "
+                     f"{MRD_CROSSCHECK_N_SPLIT:.0%} where the cross-check found M_Rd up to "
+                     f"{MRD_CROSSCHECK_HIGH_PCT}% high, so this may be understated by about that much.")
+        else:
+            basis = (f"Axial load here is {ratio:.0%} of N_Rd,max. Up to "
+                     f"{MRD_CROSSCHECK_N_SPLIT:.0%} the cross-check found M_Rd within "
+                     f"{MRD_CROSSCHECK_LOW_PCT}%, so this may be understated by about that much.")
+        return row("Governing utilisation",
+                   f"{shown} at {crit['level']}. {basis} Section 0 has the cross-check.",
+                   "software check")
+
+    def _identification_section(self, levels, critical_level, used_takedown) -> Dict:
+        """
+        The block a calculation package expects at the front. Status is the
+        software's own checks and nothing wider, and says so. The independent
+        check is whatever the designer entered: it is never ticked here.
+        """
+        d, m = self.d, self.meta
+        failed = [c for r in levels for c in r["checks"] if not c["pass"]]
+        crit = next(r for r in levels if r["level"] == critical_level)
+        choice = (d.design_basis or {}).get("independent_check")
+
+        def box(v):
+            return "[X]" if choice == v else "[ ]"
+
+        n = len(levels)
+        rows = [
+            row("Product", m["product"], m["title"]),
+            row("Software version", f"{m['software_version']}, build {m['build']}", "version"),
+            row("Calculation ID", m["calculation_id"], "run identifier"),
+            row("Generated", m["generated_utc"], "UTC"),
+            row("Standard", "BS EN 1992-1-1 with the UK National Annex as the intended "
+                            "basis. See section 0b.", "EC2, UK NA"),
+            row("Member", f"{d.column_id}", "member"),
+            row("Design", f"{self.ctype.capitalize()} column, "
+                          f"{'braced' if d.braced else 'unbraced'}, {n} level"
+                          f"{'' if n == 1 else 's'} checked.", self.ctype),
+            row("Governing level", f"{critical_level}, NEd = {f3(crit['NEd_kN'])} kN", "critical"),
+            self._utilisation_row(crit),
+            row("Status",
+                ("All software checks satisfied at every level. This is the software's own "
+                 "checks only; scope and open points are in section 0."
+                 if not failed else
+                 f"{len(failed)} check(s) failed. See section 14 for each one by name."),
+                "PASS" if not failed else "FAIL"),
+            row("Independent check",
+                f"{box('required')} Required     {box('completed')} Completed"
+                + ("" if choice else "     (not stated)"),
+                "designer to state"),
+        ]
+        return section("REPORT IDENTIFICATION", rows)
+
+    # ---------- report: design basis and parameters ----------
+    def _design_basis_section(self, used_takedown: bool) -> Dict:
+        """
+        What a building control body asks to see ahead of the calculations
+        (City of London District Surveyor's note on submitting structural
+        calculations). It covers what a single-column tool can honestly say and
+        names what it cannot: nothing here claims an item was assessed when it
+        was not.
+        """
+        d = self.d
+        basis = d.design_basis or {}
+
+        designer = (basis.get("designer_name") or "").strip()
+        dq = (basis.get("designer_qualifications") or "").strip()
+        checker = (basis.get("checked_by") or "").strip()
+        cq = (basis.get("checker_qualifications") or "").strip()
+        stab = (basis.get("stability_responsible") or "").strip()
+
+        def person(name, quals, label):
+            if not name and not quals:
+                return f"{label}: not entered"
+            if name and quals:
+                return f"{name}, {quals}"
+            return name or f"Qualifications: {quals}"
+
+        if self.ctype == "axial":
+            moments = ("Axially loaded column: designed for the minimum eccentricity "
+                       "only, with no applied first order moment.")
+        elif d.M02x_kNm or d.M02y_kNm:
+            moments = ("First order end moments as passed to the engine: derived from "
+                       "the simplified sub-frame where section 6b is present "
+                       "(fixed end moments wL^2/12 shared by K = I/L), otherwise as entered.")
+        else:
+            moments = "First order moments taken as zero at every level."
+        actions = ("Axial load by tributary take-down of floor loads, cumulative down "
+                   "the column." if used_takedown
+                   else "Axial load supplied directly (NEd override).")
+
+        rows = [
+            row("Design standard",
+                "BS EN 1992-1-1 (Eurocode 2). The UK National Annex is the intended "
+                "basis. Section 0b lists each parameter and where its value comes from.",
+                "EC2, UK NA"),
+            row("Software",
+                f"{PRODUCT_NAME}, column module, version {SOFTWARE_VERSION}, build "
+                f"{self.meta['build']}. Used for: axial load take-down, first order "
+                "moments, slenderness, second order effects, section capacity by strain "
+                "compatibility, biaxial interaction and detailing checks, for one column.",
+                SOFTWARE_VERSION),
+            row("Basis of design",
+                f"{actions} {moments} Slenderness by Cl. 5.8.3, second order effects by "
+                "nominal curvature (Cl. 5.8.8), section capacity by strain compatibility "
+                "(Cl. 3.1.7 and 3.2.7), biaxial check by Cl. 5.8.9.",
+                "ultimate limit state"),
+            row("Load path and stability",
+                "Vertical load passes from slab to beams to column and is accumulated "
+                "down the column by tributary area. Lateral stability is not assessed: "
+                f"the column is taken as {'braced' if d.braced else 'unbraced'} because "
+                "that was entered, and nothing here checks it.",
+                "assumption"),
+            row("Loading",
+                "One load case only: gamma_G x Gk + gamma_Q x Qk on every floor. Pattern "
+                "loading is not applied. No wind or other horizontal action is applied "
+                "beyond the geometric imperfection of Cl. 5.2.",
+                "limitation"),
+            row("Not assessed by this tool",
+                "Disproportionate collapse building class and progressive collapse "
+                "measures (Approved Document A, Table 11); overall lateral stability; "
+                "foundations; fire resistance (EN 1992-1-2); the beams, slabs and other "
+                "members.",
+                "outside scope"),
+            row("Designer", person(designer, dq, "Name"),
+                "as entered" if (designer or dq) else "blank"),
+            row("Checked by", person(checker, cq, "Name"),
+                "as entered" if (checker or cq) else "blank"),
+            row("Responsible for stability",
+                stab if stab else "Organisation or individual: not entered",
+                "as entered" if stab else "blank"),
+            row("Verification", VERIFICATION_MATCHED, "39 of 40"),
+            row("Verification, section capacity", VERIFICATION_SECTION, "cross-checked"),
+            row("Verification, recorded difference", VERIFICATION_E5, "recorded"),
+            row("Designer's confirmation",
+                "That the application and limitations of this software are understood "
+                "and that its results have been verified independently is a statement "
+                "for the designer to make. The software does not make it.",
+                "designer to confirm"),
+        ]
+        return section("0. DESIGN BASIS AND SCOPE", rows)
+
+    def _ndp_section(self) -> Dict:
+        """
+        Every nationally determined parameter this run used, with its value and
+        source. Sources are stated only as far as they are known: the UK NA
+        text was checked for the clauses marked so, and anything else says it
+        was not. Where the engine implements the CEN recommended provision and
+        the UK NA replaces it, that is said plainly.
+        """
+        d = self.d
+        geo = self.geo
+        min_dia = min(g.bar_dia for g in self.geo_by_level.values())
+
+        def flag(value, uk):
+            return "" if abs(value - uk) < 1e-9 else f"  DIFFERS FROM THE UK NA VALUE OF {uk}"
+
+        rows = [
+            row("Basis",
+                "BS EN 1992-1-1 with the UK National Annex (BS NA EN 1992-1-1) as the "
+                "intended basis. For each parameter: the clause, the value this run "
+                "used, and where the value comes from.",
+                "UK NA intended"),
+            row("EN 1992-1-1 Cl. 2.4.2.4",
+                f"gamma_c = {d.gamma_c}, gamma_s = {d.gamma_s}. UK NA: 1.5 and 1.15."
+                + flag(d.gamma_c, 1.5) + flag(d.gamma_s, 1.15),
+                "as entered"),
+            row("EN 1992-1-1 Cl. 3.1.6(1)P",
+                f"alpha_cc = {d.alpha_cc}. UK NA: 0.85. CEN recommended: 1.0."
+                + flag(d.alpha_cc, 0.85),
+                "as entered"),
+            row("EN 1990",
+                f"gamma_G = {d.gamma_G}, gamma_Q = {d.gamma_Q}. Recommended values; the "
+                "UK NA to EN 1990 was not checked here.",
+                "as entered"),
+            row("EN 1992-1-1 Cl. 4.4.1.2(5)",
+                f"c_min,dur = {f1(geo.c_min_dur())} mm for {d.exposure_class}, from "
+                "Table 4.4N at structural class S4. This is the CEN recommended table, "
+                "not the UK NA basis.",
+                "CEN table"),
+            row("UK NA Table NA.2",
+                "The UK NA gives cover by exposure class and concrete quality (50 year "
+                "life, 20 mm aggregate) in place of Table 4.4N. That table is not "
+                "implemented. Confirm c_nom against it for the concrete actually "
+                "specified."
+                + (f" Cover was entered directly as {f1(d.clear_cover_override_mm)} mm."
+                   if d.clear_cover_override_mm is not None else ""),
+                "engineer to check"),
+            row("EN 1992-1-1 Cl. 4.4.1.3(3)",
+                f"delta_c_dev = {f1(d.delta_c_dev_mm)} mm. Recommended value is 10 mm; "
+                "the UK NA value was not checked here.",
+                "as entered"),
+            row("EN 1992-1-1 Cl. 9.5.2(1)",
+                f"Minimum longitudinal bar diameter 12 mm (CEN recommends 8 mm). "
+                f"Smallest bar used: {f1(min_dia)} mm.",
+                "PASS" if min_dia >= 12.0 else "FAIL"),
+            row("EN 1992-1-1 Cl. 9.5.2(2)",
+                "As,min = max(0.10 NEd/fyd, 0.002 Ac).", "EN text"),
+            row("EN 1992-1-1 Cl. 9.5.2(3)",
+                "As,max = 0.04 Ac outside laps. UK NA: the recommended value applies. "
+                "The 0.08 Ac allowed at laps is not checked.",
+                "UK NA checked"),
+            row("EN 1992-1-1 Cl. 9.5.3(3)",
+                "s_cl,tmax = least of 20 x smallest longitudinal bar, lesser column "
+                "dimension, 400 mm. UK NA: the recommended values apply. Reduced to "
+                "0.6 s_cl,tmax near beams, slabs and at laps.",
+                "UK NA checked"),
+            row("EN 1992-1-1 Cl. 5.8.3.1",
+                ("A = 0.7 and B = 1.1, the values for phi_ef and omega not known."
+                 if d.use_default_A_B else
+                 f"A from phi_ef = {d.effective_creep_ratio}, B from omega of the "
+                 "provided steel.")
+                + " C = 1.7 - rm, or 0.7 where rm is unknown or the member is unbraced.",
+                "EN text"),
+            row("EN 1992-1-1 Cl. 5.2",
+                ("Geometric imperfection ei = l0/400 for an isolated member."
+                 if d.include_geometric_imperfections else
+                 "Geometric imperfection omitted by request."),
+                "as entered"),
+            row("EN 1992-1-1 Cl. 6.1(4)",
+                ("Minimum eccentricity e0 = max(h/30, 20 mm)."
+                 if d.include_min_eccentricity else
+                 "Minimum eccentricity omitted by request."),
+                "as entered"),
+            row("Check before submission",
+                "The software does not compare any of these values with the UK National "
+                "Annex document. Confirm the cover requirement above, the 12 mm minimum "
+                "bar diameter (taken from a secondary summary of the annex), and every "
+                "row not marked 'UK NA checked' against your copy of BS NA EN 1992-1-1.",
+                "engineer to confirm"),
+        ]
+        return section("0b. NATIONALLY DETERMINED PARAMETERS USED", rows)
 
     # ---------- report ----------
     def build_report(self, axial, levels, critical_level, used_takedown) -> List[Dict]:
         d, geo, mat = self.d, self.geo, self.mat
         sec_list: List[Dict] = []
+
+        sec_list.append(self._identification_section(levels, critical_level, used_takedown))
+        sec_list.append(self._design_basis_section(used_takedown))
+        sec_list.append(self._ndp_section())
 
         # 1 ------------------------------------------------------
         sec_list.append(section("1. BASIC INPUT DATA", [
@@ -1692,9 +2016,12 @@ class ColumnEngine:
                 rows.append(row("EN 1992-1-1 Cl. 5.2", f"{lv} {label}: M_imp = NEd x ei = {f3(r['NEd_kN'])} x {f3(a['ei_mm']/1000)}", f"{f3(a['M_imp'])} kNm"))
                 rows.append(row("End section", f"{lv} {label}: M_end = |M02| + M_imp = {f3(abs(a['M02']))} + {f3(a['M_imp'])}", f"{f3(a['M_end'])} kNm"))
                 rows.append(row("EN 1992-1-1 Cl. 5.8.8.2", f"{lv} {label}: M0e = max(0.6M02+0.4M01, 0.4M02) = {f3(a['M0e'])}, + M_imp", f"{f3(a['M_eq'])} kNm"))
-                e0 = geo.e0_x_mm() if axis == "x" else geo.e0_y_mm()
+                # e0 depends on the depth of THIS storey's section, which is the
+                # base column's only when nothing was edited or auto-sized.
+                gl7 = self.geo_for(lv)
+                e0 = gl7.e0_x_mm() if axis == "x" else gl7.e0_y_mm()
                 depth_sym = "h" if axis == "x" else "b"
-                rows.append(row("EN 1992-1-1 Cl. 6.1(4)", f"{lv} e0 = max({depth_sym}/30, 20) = max({f3((geo.h if axis=='x' else geo.b)/30)}, 20)", f"{f3(e0)} mm"))
+                rows.append(row("EN 1992-1-1 Cl. 6.1(4)", f"{lv} e0 = max({depth_sym}/30, 20) = max({f3((gl7.h if axis=='x' else gl7.b)/30)}, 20)", f"{f3(e0)} mm"))
                 rows.append(row("Minimum eccentricity", f"{lv} M_min = NEd x e0 = {f3(r['NEd_kN'])} x {f3(e0/1000)}", f"{f3(a['M_min'])} kNm"))
                 rows.append(row("Governing first order", f"{lv} {label}: M_first = max(M_end, M_eq, M_min)", f"{f3(a['M_first'])} kNm"))
         sec_list.append(section("7. FIRST ORDER MOMENTS AND ECCENTRICITY", rows))
@@ -1761,13 +2088,16 @@ class ColumnEngine:
 
         # 10 -----------------------------------------------------
         crit = next(r for r in levels if r["level"] == critical_level)
+        # Every figure below belongs to the critical storey, so its section and
+        # steel are read from that storey, not from the base column.
+        gcrit = self.geo_for(critical_level)
         sec_list.append(section("10. SECTION CAPACITY BY STRAIN COMPATIBILITY", [
             row("Method", "Rectangular stress block, bilinear steel, layered bars", "strain compatibility"),
             row("EN 1992-1-1 Cl. 3.1.7", f"Block: eta*fcd = {f3(mat.eta_block)} x {f3(mat.fcd)} over depth {f3(mat.lambda_block)}x", f"{f3(mat.eta_block*mat.fcd)} MPa"),
             row("Pure compression pivot", f"Uniform strain eps_c3 = {mat.eps_c3:.5f}, so sigma_s = Es*eps_c3 = {f3(min(Es_MPA*mat.eps_c3, mat.fyd))}", f"{f3(min(Es_MPA*mat.eps_c3, mat.fyd))} MPa"),
             row("Axial resistance (governing)", "NRd,max = eta*fcd*(Ac - As) + As*sigma_s", f"{f3(crit['NRd_max_kN'])} kN"),
-            row("Textbook form, for comparison", f"NRd = Ac*fcd + As*fyd = {f1(geo.Ac)} x {f3(mat.fcd)} + {f1(geo.As_total)} x {f3(mat.fyd)}", f"{f3(crit['NRd_simplified_kN'])} kN"),
-            row("Difference explained", f"(a) concrete displaced by bars not deducted: As*eta*fcd = {f3(geo.As_total*mat.eta_block*mat.fcd/1000)} kN; (b) steel assumed at fyd though eps_c3 caps it at {f3(min(Es_MPA*mat.eps_c3, mat.fyd))} MPa: As*(fyd - sigma_s) = {f3(geo.As_total*(mat.fyd - min(Es_MPA*mat.eps_c3, mat.fyd))/1000)} kN", f"{f3(crit['NRd_simplified_kN'] - crit['NRd_max_kN'])} kN"),
+            row("Textbook form, for comparison", f"NRd = Ac*fcd + As*fyd = {f1(gcrit.Ac)} x {f3(mat.fcd)} + {f1(gcrit.As_total)} x {f3(mat.fyd)} ({critical_level})", f"{f3(crit['NRd_simplified_kN'])} kN"),
+            row("Difference explained", f"(a) concrete displaced by bars not deducted: As*eta*fcd = {f3(gcrit.As_total*mat.eta_block*mat.fcd/1000)} kN; (b) steel assumed at fyd though eps_c3 caps it at {f3(min(Es_MPA*mat.eps_c3, mat.fyd))} MPa: As*(fyd - sigma_s) = {f3(gcrit.As_total*(mat.fyd - min(Es_MPA*mat.eps_c3, mat.fyd))/1000)} kN", f"{f3(crit['NRd_simplified_kN'] - crit['NRd_max_kN'])} kN"),
             row("Design check", f"NEd = {f3(crit['NEd_kN'])} vs NRd,max = {f3(crit['NRd_max_kN'])}", "PASS" if crit["axial_utilisation"] <= 1 else "FAIL"),
             row("Interaction", f"MRd,x at NEd = {f3(crit['NEd_kN'])} kN", f"{f3(crit['x']['MRd'])} kNm"),
             row("Interaction", f"MRd,y at NEd = {f3(crit['NEd_kN'])} kN", f"{f3(crit['y']['MRd'])} kNm"),
@@ -1808,16 +2138,37 @@ class ColumnEngine:
         sec_list.append(section("12. LONGITUDINAL REINFORCEMENT LIMITS", rows))
 
         # 13 -----------------------------------------------------
-        phi_t_min = min_tie_diameter_mm(gcrit.bar_dia)
+        # Ties depend on the bar size, link size and section, all of which can
+        # differ by storey. Group the storeys by cage: one group prints exactly
+        # the rows a uniform column always had; several groups print each one.
+        def _cage_key(g):
+            return (g.b, g.h, g.n_bars, g.bar_dia, g.link_dia, g.n_b_face, g.n_h_face)
+
+        cage_groups: Dict[tuple, List[str]] = {}
+        for r in levels:
+            cage_groups.setdefault(_cage_key(self.geo_for(r["level"])), []).append(r["level"])
+
+        def _tie_rows(g, prefix=""):
+            phi_min = min_tie_diameter_mm(g.bar_dia)
+            s_mx = max_tie_spacing_mm(g.bar_dia, g.b, g.h)
+            s_rd = reduced_tie_spacing_mm(s_mx)
+            return [
+                row("EN 1992-1-1 Cl. 9.5.3(1)", f"{prefix}phi_t,min = max(6, phi_long/4) = max(6, {f1(g.bar_dia)}/4)", f"{f3(phi_min)} mm"),
+                row("Provided", f"{prefix}phi_t = {f1(g.link_dia)}", f"Y{int(g.link_dia)}"),
+                row("Design check", f"{prefix}phi_t >= phi_t,min ?", "PASS" if g.link_dia >= phi_min else "FAIL"),
+                row("EN 1992-1-1 Cl. 9.5.3(3)", f"{prefix}s_cl,tmax = min(20 x {f1(g.bar_dia)}, min({f1(g.b)}, {f1(g.h)}), 400)", f"{f1(s_mx)} mm"),
+                row("EN 1992-1-1 Cl. 9.5.3(4)", f"{prefix}Reduced zones (near beams/slabs, laps) = 0.6 x {f1(s_mx)}", f"{f1(s_rd)} mm"),
+            ], s_mx, s_rd
+
         s_max = max_tie_spacing_mm(gcrit.bar_dia, gcrit.b, gcrit.h)
         s_red = reduced_tie_spacing_mm(s_max)
-        sec_list.append(section("13. TRANSVERSE REINFORCEMENT (TIES)", [
-            row("EN 1992-1-1 Cl. 9.5.3(1)", f"phi_t,min = max(6, phi_long/4) = max(6, {f1(geo.bar_dia)}/4)", f"{f3(phi_t_min)} mm"),
-            row("Provided", f"phi_t = {f1(geo.link_dia)}", f"Y{int(geo.link_dia)}"),
-            row("Design check", "phi_t >= phi_t,min ?", "PASS" if geo.link_dia >= phi_t_min else "FAIL"),
-            row("EN 1992-1-1 Cl. 9.5.3(3)", f"s_cl,tmax = min(20 x {f1(geo.bar_dia)}, min({f1(geo.b)}, {f1(geo.h)}), 400)", f"{f1(s_max)} mm"),
-            row("EN 1992-1-1 Cl. 9.5.3(4)", f"Reduced zones (near beams/slabs, laps) = 0.6 x {f1(s_max)}", f"{f1(s_red)} mm"),
-        ]))
+        if len(cage_groups) == 1:
+            tie_rows = _tie_rows(gcrit)[0]
+        else:
+            tie_rows = []
+            for lvls in cage_groups.values():
+                tie_rows += _tie_rows(self.geo_for(lvls[0]), prefix=", ".join(lvls) + ": ")[0]
+        sec_list.append(section("13. TRANSVERSE REINFORCEMENT (TIES)", tie_rows))
 
         # 14 -----------------------------------------------------
         failed = []
@@ -1829,9 +2180,17 @@ class ColumnEngine:
             row("Governing", f"Critical level = {critical_level}", f"NEd = {f3(crit['NEd_kN'])} kN"),
             row("Axial", "NEd / NRd,max", f"{f3(crit['axial_utilisation'])}"),
             row("Bending", "Governing utilisation", f"{f3(crit['governing_utilisation'])}"),
-            row("Reinforcement", f"Provided {geo.n_bars}Y{int(geo.bar_dia)} with Y{int(geo.link_dia)} ties", f"{f1(geo.As_total)} mm2"),
-            row("Detailing", f"Ties Y{int(geo.link_dia)} at {f1(s_red)} mm in end/lap zones, {f1(s_max)} mm elsewhere", "adopted"),
+            row("Reinforcement", f"Provided {gcrit.n_bars}Y{int(gcrit.bar_dia)} with Y{int(gcrit.link_dia)} ties at {critical_level}", f"{f1(gcrit.As_total)} mm2"),
+            row("Detailing", f"Ties Y{int(gcrit.link_dia)} at {f1(s_red)} mm in end/lap zones, {f1(s_max)} mm elsewhere ({critical_level})", "adopted"),
         ]
+        if len(cage_groups) > 1:
+            rows.append(row("Cages by storey",
+                            "; ".join(f"{', '.join(lvls)}: {self.geo_for(lvls[0]).b:.0f} x "
+                                      f"{self.geo_for(lvls[0]).h:.0f}, "
+                                      f"{self.geo_for(lvls[0]).n_bars}Y{int(self.geo_for(lvls[0]).bar_dia)}, "
+                                      f"Y{int(self.geo_for(lvls[0]).link_dia)} ties"
+                                      for lvls in cage_groups.values()),
+                            f"{len(cage_groups)} different cages"))
         if failed:
             rows.append(row("FAILED CHECKS", "; ".join(failed), "FAIL"))
         else:

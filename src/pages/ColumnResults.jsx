@@ -175,6 +175,17 @@ export default function ColumnResults() {
             setLevelIdx={setLevelIdx} varies={varies} />
         )}
 
+        {r.report_meta && (
+          <div className="border-t border-[#e2e8f0] pt-3 text-center text-[11px] leading-5 dark:border-[#334155]">
+            <div className={`font-semibold ${MAIN}`}>
+              {r.report_meta.product} · {r.report_meta.title}
+            </div>
+            <div className={`font-mono ${SUB}`}>
+              Calculation ID {r.report_meta.calculation_id} · Software version {r.report_meta.software_version} (build {r.report_meta.build}) · Generated {r.report_meta.generated_utc}
+            </div>
+          </div>
+        )}
+
         <p className={`pt-2 text-center text-xs ${SUB}`}>
           Section capacity by strain compatibility (EC2 Cl. 3.1.7 stress block, Cl. 3.2.7 bilinear steel).
           Second-order effects by nominal curvature, Cl. 5.8.8. Check against your own calculations before use.
@@ -361,8 +372,10 @@ function InteractionTab({ r, levels, shown, shownIdx, setLevelIdx, isBiaxial, va
           fixed number. Published design charts are plotted for symmetrical steel on two
           opposite faces at a fixed d₂/h and fyk = 500. Where the real cage puts bars on all
           four faces, or d₂/h differs, a chart reading will not match this curve and is
-          usually the conservative side. Treat a difference as something to reconcile, not as
-          slack to design into.
+          usually the conservative side. A chart is read by eye, so it is not the reference. The
+          curve here is, and it is cross-checked against an independent method (section 0 of the
+          Detailed Report gives the figures). A difference from a chart is recorded, and is not
+          something to design into either way.
         </Note>
       </Panel>
     </div>

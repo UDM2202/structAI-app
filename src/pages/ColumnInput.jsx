@@ -123,8 +123,28 @@ const DEFAULTS = {
   typical_floor: floorDefault("office", "3.0", true),
   roof_floor: floorDefault("roof_no_access", "0.75", false),
 
+  // Printed on the design basis page of the report. Blank stays blank.
+  designer_name: "", designer_qualifications: "",
+  checked_by: "", checker_qualifications: "",
+  stability_responsible: "",
+  independent_check: "",          // "" | "required" | "completed"; never set for the user
+
   // Per-storey edits, keyed by level name. Absent means "inherit".
   levelEdits: {},
+};
+
+/*
+ * Python's round() sends an exact half to the even neighbour; Math.round sends
+ * it up. The engine uses round(), so the preview must too. Otherwise six bars
+ * in a square section, where the ratio lands exactly on 2.5, are drawn rotated
+ * against the cage the engine actually builds.
+ */
+const roundHalfEven = (x) => {
+  const f = Math.floor(x);
+  const d = x - f;
+  if (d < 0.5) return f;
+  if (d > 0.5) return f + 1;
+  return f % 2 === 0 ? f : f + 1;
 };
 
 /* engine's bar distribution, mirrored so the preview shows the real cage */
@@ -132,7 +152,7 @@ function distributeBars(nTotal, b, h) {
   let n = Math.max(4, parseInt(nTotal) || 4);
   if (n % 2 === 1) n += 1;
   const s = n / 2 + 2;
-  let nH = Math.round((s * h) / (b + h));
+  let nH = roundHalfEven((s * h) / (b + h));
   nH = Math.max(2, Math.min(s - 2, nH));
   return { nB: s - nH, nH, used: 2 * (s - nH) + 2 * nH - 4 };
 }
@@ -142,6 +162,33 @@ const numOrNull = (v) => {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
 };
+
+/*
+ * A storey's total and its b-face count fix its h-face count. Corners are
+ * shared, so 2*nB + 2*nH - 4 = total, which leaves one free number once the
+ * total is chosen. Six bars can only be 2 on the b-face and 3 on the h-face,
+ * or 3 and 2.
+ */
+function faceSplit(total, nBInput) {
+  let n = Math.max(4, parseInt(total) || 4);
+  if (n % 2 === 1) n += 1;
+  const s = n / 2 + 2;
+  const hi = s - 2;
+  const nB = parseInt(nBInput);
+  if (!Number.isFinite(nB)) return { total: n, hi, nB: null, nH: null, ok: false };
+  return { total: n, hi, nB, nH: s - nB, ok: nB >= 2 && nB <= hi };
+}
+
+/* What is wrong with a ticked storey's face split, or null if nothing is. */
+function levelFaceProblem(form, lvl) {
+  const e = form.levelEdits[lvl];
+  if (!e || !e.custom || !e._customFaces) return null;
+  const total = numOrNull(e.n_bars_total) ?? parseInt(form.n_bars_total);
+  const f = faceSplit(total, e.n_bars_b_face);
+  if (f.nB === null) return "enter how many bars go on the b-face";
+  if (!f.ok) return `${f.total} bars allow between 2 and ${f.hi} on the b-face`;
+  return null;
+}
 
 export default function ColumnInput() {
   const navigate = useNavigate();
@@ -154,6 +201,21 @@ export default function ColumnInput() {
       // spread merge lets those stale keys beat the new defaults. Drop them
       // on the way in rather than bumping DRAFT_KEY, so the rest survives.
       const { custom_faces, n_bars_b_face, n_bars_h_face, ...rest } = JSON.parse(saved);
+      // A storey ticked for a face split before the total came back holds a
+      // b-face and an h-face and no total. Turn that into a total plus a
+      // b-face count, so the storey opens as the cage the engineer entered.
+      if (rest.levelEdits) {
+        const migrated = {};
+        for (const [k, v] of Object.entries(rest.levelEdits)) {
+          if (v && v._customFaces && v.n_bars_h_face !== undefined) {
+            const { n_bars_h_face: hFace, ...keep } = v;
+            const nb = parseInt(v.n_bars_b_face), nh = parseInt(hFace);
+            migrated[k] = nb >= 2 && nh >= 2
+              ? { ...keep, n_bars_total: String(2 * (nb + nh) - 4) } : keep;
+          } else migrated[k] = v;
+        }
+        rest.levelEdits = migrated;
+      }
       return { ...DEFAULTS, ...rest };
     } catch { return DEFAULTS; }
   });
@@ -238,9 +300,22 @@ export default function ColumnInput() {
     }
     if (s === 3) {
       if (directLoad) return pos(form.NEd_override_kN);
-      return (parseInt(form.number_of_typical_floors) || 0) >= 1;
+      if ((parseInt(form.number_of_typical_floors) || 0) < 1) return false;
+      return !levels.some((l) => levelFaceProblem(form, l));
     }
     return true;
+  };
+  // Say what is wrong, not just which step. A face split that does not add up
+  // sits inside a collapsed storey row, so "complete Floors" alone would leave
+  // the engineer hunting for it.
+  const invalidMessage = (bad, doing) => {
+    if (STEPS[bad] === "Floors") {
+      const found = levels
+        .map((l) => { const m = levelFaceProblem(form, l); return m ? `${l.replace(/_/g, " ")}: ${m}.` : null; })
+        .find(Boolean);
+      if (found) return found;
+    }
+    return `Complete "${STEPS[bad]}" before ${doing}.`;
   };
   const firstInvalidBefore = (target) => {
     for (let s = 0; s < target; s++) if (!stepValid(s)) return s;
@@ -251,7 +326,7 @@ export default function ColumnInput() {
     if (target <= step) { setStep(target); return; }
     const bad = firstInvalidBefore(target);
     if (bad === -1) { setStep(target); setMaxReached((m) => Math.max(m, target)); }
-    else { setStep(bad); setError(`Complete "${STEPS[bad]}" before moving on.`); }
+    else { setStep(bad); setError(invalidMessage(bad, "moving on")); }
   };
 
   /* ---------- payload ---------- */
@@ -294,24 +369,23 @@ export default function ColumnInput() {
                        ["main_bar_dia_mm", e.main_bar_dia_mm],
                        ["link_dia_mm", e.link_dia_mm],
                        ["storey_height_m", e.storey_height_m]];
-        // A face split and a total are mutually exclusive: with faces set the
-        // total is derived from them, so sending both lets the two contradict
-        // each other and leaves which one wins up to the engine.
+        // A total and a face split describe the same cage, so only one goes
+        // out. With faces ticked, the engineer's total and b-face count fix
+        // the h-face, and the request carries both face counts. Run is blocked
+        // while the split does not add up, so this never sends half a pair.
         if (e._customFaces) {
-          pairs.push(["n_bars_b_face", e.n_bars_b_face], ["n_bars_h_face", e.n_bars_h_face]);
+          const total = numOrNull(e.n_bars_total) ?? parseInt(f.n_bars_total);
+          const split = faceSplit(total, e.n_bars_b_face);
+          if (split.ok) {
+            spec.n_bars_b_face = split.nB;
+            spec.n_bars_h_face = split.nH;
+          }
         } else {
           pairs.push(["n_bars_total", e.n_bars_total]);
         }
-        const INT_KEYS = ["n_bars_total", "n_bars_b_face", "n_bars_h_face"];
         for (const [k, v] of pairs) {
           const n = numOrNull(v);
-          if (n !== null) spec[k] = INT_KEYS.includes(k) ? parseInt(n) : n;
-        }
-        // The backend rejects a half-set pair, so an unfinished face split is
-        // dropped rather than sent and 422'd.
-        if (spec.n_bars_b_face === undefined || spec.n_bars_h_face === undefined) {
-          delete spec.n_bars_b_face;
-          delete spec.n_bars_h_face;
+          if (n !== null) spec[k] = k === "n_bars_total" ? parseInt(n) : n;
         }
         if (e._ownLoads) {
           const base = f.typical_floor;
@@ -368,6 +442,14 @@ export default function ColumnInput() {
       column_type: f.column_type,
       uniaxial_axis: uniAx,
       design_code: f.design_code,
+      design_basis: {
+        designer_name: (f.designer_name || "").trim() || null,
+        designer_qualifications: (f.designer_qualifications || "").trim() || null,
+        checked_by: (f.checked_by || "").trim() || null,
+        checker_qualifications: (f.checker_qualifications || "").trim() || null,
+        stability_responsible: (f.stability_responsible || "").trim() || null,
+        independent_check: f.independent_check || null,
+      },
       end_condition: f.end_condition,
       braced: f.bracing === "braced",
       geometry: {
@@ -427,7 +509,7 @@ export default function ColumnInput() {
 
   const run = async () => {
     const bad = firstInvalidBefore(STEPS.length - 1);
-    if (bad !== -1) { setStep(bad); setError(`Complete "${STEPS[bad]}" before running.`); return; }
+    if (bad !== -1) { setStep(bad); setError(invalidMessage(bad, "running")); return; }
     setBusy(true); setError(null);
     try {
       const result = await columnAPI.startDesign(buildRequest());
@@ -436,7 +518,7 @@ export default function ColumnInput() {
     } catch (e) {
       setBusy(false);
       setError(e.message === "Failed to fetch"
-        ? "Cannot reach the design engine. The backend may be waking up — try again in a minute."
+        ? "Cannot reach the design engine. If you run it on your own machine, check the backend terminal and that nothing else is using its port. On the hosted version it may be waking up, so try again in a minute."
         : e.message);
     }
   };
@@ -572,6 +654,37 @@ function StepColumn({ form, set, directLoad, isUniaxial }) {
           <Num label="Concrete density" unit="kN/m³" value={form.concrete_density_kN_per_m3} onChange={(v) => set({ concrete_density_kN_per_m3: v })} step="0.5" />
           <Num label="Masonry density" unit="kN/m³" value={form.masonry_density_kN_per_m3} onChange={(v) => set({ masonry_density_kN_per_m3: v })} step="0.5" />
         </div>
+      </Card>
+
+      <Card title="Design Basis (optional)">
+        <div className="grid grid-cols-2 gap-4">
+          <div><label className={LABEL}>Designed by</label>
+            <input className={INPUT} value={form.designer_name} onChange={(e) => set({ designer_name: e.target.value })} /></div>
+          <div><label className={LABEL}>Designer's qualifications</label>
+            <input className={INPUT} value={form.designer_qualifications} onChange={(e) => set({ designer_qualifications: e.target.value })} /></div>
+          <div><label className={LABEL}>Checked by</label>
+            <input className={INPUT} value={form.checked_by} onChange={(e) => set({ checked_by: e.target.value })} /></div>
+          <div><label className={LABEL}>Checker's qualifications</label>
+            <input className={INPUT} value={form.checker_qualifications} onChange={(e) => set({ checker_qualifications: e.target.value })} /></div>
+        </div>
+        <div className="mt-4">
+          <label className={LABEL}>Responsible for the stability of the structure</label>
+          <input className={INPUT} value={form.stability_responsible} onChange={(e) => set({ stability_responsible: e.target.value })} />
+        </div>
+        <div className="mt-4">
+          <label className={LABEL}>Independent check</label>
+          <div className="flex flex-wrap gap-2">
+            <Pill on={!form.independent_check} onClick={() => set({ independent_check: "" })}>Not stated</Pill>
+            <Pill on={form.independent_check === "required"} onClick={() => set({ independent_check: "required" })}>Required</Pill>
+            <Pill on={form.independent_check === "completed"} onClick={() => set({ independent_check: "completed" })}>Completed</Pill>
+          </div>
+        </div>
+        <Note>
+          These are printed on the first page of the Detailed Report. Left blank, the report says
+          "not entered". Nothing is filled in for you: who designed, who checked and whether an
+          independent check is required or done are your statements, and building control asks
+          for them with a submission. The independent check is never ticked automatically.
+        </Note>
       </Card>
     </div>
   );
@@ -902,15 +1015,25 @@ function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
   const sec = custom && (e.b_mm || e.h_mm)
     ? `${e.b_mm || form.b_mm}×${e.h_mm || form.h_mm}`
     : `${form.b_mm}×${form.h_mm}`;
-  const faceB = parseInt(e.n_bars_b_face) || 0;
-  const faceH = parseInt(e.n_bars_h_face) || 0;
-  const faceTotal = faceB >= 2 && faceH >= 2 ? 2 * (faceB + faceH) - 4 : 0;
+  const totalIn = numOrNull(e.n_bars_total) ?? parseInt(form.n_bars_total);
+  const split = faceSplit(totalIn, e.n_bars_b_face);
+  const problem = levelFaceProblem(form, lvl);
   const barDia = e.main_bar_dia_mm || form.main_bar_dia_mm;
   const bars = custom && e._customFaces
-    ? `${faceTotal || "?"}Ø${barDia} (${faceB || "?"}/b, ${faceH || "?"}/h)`
+    ? (split.ok
+        ? `${split.total}Ø${barDia} (${split.nB}/b, ${split.nH}/h)`
+        : `${split.total}Ø${barDia} (faces?)`)
     : custom && (e.n_bars_total || e.main_bar_dia_mm)
       ? `${e.n_bars_total || form.n_bars_total}Ø${barDia}`
       : `${form.n_bars_total}Ø${form.main_bar_dia_mm}`;
+  // Ticking starts from the split the engine would have chosen for this
+  // storey, so nothing changes until the engineer edits the b-face count.
+  const toggleFaces = (on) => {
+    if (!on) { setLevel(lvl, { _customFaces: false }); return; }
+    const bb = parseFloat(e.b_mm) || parseFloat(form.b_mm) || 1;
+    const hh = parseFloat(e.h_mm) || parseFloat(form.h_mm) || 1;
+    setLevel(lvl, { _customFaces: true, n_bars_b_face: String(distributeBars(totalIn, bb, hh).nB) });
+  };
   const fl = e.floor || {};
   const ownLoads = !!e._ownLoads;
 
@@ -948,16 +1071,7 @@ function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
               <Dropdown value={e.main_bar_dia_mm ?? form.main_bar_dia_mm}
                 onChange={(v) => setLevel(lvl, { main_bar_dia_mm: v })} options={BAR_DIAS} />
             </div>
-            {e._customFaces ? (
-              <>
-                <Num label="Bars / b-face" value={e.n_bars_b_face ?? ""} placeholder="2"
-                  onChange={(v) => setLevel(lvl, { n_bars_b_face: v })} step="1" />
-                <Num label="Bars / h-face" value={e.n_bars_h_face ?? ""} placeholder="2"
-                  onChange={(v) => setLevel(lvl, { n_bars_h_face: v })} step="1" />
-              </>
-            ) : (
-              <Num label="No. of bars" value={e.n_bars_total ?? ""} placeholder={form.n_bars_total} onChange={(v) => setLevel(lvl, { n_bars_total: v })} step="2" />
-            )}
+            <Num label="No. of bars" value={e.n_bars_total ?? ""} placeholder={form.n_bars_total} onChange={(v) => setLevel(lvl, { n_bars_total: v })} step="2" />
             <div>
               <label className={LABEL}>Link Ø <span className="text-[#94a3b8]">(mm)</span></label>
               <Dropdown value={e.link_dia_mm ?? form.link_dia_mm}
@@ -966,16 +1080,34 @@ function LevelRow({ lvl, form, setLevel, setLevelFloor, setLevelBeam }) {
           </div>
           <Check label="Set bars per face manually, this storey only"
             checked={!!e._customFaces} small
-            onChange={(v) => setLevel(lvl, { _customFaces: v })} />
+            onChange={toggleFaces} />
           {e._customFaces && (
-            <p className={`mt-1 text-xs ${SUB}`}>
-              {faceTotal
-                ? `2 × (${faceB} + ${faceH}) − 4 = ${faceTotal} bars here, corners shared.`
-                : "Enter both face counts — each needs at least 2, corners included."}
-              {form.autosize_bars
-                ? " Auto-size leaves this storey alone and checks the cage as entered."
-                : ""}
-            </p>
+            <div className="mt-2">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                <Num label="Bars on b-face" value={e.n_bars_b_face ?? ""} placeholder="2"
+                  onChange={(v) => setLevel(lvl, { n_bars_b_face: v })} step="1" />
+                <div>
+                  <label className={LABEL}>Bars on h-face <span className="text-[#94a3b8]">(from the total)</span></label>
+                  <div className="flex h-[38px] items-center rounded-lg border border-[#e2e8f0] px-3 font-mono text-sm dark:border-[#334155]">
+                    <span className={MAIN}>{split.nH !== null && split.nH >= 0 ? split.nH : "?"}</span>
+                  </div>
+                </div>
+              </div>
+              {problem ? (
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                  {problem.charAt(0).toUpperCase() + problem.slice(1)}. Change the number of bars or the b-face count.
+                </p>
+              ) : (
+                <p className={`mt-1 text-xs ${SUB}`}>
+                  {split.total} bars: {split.nB} on each b-face and {split.nH} on each h-face, corners shared.
+                  For this total the b-face can be 2 to {split.hi}.
+                  {split.total !== totalIn ? ` ${totalIn} rounded up to ${split.total} to keep the cage symmetric.` : ""}
+                  {form.autosize_bars
+                    ? " Auto-size leaves this storey alone and checks the cage as entered."
+                    : ""}
+                </p>
+              )}
+            </div>
           )}
 
           <Num label="Storey height" unit="m" value={e.storey_height_m ?? ""}
@@ -1117,6 +1249,7 @@ function StepReview({ form, levels, layout, isAxial, isBiaxial, directLoad, useF
             return n ? `${n} of ${levels.length} storeys edited` : "none — one section throughout";
           })()} />
           <RV label="Base" value={form.base_fixed ? "fixed" : "pinned"} />
+          <RV label="Designed by" value={form.designer_name.trim() || "not entered"} />
           {!directLoad && <RV label="Tributary" value={`x ${form.left_x_m}/${form.right_x_m}, y ${form.top_y_m}/${form.bottom_y_m} m`} />}
         </div>
       </Card>

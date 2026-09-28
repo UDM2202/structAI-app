@@ -133,6 +133,7 @@ def to_engine_input(req: ColumnDesignRequest) -> EngInput:
         NEd_override_kN=req.NEd_override_kN,
         MEdx_override_kNm=req.MEdx_override_kNm,
         MEdy_override_kNm=req.MEdy_override_kNm,
+        design_basis=req.design_basis.model_dump(),
     )
 
 
@@ -154,16 +155,9 @@ def design_column(req: ColumnDesignRequest) -> ColumnDesignResult:
     engine = ColumnEngine(eng_in)
     raw = engine.run()
     if subframe_rows:
-        # Insert the derivation ahead of the moment section so the report
-        # reads in the order the calculation actually happened.
-        raw["report"].insert(6, {"title": "6b. DESIGN MOMENTS FROM SUB-FRAME",
-                                 "rows": subframe_rows})
-    # The engine emits 'lambda' and 'pass' keys, both Python reserved
-    # words. The response models alias them, so the raw payload validates
-    # unchanged and FastAPI serialises it back out under the alias.
+        at = next((i + 1 for i, sec in enumerate(raw["report"])
+                   if sec["title"].startswith("6.")), len(raw["report"]))
+        raw["report"].insert(at, {"title": "6b. DESIGN MOMENTS FROM SUB-FRAME",
+                                  "rows": subframe_rows})
     return ColumnDesignResult.model_validate(raw)
-
-
-# Alias: routers/column.py imports this name. Both refer to the same function,
-# so either import works and neither is a second code path.
 calculate_column_design = design_column
