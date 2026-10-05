@@ -226,7 +226,8 @@ function SoilPressure3D({ corners, g, allow }) {
 function CombinedFootingResults({ r, meta, navigate, sheetRef, showReport, setShowReport }) {
   const pass = r.status === "PASS";
   const col = r.columns, g = r.geometry, sp = r.soil_pressure;
-  const lo = r.longitudinal, tr = r.transverse, sh = r.shear, pn = r.punching, u = r.utilisation;
+  const lb = r.longitudinal_bottom, lt = r.longitudinal_top, tr = r.transverse, sh = r.shear, pn = r.punching, u = r.utilisation;
+  const uls = r.soil_pressure_uls;
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] dark:bg-[#111827] px-6 py-6">
@@ -288,8 +289,9 @@ function CombinedFootingResults({ r, meta, navigate, sheetRef, showReport, setSh
             <KV label="Footing" value={`${g.footing_length_mm} × ${g.footing_width_mm} mm`} />
             <KV label="Thickness" value={`${g.footing_depth_mm} mm`} />
             <KV label="Effective depth, long. / trans." value={`${g.d_long_mm} / ${g.d_trans_mm} mm`} />
-            <KV label="Max pressure qmax" value={`${sp.qmax} kN/m²`} strong warn={!sp.bearing_ok} />
-            <KV label="Min pressure qmin" value={`${sp.qmin} kN/m²`} warn={!sp.uplift_ok} />
+            <KV label="Bearing qmax (SLS)" value={`${sp.qmax} kN/m²`} strong warn={!sp.bearing_ok} />
+            <KV label="Bearing qmin (SLS)" value={`${sp.qmin} kN/m²`} warn={!sp.uplift_ok} />
+            <KV label="Design pressure qmax (ULS net)" value={`${uls.qmax} kN/m²`} />
             <KV label="Allowable bearing" value={`${r.materials.allowable_bearing_kN_m2} kN/m²`} />
           </Panel>
         </div>
@@ -298,18 +300,20 @@ function CombinedFootingResults({ r, meta, navigate, sheetRef, showReport, setSh
           <Table
             head={["Direction", "M (kNm)", "d (mm)", "As,req", "As,min", "As,prov", "Bar / Spacing", "Status"]}
             rows={[
-              ["Longitudinal", lo.Mmax_kNm, lo.d_eff_mm, lo.As_req, lo.As_min, lo.As_provided, `Y${lo.bar_dia}@${lo.spacing_mm}`, <Badge key="lo" ok={lo.status === "OK"}>{lo.status}</Badge>],
+              ["Longitudinal, bottom (sagging)", lb.Mmax_kNm, lb.d_eff_mm, lb.As_req, lb.As_min, lb.As_provided, `Y${lb.bar_dia}@${lb.spacing_mm}`, <Badge key="lb" ok={lb.status === "OK"}>{lb.status}</Badge>],
+              ["Longitudinal, top (hogging)", Math.abs(lt.Mmax_kNm), lt.d_eff_mm, lt.As_req, lt.As_min, lt.As_provided, `Y${lt.bar_dia}@${lt.spacing_mm}`, <Badge key="lt" ok={lt.status === "OK"}>{lt.status}</Badge>],
               ["Transverse", tr.M_kNm, tr.d_eff_mm, tr.As_req, tr.As_min, tr.As_provided, `Y${tr.bar_dia}@${tr.spacing_mm}`, <Badge key="tr" ok={tr.status === "OK"}>{tr.status}</Badge>],
             ]}
           />
           <p className={`mt-2 text-xs ${SUB}`}>
-            Longitudinal moment is the governing value found along the footing length (max at {lo.location_m} m from the left edge),
-            not a simple column-face cantilever -- the soil pressure varies linearly along the length once there is a net moment.
+            Steel areas in mm²/m. Longitudinal moments from a beam-on-soil analysis along the length: bottom steel for the
+            largest sagging moment (at {lb.location_m} m from the left edge, under the columns), top steel for the largest
+            hogging moment (at {lt.location_m} m, between the columns).
           </p>
         </Panel>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <Panel title="Soil Pressure Distribution (Ultimate)">
+          <Panel title="Soil Pressure Distribution (SLS, incl. self-weight)">
             <SoilPressure3D corners={sp.corners} g={g} allow={r.materials.allowable_bearing_kN_m2} />
             <p className={`mt-2 text-xs ${SUB}`}>qmax {sp.qmax} / qmin {sp.qmin} kN/m². {sp.bearing_ok ? "Within allowable." : "Exceeds allowable bearing."}</p>
           </Panel>
@@ -318,11 +322,15 @@ function CombinedFootingResults({ r, meta, navigate, sheetRef, showReport, setSh
             <Table
               head={["Check", "VEd / vEd", "Resistance", "Status"]}
               rows={[
-                ["One-way shear", `${sh.VEd_kN} kN`, `${sh.VRdc_kN} kN`, <Badge key="sh" ok={sh.status === "OK"}>{sh.status}</Badge>],
-                ["Punching (6.4)", `${pn.vEd_MPa} MPa`, `${pn.vRdc_MPa} MPa`, <Badge key="pn" ok={pn.status === "OK"}>{pn.status}</Badge>],
+                ...sh.sections.map((x) => [`Shear ${x.label.replace("column ", "C").replace(" face", "")}, x ${x.x_m} m`, `${x.VEd_kN} kN`, `${x.VRdc_kN} kN`, <Badge key={x.label} ok={x.status === "OK"}>{x.status}</Badge>]),
+                ...pn.columns.flatMap((c) => [
+                  [`Punching C${c.column}` + (c.applicable ? `, a ${c.a_mm} mm` : ""),
+                   c.applicable ? `${c.vEd_MPa} MPa` : "n/a", c.applicable ? `${c.vRd_MPa} MPa` : "off footing", <Badge key={`p${c.column}`} ok={c.status === "OK"}>{c.status}</Badge>],
+                  [`C${c.column} face, vRd,max`, `${c.v0_MPa} MPa`, `${c.vRdmax_MPa} MPa`, <Badge key={`f${c.column}`} ok={c.v0_MPa <= c.vRdmax_MPa}>{c.v0_MPa <= c.vRdmax_MPa ? "OK" : "NOT OK"}</Badge>],
+                ]),
               ]}
             />
-            <p className={`mt-2 text-xs ${SUB}`}>Punching is checked around the more heavily loaded column.</p>
+            <p className={`mt-2 text-xs ${SUB}`}>One-way shear at d from each column face (EC2 6.2.1(8)). Punching per EC2 6.4.4 for each column; where no control perimeter fits on the footing, one-way shear across the full width governs.</p>
           </Panel>
         </div>
 
@@ -331,13 +339,13 @@ function CombinedFootingResults({ r, meta, navigate, sheetRef, showReport, setSh
             <Chip label="Bearing" pct={u.bearing_pct} ok={sp.bearing_ok} />
             <Chip label="One-way shear" ok={sh.status === "OK"} />
             <Chip label="Punching" pct={u.punching_pct} ok={pn.status === "OK"} />
-            <Chip label="Reinforcement" ok={lo.status === "OK" && tr.status === "OK"} />
+            <Chip label="Reinforcement" ok={lb.status === "OK" && lt.status === "OK" && tr.status === "OK"} />
             <Chip label="Uplift" ok={sp.uplift_ok} />
           </div>
         </Panel>
 
         <p className={`text-xs ${SUB} text-center pt-2`}>
-          Computed per EN 1992-1-1 (§6.2, §6.4, §9.8) & EN 1997-1. Design on ULS loads. Validate against a trusted tool before real design.
+          Computed per EN 1992-1-1 (§6.2, §6.4, §9.8) & EN 1997-1. Bearing on {r.sls_from_uls ? "ULS loads (no service loads entered)" : "SLS loads"} plus footing self-weight; structural design on ULS loads. Validate against a trusted tool before real design.
         </p>
       </div>
 

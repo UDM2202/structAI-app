@@ -1,6 +1,6 @@
 // src/pages/FoundationInput.jsx
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   FiHome, FiRefreshCw, FiLoader, FiInfo, FiAlertTriangle, FiCheckCircle,
 } from "react-icons/fi";
@@ -68,13 +68,27 @@ const DEFAULTS = {
   column_spacing_m: "3.0", left_projection_m: "1.0",
   p1_axial_kN: "500", p1_mx: "0", p1_my: "0",
   p2_axial_kN: "350", p2_mx: "0", p2_my: "0",
+  // SLS loads for the bearing check; blank -> the ULS load is used (conservative)
+  p1_service_kN: "360", p2_service_kN: "250",
+};
+
+// Combined footing: the pad defaults (2.0 m long) cannot hold column 2 at
+// left projection + spacing, so lengthen the footing to project the same
+// distance past column 2 when it would not fit.
+const withCombinedLength = (f) => {
+  const need = (2 * (parseFloat(f.left_projection_m) || 0) + (parseFloat(f.column_spacing_m) || 0)) * 1000;
+  return need > (parseFloat(f.footing_length_mm) || 0)
+    ? { ...f, foundation_type: "combined", footing_length_mm: String(Math.round(need)) }
+    : { ...f, foundation_type: "combined" };
 };
 
 const gradeNum = (g) => parseFloat(String(g).replace(/[^0-9]/g, "").slice(0, 2)) || 25;
 
 export default function FoundationInput() {
   const navigate = useNavigate();
-  const [form, setForm] = useState(DEFAULTS);
+  const [searchParams] = useSearchParams();
+  const [form, setForm] = useState(() =>
+    searchParams.get("type") === "combined" ? withCombinedLength(DEFAULTS) : DEFAULTS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
@@ -100,8 +114,10 @@ export default function FoundationInput() {
       setBusy(true); setError(null);
       try {
         const result = await foundationAPI.designCombined({
-          column_1: { axial_load_kN: num(form.p1_axial_kN), moment_x_kNm: num(form.p1_mx) || 0, moment_y_kNm: num(form.p1_my) || 0 },
-          column_2: { axial_load_kN: num(form.p2_axial_kN), moment_x_kNm: num(form.p2_mx) || 0, moment_y_kNm: num(form.p2_my) || 0 },
+          column_1: { axial_load_kN: num(form.p1_axial_kN), moment_x_kNm: num(form.p1_mx) || 0, moment_y_kNm: num(form.p1_my) || 0,
+                      service_axial_kN: num(form.p1_service_kN) > 0 ? num(form.p1_service_kN) : null },
+          column_2: { axial_load_kN: num(form.p2_axial_kN), moment_x_kNm: num(form.p2_mx) || 0, moment_y_kNm: num(form.p2_my) || 0,
+                      service_axial_kN: num(form.p2_service_kN) > 0 ? num(form.p2_service_kN) : null },
           column_spacing_m: num(form.column_spacing_m),
           left_projection_m: num(form.left_projection_m),
           footing_length_m: num(form.footing_length_mm) / 1000,
@@ -185,7 +201,8 @@ export default function FoundationInput() {
           {FOUNDATION_TYPES.map((t) => (
             <button key={t.id} onClick={() => {
                 if (!t.enabled) return;
-                set({ foundation_type: t.id });
+                if (t.id === "combined") setForm((f) => withCombinedLength(f));
+                else set({ foundation_type: t.id });
               }} disabled={!t.enabled}
               className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                 form.foundation_type === t.id ? "border-[#0A2F44] bg-[#e6f0f5] dark:bg-[#1e3a4a] text-[#0A2F44] dark:text-[#66a4c2]"
@@ -266,7 +283,7 @@ export default function FoundationInput() {
             </Card>
 
             {/* 5. Loads */}
-            <Card n={5} title={isCombined ? "Column Loads (Ultimate, ULS)" : "Load Input (Service & Ultimate)"}>
+            <Card n={5} title={isCombined ? "Column Loads (Service & Ultimate)" : "Load Input (Service & Ultimate)"}>
               {isCombined ? (
                 <>
                   <div className="overflow-x-auto">
@@ -274,7 +291,8 @@ export default function FoundationInput() {
                       <thead>
                         <tr className={`text-left ${SUB} border-b border-[#e2e8f0] dark:border-[#334155]`}>
                           <th className="py-2 pr-3 font-medium">Column</th>
-                          <th className="py-2 pr-3 font-medium">Vertical (kN)</th>
+                          <th className="py-2 pr-3 font-medium">Service SLS (kN)</th>
+                          <th className="py-2 pr-3 font-medium">Ultimate ULS (kN)</th>
                           <th className="py-2 pr-3 font-medium">Mx (kNm)</th>
                           <th className="py-2 pr-3 font-medium">My (kNm)</th>
                         </tr>
@@ -282,12 +300,14 @@ export default function FoundationInput() {
                       <tbody>
                         <tr className="border-b border-[#f1f5f9] dark:border-[#2a3646]">
                           <td className={`py-2 pr-3 font-semibold ${MAIN}`}>Column 1 (left)</td>
+                          <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p1_service_kN} onChange={(e) => set({ p1_service_kN: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p1_axial_kN} onChange={(e) => set({ p1_axial_kN: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p1_mx} onChange={(e) => set({ p1_mx: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p1_my} onChange={(e) => set({ p1_my: e.target.value })} /></td>
                         </tr>
                         <tr>
                           <td className={`py-2 pr-3 font-semibold ${MAIN}`}>Column 2 (right)</td>
+                          <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p2_service_kN} onChange={(e) => set({ p2_service_kN: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p2_axial_kN} onChange={(e) => set({ p2_axial_kN: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p2_mx} onChange={(e) => set({ p2_mx: e.target.value })} /></td>
                           <td className="py-2 pr-3"><input type="number" className={INPUT} value={form.p2_my} onChange={(e) => set({ p2_my: e.target.value })} /></td>
@@ -295,7 +315,7 @@ export default function FoundationInput() {
                       </tbody>
                     </table>
                   </div>
-                  <p className={`mt-2 text-xs ${SUB}`}>No service/ultimate split for combined footing -- enter the ultimate (ULS) load directly, matching the reference engine.</p>
+                  <p className={`mt-2 text-xs ${SUB}`}>Service loads (plus the footing self-weight) are used for the bearing check; leave blank to use the ULS load (conservative). Moments are ULS; for bearing they are scaled by each column's SLS/ULS ratio. The structural design uses the ULS loads.</p>
                 </>
               ) : (
                 <>
@@ -415,8 +435,8 @@ export default function FoundationInput() {
                 {isCombined ? (
                   <>
                     <Sum label="Spacing / Left proj." value={`${form.column_spacing_m} / ${form.left_projection_m} m`} />
-                    <Sum label="P1 (vert)" value={`${form.p1_axial_kN} kN`} strong />
-                    <Sum label="P2 (vert)" value={`${form.p2_axial_kN} kN`} strong />
+                    <Sum label="P1 SLS / ULS" value={`${form.p1_service_kN || "-"} / ${form.p1_axial_kN} kN`} strong />
+                    <Sum label="P2 SLS / ULS" value={`${form.p2_service_kN || "-"} / ${form.p2_axial_kN} kN`} strong />
                   </>
                 ) : (
                   <>
