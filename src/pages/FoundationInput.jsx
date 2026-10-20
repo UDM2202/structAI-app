@@ -1,5 +1,5 @@
 // src/pages/FoundationInput.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   FiHome, FiRefreshCw, FiLoader, FiInfo, FiAlertTriangle, FiCheckCircle,
@@ -31,13 +31,33 @@ const CONCRETE = ["C20/25", "C25/30", "C30/37", "C35/45", "C40/50"];
 const STEEL = ["B500", "B500B", "B460"];
 const BAR_DIAS = [10, 12, 16, 20, 25];
 const FIXITY = ["Fixed", "Pinned"];
+// EN 1997-1 Annex A partial factors per design approach (recommended values).
+const DESIGN_APPROACHES = {
+  "DA1 - Combination 1": {
+    sets: "A1 + M1 + R1",
+    text: "Loads factored up (γG = 1.35, γQ = 1.5); soil strength and bearing resistance not factored (γφ' = γc' = γR = 1.0). Factors the loads, so it usually governs the structural design of the footing (bending, shear, punching).",
+  },
+  "DA1 - Combination 2": {
+    sets: "A2 + M2 + R1",
+    text: "Loads barely factored (γG = 1.0, γQ = 1.3); soil strength reduced instead (tan φ' / 1.25, c' / 1.25, cu / 1.4), bearing resistance γR = 1.0. Factors the soil, so it usually governs the footing size (geotechnical bearing). DA1 means checking both combinations and taking the worse; this is the UK National Annex choice.",
+  },
+  "DA2": {
+    sets: "A1 + M1 + R2",
+    text: "Loads factored up (γG = 1.35, γQ = 1.5); soil strength not factored; the calculated bearing resistance is divided by γR,v = 1.4. One combination covers both the structure and the soil.",
+  },
+  "DA3": {
+    sets: "A1 (structural) / A2 (geotechnical) + M2 + R3",
+    text: "Column loads factored up (γG = 1.35, γQ = 1.5), loads coming from the soil itself at 1.0 / 1.3; soil strength reduced (tan φ' / 1.25, c' / 1.25, cu / 1.4); resistance γR = 1.0.",
+  },
+};
 
 const DEFAULTS = {
   foundation_type: "pad",
   project: "Residential Building", location: "Bangalore, India",
   // column / support (some display-only)
   column_shape: "Rectangular", column_x_mm: "400", column_y_mm: "400",
-  column_location: "Interior", eccentricity: "0", fixity: "Fixed",
+  // offset of the column centre from the footing centre (+x along L, +y along B)
+  column_location: "Interior", offset_x_mm: "0", offset_y_mm: "0", fixity: "Fixed",
   // footing geometry
   footing_shape: "Square", footing_length_mm: "2000", footing_width_mm: "2000",
   footing_depth_mm: "500", pedestal_height_mm: "0", pedestal_size_mm: "0",
@@ -77,25 +97,66 @@ const DEFAULTS = {
 // distance past column 2 when it would not fit.
 const withCombinedLength = (f) => {
   const need = (2 * (parseFloat(f.left_projection_m) || 0) + (parseFloat(f.column_spacing_m) || 0)) * 1000;
-  return need > (parseFloat(f.footing_length_mm) || 0)
+  const g = need > (parseFloat(f.footing_length_mm) || 0)
     ? { ...f, foundation_type: "combined", footing_length_mm: String(Math.round(need)) }
     : { ...f, foundation_type: "combined" };
+  // a lengthened footing is no longer square: no warning for a change we made
+  return g.footing_length_mm !== f.footing_length_mm && shapeFix(g) ? { ...g, footing_shape: shapeFix(g) } : g;
 };
+
+// Location presets the column offset: Edge puts the column flush with the
+// +x footing edge, Corner with the +x and +y edges.
+const locationOffsets = (f, loc) => {
+  const half = (len, c) => String(Math.max(((parseFloat(len) || 0) - (parseFloat(c) || 0)) / 2, 0));
+  const cy = f.column_shape === "Circular" ? f.column_x_mm : f.column_y_mm;
+  return {
+    column_location: loc,
+    offset_x_mm: loc === "Interior" ? "0" : half(f.footing_length_mm, f.column_x_mm),
+    offset_y_mm: loc === "Corner" ? half(f.footing_width_mm, cy) : "0",
+  };
+};
+
+// Square needs L = B; Rectangular needs L != B. Returns the shape the
+// dimensions call for when the chosen one does not fit, else null.
+const shapeFix = (f) => {
+  const L = parseFloat(f.footing_length_mm), B = parseFloat(f.footing_width_mm);
+  if (!(L > 0) || !(B > 0)) return null;
+  if (f.footing_shape === "Square" && L !== B) return "Rectangular";
+  if (f.footing_shape === "Rectangular" && L === B) return "Square";
+  return null;
+};
+
+const DRAFT_KEY = "foundationInputDraft";
 
 const gradeNum = (g) => parseFloat(String(g).replace(/[^0-9]/g, "").slice(0, 2)) || 25;
 
 export default function FoundationInput() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [form, setForm] = useState(() =>
-    searchParams.get("type") === "combined" ? withCombinedLength(DEFAULTS) : DEFAULTS);
+  const [form, setForm] = useState(() => {
+    let f = DEFAULTS;
+    try {
+      const saved = sessionStorage.getItem(DRAFT_KEY);
+      if (saved) f = { ...DEFAULTS, ...JSON.parse(saved) };
+    } catch { /* private mode */ }
+    return searchParams.get("type") === "combined" ? withCombinedLength(f) : f;
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const reset = () => { setForm(DEFAULTS); setError(null); };
+  const reset = () => {
+    setForm(DEFAULTS); setError(null);
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(form)); } catch { /* private mode */ }
+  }, [form]);
 
   const num = (v) => parseFloat(v);
   const isCombined = form.foundation_type === "combined";
+  // the combined engine takes rectangular columns only
+  const circular = !isCombined && form.column_shape === "Circular";
 
   const designBasisPayload = () => ({
     designer_name: (form.designer_name || "").trim() || null,
@@ -107,6 +168,10 @@ export default function FoundationInput() {
   });
 
   const run = async () => {
+    // Shape left at odds with the dimensions after the warning: follow the dimensions.
+    const fixedShape = shapeFix(form);
+    if (fixedShape) set({ footing_shape: fixedShape });
+    const footingShape = fixedShape || form.footing_shape;
     if (isCombined) {
       if (!(num(form.p1_axial_kN) > 0) || !(num(form.p2_axial_kN) > 0)) { setError("Enter valid loads for both columns."); return; }
       if (!(num(form.footing_length_mm) > 0) || !(num(form.footing_width_mm) > 0)) { setError("Enter valid footing dimensions."); return; }
@@ -158,16 +223,24 @@ export default function FoundationInput() {
         footing_width_mm: num(form.footing_width_mm),
         footing_depth_mm: num(form.footing_depth_mm),
         column_x_mm: num(form.column_x_mm),
-        column_y_mm: num(form.column_y_mm),
+        column_y_mm: circular ? num(form.column_x_mm) : num(form.column_y_mm),
+        column_shape: circular ? "circular" : "rectangular",
+        column_offset_x_mm: num(form.offset_x_mm) || 0,
+        column_offset_y_mm: num(form.offset_y_mm) || 0,
+        column_fixity: form.fixity === "Pinned" ? "pinned" : "fixed",
         concrete_grade_fck: gradeNum(form.concrete_grade_fck),
         steel_grade_fyk: gradeNum(form.steel_grade_fyk) < 100 ? 500 : gradeNum(form.steel_grade_fyk),
         allowable_bearing_kN_m2: num(form.allowable_bearing_kN_m2),
         cover_mm: num(form.cover_mm),
         bar_dia_mm: num(form.bar_dia_mm),
+        // SLS row for the bearing check; blank axial -> engine uses ULS
+        service_axial_kN: num(form.service_vertical_kN) > 0 ? num(form.service_vertical_kN) : null,
+        service_moment_x_kNm: num(form.service_vertical_kN) > 0 ? num(form.service_mx) || 0 : null,
+        service_moment_y_kNm: num(form.service_vertical_kN) > 0 ? num(form.service_my) || 0 : null,
         design_basis: designBasisPayload(),
         // pass-through display context (not used by engine calc)
         _meta: { project: form.project, location: form.location, soil_type: form.soil_type,
-                 footing_shape: form.footing_shape, column_shape: form.column_shape },
+                 footing_shape: footingShape, column_shape: form.column_shape },
       });
       setBusy(false);
       navigate("/foundation-results", { state: { designResult: result, meta: {
@@ -228,9 +301,15 @@ export default function FoundationInput() {
             {/* 1. Column / Support */}
             <Card n={1} title={isCombined ? "Columns & Spacing (both columns share this size)" : "Column / Support Details"}>
               <div className={`grid grid-cols-2 md:grid-cols-3 gap-4 ${isCombined ? "2xl:grid-cols-5" : "2xl:grid-cols-6"}`}>
-                <div><label className={LABEL}>Column Shape</label><Dropdown value={form.column_shape} onChange={(v) => set({ column_shape: v })} options={COL_SHAPES} /></div>
-                <Num label="Column bx" unit="mm" value={form.column_x_mm} onChange={(v) => set({ column_x_mm: v })} live />
-                <Num label="Column by" unit="mm" value={form.column_y_mm} onChange={(v) => set({ column_y_mm: v })} live />
+                {!isCombined && <div><label className={LABEL}>Column Shape</label><Dropdown value={form.column_shape} onChange={(v) => set({ column_shape: v })} options={COL_SHAPES} /></div>}
+                {circular ? (
+                  <Num label="Column diameter D" unit="mm" value={form.column_x_mm} onChange={(v) => set({ column_x_mm: v, column_y_mm: v })} live />
+                ) : (
+                  <>
+                    <Num label="Column bx (along L)" unit="mm" value={form.column_x_mm} onChange={(v) => set({ column_x_mm: v })} live />
+                    <Num label="Column by (along B)" unit="mm" value={form.column_y_mm} onChange={(v) => set({ column_y_mm: v })} live />
+                  </>
+                )}
                 {isCombined ? (
                   <>
                     <Num label="Column spacing" unit="m" value={form.column_spacing_m} onChange={(v) => set({ column_spacing_m: v })} live />
@@ -238,12 +317,21 @@ export default function FoundationInput() {
                   </>
                 ) : (
                   <>
-                    <div><label className={LABEL}>Location</label><Dropdown value={form.column_location} onChange={(v) => set({ column_location: v })} options={["Interior", "Edge", "Corner"]} /></div>
-                    <Num label="Eccentricity" unit="mm" value={form.eccentricity} onChange={(v) => set({ eccentricity: v })} />
+                    <div><label className={LABEL}>Location</label><Dropdown value={form.column_location} onChange={(v) => setForm((f) => ({ ...f, ...locationOffsets(f, v) }))} options={["Interior", "Edge", "Corner"]} /></div>
+                    <Num label="Offset ex (along L)" unit="mm" value={form.offset_x_mm} onChange={(v) => set({ offset_x_mm: v })} live />
+                    <Num label="Offset ey (along B)" unit="mm" value={form.offset_y_mm} onChange={(v) => set({ offset_y_mm: v })} live />
                     <div><label className={LABEL}>Fixity</label><Dropdown value={form.fixity} onChange={(v) => set({ fixity: v })} options={FIXITY} /></div>
                   </>
                 )}
               </div>
+              {!isCombined && (
+                <p className={`mt-2 text-xs ${SUB}`}>
+                  Offsets are from the footing centre to the column centre; the footing takes N × offset as extra moment.
+                  Edge / Corner set the column flush with the footing edge (re-pick after changing sizes).
+                  {circular && " A circular column is designed for bending and shear at the face of the equal-area square (0.886D); punching uses the circular perimeter."}
+                  {form.fixity === "Pinned" && " Pinned base: the column moments in the load table are not passed to the footing."}
+                </p>
+              )}
               {isCombined && (
                 <p className={`mt-2 text-xs ${SUB}`}>Left projection + spacing must not exceed the footing length set in Footing Geometry below.</p>
               )}
@@ -259,6 +347,16 @@ export default function FoundationInput() {
                 <Num label="Pedestal Height" unit="mm" value={form.pedestal_height_mm} onChange={(v) => set({ pedestal_height_mm: v })} />
                 <Num label="Depth Below Ground" unit="mm" value={form.depth_below_ground_mm} onChange={(v) => set({ depth_below_ground_mm: v })} />
               </div>
+              {shapeFix(form) && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3">
+                  <FiAlertTriangle className="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    {form.footing_shape === "Square"
+                      ? <>A square footing needs equal length and width ({form.footing_length_mm} ≠ {form.footing_width_mm} mm). Make them equal, or the shape will be changed to <b>Rectangular</b> when you design.</>
+                      : <>Length and width are equal ({form.footing_length_mm} mm), so this footing is square. Choose <b>Square</b>, or it will be changed to Square when you design.</>}
+                  </p>
+                </div>
+              )}
             </Card>
 
             {/* 3. Soil & Ground */}
@@ -345,7 +443,7 @@ export default function FoundationInput() {
                       </tbody>
                     </table>
                   </div>
-                  <p className={`mt-2 text-xs ${SUB}`}>The engine designs on the Ultimate (ULS) row per EC2.</p>
+                  <p className={`mt-2 text-xs ${SUB}`}>Bearing is checked on the Service (SLS) row plus the footing self-weight, because the allowable bearing pressure is a working (service) value. Leave the service vertical load blank to use the ULS row (conservative). Bending, shear and punching are designed on the Ultimate (ULS) row.</p>
                 </>
               )}
             </Card>
@@ -362,6 +460,16 @@ export default function FoundationInput() {
                 <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={form.eccentricity_check} onChange={(e) => set({ eccentricity_check: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span className={MAIN}>Eccentricity check</span></label>
                 <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={form.punching_check} onChange={(e) => set({ punching_check: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span className={MAIN}>Punching check</span></label>
               </div>
+              {DESIGN_APPROACHES[form.design_approach] && (
+                <div className="mt-4 flex items-start gap-2 rounded-lg border border-[#e2e8f0] dark:border-[#334155] bg-[#f8fafc] dark:bg-[#111827] p-3">
+                  <FiInfo className="mt-0.5 flex-shrink-0 text-[#0A2F44] dark:text-[#66a4c2]" />
+                  <div className="text-xs">
+                    <p className={`font-semibold ${MAIN}`}>{form.design_approach} · {DESIGN_APPROACHES[form.design_approach].sets}</p>
+                    <p className={`mt-1 ${SUB}`}>{DESIGN_APPROACHES[form.design_approach].text}</p>
+                    <p className={`mt-1 ${SUB}`}>Sets: A = actions (loads), M = soil strength, R = resistance. This app checks bearing against the allowable bearing pressure you enter, which already contains the soil's safety margin, so it uses the service loads and the design approach is recorded, not calculated. The structural design uses the ULS loads you enter.</p>
+                  </div>
+                </div>
+              )}
             </Card>
 
             {/* 7. Notes */}
@@ -423,7 +531,7 @@ export default function FoundationInput() {
               <div className="border-b border-[#e2e8f0] dark:border-[#334155] px-5 py-3"><h3 className={SECTION}>Input Summary</h3></div>
               <div className="p-5 space-y-2.5">
                 <Sum label="Foundation" value={isCombined ? "Combined Footing" : "Pad Footing"} />
-                <Sum label="Column" value={`${form.column_x_mm}×${form.column_y_mm} mm`} />
+                <Sum label="Column" value={circular ? `Ø${form.column_x_mm} mm` : `${form.column_x_mm}×${form.column_y_mm} mm`} />
                 <Sum label="Footing" value={`${form.footing_length_mm}×${form.footing_width_mm}×${form.footing_depth_mm}`} />
                 <div className="my-2 border-t border-[#e2e8f0] dark:border-[#334155]" />
                 <Sum label="Soil type" value={form.soil_type} />
@@ -506,7 +614,10 @@ function FootingPlan({ form, isCombined }) {
   const DIM = "var(--dim)";
   const pos = (v) => { const x = parseFloat(v); return Number.isFinite(x) && x > 0 ? x : 0; };
   const L = pos(form.footing_length_mm), B = pos(form.footing_width_mm);
-  const cx = pos(form.column_x_mm), cy = pos(form.column_y_mm);
+  const circ = !isCombined && form.column_shape === "Circular";
+  const cx = pos(form.column_x_mm), cy = circ ? cx : pos(form.column_y_mm);
+  const ox = isCombined ? 0 : parseFloat(form.offset_x_mm) || 0;
+  const oy = isCombined ? 0 : parseFloat(form.offset_y_mm) || 0;
   const spacing = pos(form.column_spacing_m) * 1000;
   const lead = pos(form.left_projection_m) * 1000;
 
@@ -518,11 +629,12 @@ function FootingPlan({ form, isCombined }) {
   const s = Math.min(areaW / L, areaH / B);
   const fw = L * s, fh = B * s;
   const x0 = (W - fw) / 2, y0 = topY + (areaH - fh) / 2;
-  const centres = isCombined ? [lead, lead + spacing] : [L / 2];
+  const centres = isCombined ? [lead, lead + spacing] : [L / 2 + ox];
   const fits = !isCombined || lead + spacing <= L;
   const px = (mm) => Math.min(Math.max(x0 + mm * s, 0), W);
   const colW = Math.max(cx * s, 3), colH = Math.max(cy * s, 3);
   const midY = y0 + fh / 2;
+  const colY = midY - oy * s;   // +y drawn upwards
   const dimY = y0 + fh + 16;
 
   return (
@@ -537,7 +649,9 @@ function FootingPlan({ form, isCombined }) {
           stroke={fits ? "currentColor" : "#ef4444"} strokeWidth="1.6" />
         {centres.map((mm, i) => (
           <g key={i}>
-            <rect x={px(mm) - colW / 2} y={midY - colH / 2} width={colW} height={colH} fill={DIM} fillOpacity="0.9" />
+            {circ
+              ? <circle cx={px(mm)} cy={colY} r={colW / 2} fill={DIM} fillOpacity="0.9" />
+              : <rect x={px(mm) - colW / 2} y={colY - colH / 2} width={colW} height={colH} fill={DIM} fillOpacity="0.9" />}
             {isCombined && (
               <text x={px(mm)} y={midY + colH / 2 + 11} fontSize="9" fill={DIM} textAnchor="middle">P{i + 1}</text>
             )}
