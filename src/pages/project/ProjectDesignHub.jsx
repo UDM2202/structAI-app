@@ -15,17 +15,18 @@ import { Panel, Btn, Th, Empty, RoleBadge, SectionHeading, CARD_CLASS } from '..
 import { fmtTs, accountFor } from '../org/orgFormat'
 import { ChatBubble } from '../../components/chat/ProjectChat'
 import { useAuth } from '../../contexts/AuthContext'
-import { getMembers } from '../../utils/orgStore'
+import { getMembers, roleIn } from '../../utils/orgStore'
 
 const ICONS = { slab: FiLayers, 'continuous-slab': FiLayers, beam: FiBarChart2, 'continuous-beam': FiBarChart2, column: FiColumns, pad: FiSquare, combined: FiSquare, staircase: FiTriangle }
 
 export default function ProjectDesignHub() {
   const { workspaceId, projectId } = useParams()
   const navigate = useNavigate()
-  const { workspaces, listUserProjects } = useWorkspace()
+  const { listUserProjects } = useWorkspace()
   const { user } = useAuth()
   const project = listUserProjects(ALL_WS).find((p) => p.id === projectId) || null
-  const role = project?.workspace_id ? workspaces.find((w) => w.id === project.workspace_id)?.userRole : 'owner'
+  // role read from the organisation store, like the project list above (state can lag behind storage)
+  const role = project?.workspace_id ? roleIn(project.workspace_id, user) : 'owner'
   const mayDesign = !project?.workspace_id || can(role, 'project.edit')
   const detailsPath = `/workspace/${workspaceId}/projects/${projectId}`
 
