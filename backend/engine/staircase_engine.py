@@ -40,6 +40,11 @@ from dataclasses import dataclass
 from typing import Optional
 import math
 
+try:
+    from engine.spacing_rules import s_min as _s_min   # EC2 8.2(2) clear gap
+except ImportError:
+    from spacing_rules import s_min as _s_min
+
 GAMMA_C = 25.0          # kN/m3, book 5.4.1
 SPACINGS = [300, 275, 250, 225, 200, 175, 150, 125, 100, 75]
 K_LIM = 0.167
@@ -259,8 +264,9 @@ def design_staircase(d: StaircaseInput) -> dict:
         s_t, Asp_t = provide(d.top_bar_mm, need_t, s_max_main, d.top_spacing_mm)
         top = {"M": M_hog, "x": p_hog["x"], "member": p_hog["member"], "d_mm": d_top, **ft,
                "As_min": Asmin_t, "bar": d.top_bar_mm, "spacing": s_t, "As_prov": Asp_t,
-               "spacing_ok": s_t <= s_max_main,
+               "spacing_ok": s_t <= s_max_main, "s_min": _s_min(d.top_bar_mm), "gap_ok": s_t >= _s_min(d.top_bar_mm) - 1e-6,
                "status": "OK" if ft["status"] == "OK" and Asp_t >= need_t - 1e-6 and s_t <= s_max_main
+                         and s_t >= _s_min(d.top_bar_mm) - 1e-6
                          and Asp_t <= 0.04 * 1000 * h else "NOT OK"}
 
     # distribution steel, EC2 9.3.1.1(2): >= 20% of the main steel
@@ -295,12 +301,13 @@ def design_staircase(d: StaircaseInput) -> dict:
 
     bottom = {"M": M_sag, "x": p_sag["x"], "member": p_sag["member"], "d_mm": d_bot, **fb,
               "As_min": Asmin_b, "bar": d.main_bar_mm, "spacing": s_b, "As_prov": Asp_b,
-              "spacing_ok": s_b <= s_max_main,
+              "spacing_ok": s_b <= s_max_main, "s_min": _s_min(d.main_bar_mm), "gap_ok": s_b >= _s_min(d.main_bar_mm) - 1e-6,
               "status": "OK" if fb["status"] == "OK" and Asp_b >= need_b - 1e-6 and s_b <= s_max_main
+                        and s_b >= _s_min(d.main_bar_mm) - 1e-6
                         and Asp_b <= 0.04 * 1000 * h else "NOT OK"}
     dist = {"bar": d.dist_bar_mm, "spacing": s_d, "As_prov": Asp_d, "As_req": need_d,
-            "s_max": s_max_dist,
-            "status": "OK" if Asp_d >= need_d - 1e-6 and s_d <= s_max_dist else "NOT OK"}
+            "s_max": s_max_dist, "s_min": _s_min(d.dist_bar_mm), "gap_ok": s_d >= _s_min(d.dist_bar_mm) - 1e-6,
+            "status": "OK" if Asp_d >= need_d - 1e-6 and s_d <= s_max_dist and s_d >= _s_min(d.dist_bar_mm) - 1e-6 else "NOT OK"}
     defl = {"K": 1.0, "rho": rho, "rho0": rho0, "branch": branch, "basic": basic,
             "sigma_s": sigma_s, "F3_raw": f3_raw, "F3": F3, "allowable": allow,
             "L_mm": L_def, "actual": actual, "ratio": actual / allow,

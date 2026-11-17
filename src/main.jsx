@@ -1,6 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot, hydrateRoot } from 'react-dom/client'
 import './index.css'
+// About page styles (scoped under .ab / .beam-figure). Loaded with the page's
+// CSS so the prerendered /about is styled before the public bundle arrives.
+import './public/about/about.css'
+import './public/about/BeamFigure.css'
 import { publicRoute } from './public/routes'
 
 // Public pages (src/public) are prerendered to HTML at build time and use a

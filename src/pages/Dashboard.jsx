@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { FiFolder, FiPlus, FiActivity } from 'react-icons/fi'
 import { useAuth } from '../contexts/AuthContext'
 import { useWorkspace } from '../contexts/WorkspaceContext'
@@ -12,8 +12,6 @@ import { getActivity, onActivityChange } from '../utils/activity'
 const Dashboard = () => {
   const { user } = useAuth()
   const { refreshWorkspaces, listUserProjects } = useWorkspace()
-  const location = useLocation()
-  const [showLoading, setShowLoading] = useState(false)
 
   // Design calculations per day for this user (utils/activity.js).
   const [activityTick, setActivityTick] = useState(0)
@@ -27,19 +25,6 @@ const Dashboard = () => {
     .filter((p) => p.status !== 'archived')
     .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
 
-  // Only show loading when navigating back to dashboard (not on initial mount)
-  useEffect(() => {
-    const isNavigating = document.referrer && document.referrer.includes(window.location.origin)
-
-    if (isNavigating) {
-      setShowLoading(true)
-      const timer = setTimeout(() => {
-        setShowLoading(false)
-      }, 500)
-      return () => clearTimeout(timer)
-    }
-  }, [location.pathname])
-
   useEffect(() => {
     refreshWorkspaces()
   }, [])
@@ -51,20 +36,6 @@ const Dashboard = () => {
     const now = new Date()
     return updated.getMonth() === now.getMonth() && updated.getFullYear() === now.getFullYear()
   }).length
-
-  // Show loading only when navigating between pages
-  if (showLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f3f4f6] dark:bg-[#111827]">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-[#0A2F44] rounded-lg flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <span className="text-white text-2xl font-bold">SDH</span>
-          </div>
-          <p className="text-[#6b7280] dark:text-[#9ca3af]">Loading dashboard...</p>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <AccountLayout

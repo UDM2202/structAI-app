@@ -17,9 +17,11 @@ from services.report_front_matter import (
 try:
     from engine.continuous_one_way_slab_engine import design_continuous_slab, ContinuousInput
     from engine.two_way_slab_engine import EXPOSURE_MIN_DUR_MM
+    from engine import spacing_rules
 except ImportError:
     from continuous_one_way_slab_engine import design_continuous_slab, ContinuousInput
     from two_way_slab_engine import EXPOSURE_MIN_DUR_MM
+    import spacing_rules
 
 # EN 1992-1-2 Table 5.8, one-way solid slabs: REI (min) -> (min thickness h_s, min axis distance a), mm
 FIRE_TABLE_5_8 = {30: (60, 10), 60: (80, 20), 90: (100, 30), 120: (120, 40), 180: (150, 55), 240: (175, 65)}
@@ -85,6 +87,8 @@ def _calculate_continuous_slab(request: ContinuousSlabRequest) -> ContinuousSlab
         concrete_grade=mats.concrete_grade,
         steel_grade=mats.steel_grade,
         bar_diameters=request.bar_diameters or [10, 12, 16],
+        bottom_spacing_mm=request.bottom_spacing_mm,
+        top_spacing_mm=request.top_spacing_mm,
         dead_load=loads.dead_load or 0.0,
         floor_finish=loads.floor_finish or 0.0,
         additional_dead_load=loads.additional_dead_load or 0.0,
@@ -480,6 +484,9 @@ def _build_report(request, res, dfc_rows, dfc_checks, overall):
         span_rows.append(R("EC2 §6.1", f"A_s = M_sag×10⁶/(f_yd·Z) = ({s.M_sag_kNm:.2f}×10⁶)/(435×{s.z_mm:.1f})", f"A_s,req = {s.As_req:.0f} mm²/m"))
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing} ({s.bar.As_prov:.0f} mm²/m)" if s.bar else "-"
         span_rows.append(R("Provide", f"A_s,min = {s.As_min:.0f} ; A_s,req = max(bending, min) = {s.As_req:.0f}", f"{bar} ({s.status})"))
+    b0 = next((s.bar for s in res.spans if s.bar), None)
+    if b0:
+        span_rows += [R(*r) for r in spacing_rules.report_rows(request.bottom_spacing_mm, request.geometry_thickness, b0.bar_dia, "bottom")]
     sec.append({"title": "6. Span (Sagging) Reinforcement", "rows": span_rows})
 
     # ---------------- 7. Support (hogging) reinforcement -- full K/Z/As derivation ----------------
@@ -494,6 +501,9 @@ def _build_report(request, res, dfc_rows, dfc_checks, overall):
             sup_rows.append(R(s.position, "no hogging at this support -- nominal minimum steel only", f"A_s,req = {s.As_req:.0f} mm²/m"))
         bar = f"T{s.bar.bar_dia}@{s.bar.spacing} ({s.bar.As_prov:.0f} mm²/m)" if s.bar else "-"
         sup_rows.append(R("Provide", f"M_hog = {s.M_hog_kNm:.2f} kNm/m ; A_s,min = {s.As_min:.0f}", f"{bar} ({s.status})"))
+    t0 = next((s.bar for s in res.supports if s.bar), None)
+    if t0:
+        sup_rows += [R(*r) for r in spacing_rules.report_rows(request.top_spacing_mm, request.geometry_thickness, t0.bar_dia, "top")]
     sec.append({"title": "7. Support (Hogging) Reinforcement", "rows": sup_rows})
 
     # ---------------- 8. Minimum reinforcement basis (shared across the member -- same d/fctm/fyk) ----------------

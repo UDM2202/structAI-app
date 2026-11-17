@@ -248,19 +248,14 @@ export const WorkspaceProvider = ({ children }) => {
       updated_at: new Date().toISOString()
     };
     
-    const { projects: currentProjects, workspaces: currentWorkspaces } = loadMockDataFromLocalStorage();
+    const { projects: currentProjects } = loadMockDataFromLocalStorage();
     const updatedProjects = [...currentProjects, newProject];
     localStorage.setItem('mock_projects', JSON.stringify(updatedProjects));
-    
-    const updatedWorkspaces = currentWorkspaces.map(w => 
-      w.id === orgId 
-        ? { ...w, project_count: (w.project_count || 0) + 1 } 
-        : w
-    );
-    localStorage.setItem('mock_workspaces', JSON.stringify(updatedWorkspaces));
-    
-    setProjects(updatedProjects);
-    setWorkspaces(updatedWorkspaces);
+
+    setProjects(listUserProjects(ALL_WS));
+    // re-read the organisations (with the user's role); writing the raw stored
+    // list into state dropped userRole, so the new project's hub was read-only
+    loadWorkspaces();
     
     return { success: true, project: newProject };
   };

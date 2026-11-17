@@ -107,6 +107,10 @@ class SlabDesignRequest(BaseModel):
     # Let the engine choose the bar size (column-page style): designed with each
     # standard size, least steel among the passing designs. Off: the bar given only.
     auto_bars: bool = False
+    # Bar spacing set by the designer (mm), used as entered; None = the engine
+    # chooses it. Checked against EC2 9.3.1.1(3) and 8.2 (engine/spacing_rules.py).
+    bottom_spacing_mm: Optional[int] = Field(None, ge=50, le=400)
+    top_spacing_mm: Optional[int] = Field(None, ge=50, le=400)
     thickness_options: Optional[List[float]] = Field(None, description="Alternative thicknesses to try in mm")
     use_ai: bool = Field(False, description="Enable AI recommendation")
     region: str = Field("UK", description="Region for cost rates")
@@ -300,6 +304,10 @@ class ContinuousSlabRequest(BaseModel):
     # Let the engine choose the bar size (column-page style): designed with each
     # standard size, least steel among the passing designs. Off: the bar given only.
     auto_bars: bool = False
+    # Bar spacing set by the designer (mm), used as entered; None = the engine
+    # chooses it. Checked against EC2 9.3.1.1(3) and 8.2 (engine/spacing_rules.py).
+    bottom_spacing_mm: Optional[int] = Field(None, ge=50, le=400)
+    top_spacing_mm: Optional[int] = Field(None, ge=50, le=400)
     region: str = Field("UK")
     occupancy: Optional[str] = None   # sets psi_2 for the crack check; None = not stated (psi_2 = 0.6 assumed)
     design_basis: SlabDesignBasis = SlabDesignBasis()

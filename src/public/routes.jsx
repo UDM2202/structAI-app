@@ -6,9 +6,16 @@ import React from "react";
 // out). HomePage in PublicPages.jsx is kept, unpublished, for a later landing page.
 import { ModulePage, MethodologyPage, NotFoundPage } from "./PublicPages";
 import { MODULES } from "./modules";
+import AboutPage from "./about/AboutPage";
 import { PRODUCT } from "./site";
 
 export const PUBLIC_ROUTES = [
+  {
+    path: "/about",
+    title: `About ${PRODUCT} | Eurocode 2 Concrete Design`,
+    description: "Sphere Design Hub designs reinforced concrete beams, columns, slabs, footings and staircases to Eurocode 2 in the browser, with the working shown clause by clause.",
+    render: () => <AboutPage />,
+  },
   ...MODULES.map((m) => ({
     path: `/${m.slug}`,
     title: m.title,

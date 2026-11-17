@@ -13,6 +13,10 @@ from models.schemas import (
     ReportSection
 )
 
+try:
+    from engine import spacing_rules
+except ImportError:
+    import spacing_rules
 from services.report_front_matter import (
     front_matter, ndp_partial_factors, ndp_alpha_cc_k_method, ndp_cover_rows,
     ndp_min_steel, ndp_shear_no_links, ndp_deflection, row as _fm_row,
@@ -355,6 +359,8 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
         candidate_bar_diameters_mm=request.bar_diameters or None,
         # the user's bar first (was the engine's preset bar, kept whenever it passed)
         main_bar_diameter_mm=request.bar_diameters[0] if request.bar_diameters else None,
+        bottom_spacing_mm=request.bottom_spacing_mm,
+        top_spacing_mm=request.top_spacing_mm,
         unit_weight_concrete=mats.unit_weight_concrete or 25.0,
         wind_load_kN_m2=loads.wind_load or 0.0,
         leading_action=loads.leading_action,
@@ -449,6 +455,9 @@ def _calculate_two_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
 
     def _loc(key, label, layer, alpha, M, As_req, As_target, arr, strip):
         ok = (arr is None and As_target <= 0) or (arr is not None and arr.As_provided_mm2_per_m >= As_target - 1e-9)
+        if arr is not None:   # a designer's spacing must also meet EC2 9.3.1.1(3) / 8.2
+            fixed_s = inp.bottom_spacing_mm if layer == "bottom" else inp.top_spacing_mm
+            ok = ok and spacing_rules.check(fixed_s, res.thickness_mm, arr.bar_dia_mm)[0]
         return {"key": key, "label": label, "layer": layer, "strip": strip,
                 "alpha": None if alpha is None else round(alpha, 4),
                 "M": round(M, 2), "As_req": round(As_req, 1), "As_target": round(As_target, 1),
@@ -646,22 +655,29 @@ def _build_two_way_report(inp, res, fck, v_ed_kn, v_rdc, shear_status):
     ]})
 
     s_max = res.max_spacing_mm or min(2 * res.thickness_mm, 250)
-    bar_rows = [R("Method", f"each location designed with the chosen bar at the widest spacing (25 mm steps, \u2264 s_max) giving A_s,prov \u2265 A_s,target", "")]
-    for tag, arr, target in (("X bottom (short span, midspan)", res.main_x, res.As_target_x),
-                             ("Y bottom (long span, midspan)", res.main_y, res.As_target_y),
-                             ("X top (long edges, continuous)", res.top_x, res.As_target_x_neg),
-                             ("Y top (short edges, continuous)", res.top_y, res.As_target_y_neg)):
+    bs_user, ts_user = inp.bottom_spacing_mm, inp.top_spacing_mm
+    bar_rows = [R("Method", "each location designed with the chosen bar at the widest spacing (25 mm steps, \u2264 s_max) giving A_s,prov \u2265 A_s,target"
+                  + ("; bottom spacing set by the designer" if bs_user else "") + ("; top spacing set by the designer" if ts_user else ""), "")]
+    for tag, arr, target, fixed_s in (("X bottom (short span, midspan)", res.main_x, res.As_target_x, bs_user),
+                                      ("Y bottom (long span, midspan)", res.main_y, res.As_target_y, bs_user),
+                                      ("X top (long edges, continuous)", res.top_x, res.As_target_x_neg, ts_user),
+                                      ("Y top (short edges, continuous)", res.top_y, res.As_target_y_neg, ts_user)):
         if not arr:
             bar_rows.append(R(f"Provide \u2014 {tag}", "edge discontinuous: support moment zero, no top steel designed", "-"))
             continue
         Ab = math.pi * arr.bar_dia_mm ** 2 / 4.0
         bar_rows += [
-            R(f"Spacing \u2014 {tag}", f"s \u2264 A_bar \u00d7 1000/A_s,target = {Ab:.1f} \u00d7 1000/{target:.0f} = {Ab*1000/target:.0f} mm", f"adopt s = {arr.spacing_mm} mm"),
+            R(f"Spacing \u2014 {tag}", (f"set by the designer: s = {arr.spacing_mm} mm (needs s \u2264 {Ab*1000/target:.0f} mm)" if fixed_s else
+                                         f"s \u2264 A_bar \u00d7 1000/A_s,target = {Ab:.1f} \u00d7 1000/{target:.0f} = {Ab*1000/target:.0f} mm"), f"adopt s = {arr.spacing_mm} mm"),
             R(f"Check \u2014 {tag}", f"A_s,prov = {Ab:.1f} \u00d7 1000/{arr.spacing_mm} = {arr.As_provided_mm2_per_m:.0f} \u2265 {target:.0f}",
-              "OK" if arr.As_provided_mm2_per_m >= target - 1e-9 else "INCREASE STEEL (bar too small at 100 mm)"),
+              "OK" if arr.As_provided_mm2_per_m >= target - 1e-9 else
+              ("INCREASE STEEL (closer spacing or larger bar)" if fixed_s else "INCREASE STEEL (bar too small at 100 mm)")),
             R(f"Provide \u2014 {tag}", f"T{arr.bar_dia_mm} @ {arr.spacing_mm} mm c/c", f"T{arr.bar_dia_mm} @ {arr.spacing_mm}"),
         ]
     bar_rows.append(R("EC2 \u00a79.3.1.1(3)", f"max spacing in areas of maximum moment = min(2h, 250) = min({2*res.thickness_mm:.0f}, 250)", f"s_max = {s_max:.0f} mm"))
+    for where, fixed_s, arr in (("bottom", bs_user, res.main_x), ("top", ts_user, res.top_x or res.top_y)):
+        if arr:
+            bar_rows += [R(*r) for r in spacing_rules.report_rows(fixed_s, res.thickness_mm, arr.bar_dia_mm, where)]
     sec.append({"title": "10. Bar Selection \u2014 Midspan (Bottom) and Continuous Edges (Top)", "rows": bar_rows})
 
     if res.dist_x or res.dist_y:
@@ -755,6 +771,8 @@ def _calculate_one_way_slab(request: SlabDesignRequest) -> SlabDesignResult:
         concrete_grade=mats.concrete_grade,
         steel_grade=mats.steel_grade,
         bar_diameters=request.bar_diameters or [10, 12, 16],
+        bottom_spacing_mm=request.bottom_spacing_mm,
+        top_spacing_mm=request.top_spacing_mm,
         floor_finish=loads.floor_finish or 0.0,
         additional_dead_load=loads.additional_dead_load or 0.0,
         live_load=loads.live_load or 0.0,
@@ -1008,10 +1026,12 @@ def _build_one_way_report(request, res, inp):
         s_max = min(3 * h, 400)
         sec.append({"title": "8. Bar Selection \u2014 Span", "rows": [
             R("Bar area", f"A_bar = \u03c0\u03c6\u00b2/4 = \u03c0 \u00d7 {sf.bar.bar_dia:.0f}\u00b2/4", f"A_bar = {Ab:.1f} mm\u00b2"),
-            R("Spacing required", f"s \u2264 A_bar \u00d7 1000/A_s,req = {Ab:.1f} \u00d7 1000/{sf.As_req:.0f} = {Ab*1000/sf.As_req if sf.As_req else 0:.0f} mm", f"adopt s = {sf.bar.spacing:.0f} mm"),
+            R("Spacing required", f"s \u2264 A_bar \u00d7 1000/A_s,req = {Ab:.1f} \u00d7 1000/{sf.As_req:.0f} = {Ab*1000/sf.As_req if sf.As_req else 0:.0f} mm",
+              f"{'designer' if inp.bottom_spacing_mm else 'adopt'} s = {sf.bar.spacing:.0f} mm"),
             R("Provided", f"A_s,prov = A_bar \u00d7 (1000/s) = {Ab:.1f} \u00d7 (1000/{sf.bar.spacing:.0f})", f"A_s,prov = {sf.bar.As_prov:.0f} mm\u00b2/m"),
             R("Check", f"A_s,prov \u2265 A_s,req \u2192 {sf.bar.As_prov:.0f} \u2265 {sf.As_req:.0f}", "OK" if sf.bar.As_prov >= sf.As_req else "INCREASE STEEL"),
             R("EC2 \u00a79.3.1.1", f"max spacing = min(3h , 400) = min({3*h:.0f} , 400) = {s_max:.0f} mm ; provided {sf.bar.spacing:.0f} mm", "OK" if sf.bar.spacing <= s_max else "SPACING TOO WIDE"),
+            *[R(*r) for r in spacing_rules.report_rows(inp.bottom_spacing_mm, h, sf.bar.bar_dia, "bottom")],
             R("Provide", f"\u03c6{sf.bar.bar_dia:.0f} @ {sf.bar.spacing:.0f} mm c/c (bottom, main direction)", f"T{sf.bar.bar_dia:.0f} @ {sf.bar.spacing:.0f}"),
         ]})
 
@@ -1023,6 +1043,8 @@ def _build_one_way_report(request, res, inp):
             R("Required", f"A_s,req = max({pf.As:.0f} , A_s,min {pf.As_min:.0f})", f"A_s,req = {pf.As_req:.0f} mm\u00b2/m"),
         ]
         if pf.bar:
+            rows += [R(*r) for r in spacing_rules.report_rows(inp.top_spacing_mm, h, pf.bar.bar_dia, "top")]
+            rows.append(R("Check", f"A_s,prov \u2265 A_s,req \u2192 {pf.bar.As_prov:.0f} \u2265 {pf.As_req:.0f}", "OK" if pf.bar.As_prov >= pf.As_req else "INCREASE STEEL"))
             rows.append(R("Provide", f"\u03c6{pf.bar.bar_dia:.0f} @ {pf.bar.spacing:.0f} mm c/c (top, over support)", f"A_s,prov = {pf.bar.As_prov:.0f} mm\u00b2/m"))
         sec.append({"title": "9. Flexural Reinforcement \u2014 Support (Hogging)", "rows": rows})
 

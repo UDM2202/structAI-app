@@ -8,8 +8,10 @@ import math
 
 try:
     from engine.load_combination import uls_combination
+    from engine import spacing_rules
 except ImportError:
     from load_combination import uls_combination
+    import spacing_rules
 
 
 class DesignCode(Enum):
@@ -367,6 +369,8 @@ class TwoWaySlabInput:
     leading_action: str = "auto"       # auto | imposed | wind (EN 1990 6.10)
     psi0_imposed: float = 0.7
     psi0_wind: float = 0.6
+    bottom_spacing_mm: Optional[int] = None   # designer's spacing, used as entered (None -> engine)
+    top_spacing_mm: Optional[int] = None
 
 
 @dataclass
@@ -709,10 +713,15 @@ class TwoWaySlabDesigner:
             res.As_target_x_neg = max(res.As_req_x_neg, res.As_min) if res.MEd_x_neg_kN_m_per_m > 0 else 0.0
             res.As_target_y_neg = max(res.As_req_y_neg, res.As_min) if res.MEd_y_neg_kN_m_per_m > 0 else 0.0
 
-            res.main_x = self.choose_bar_arrangement(res.As_target_x, candidates_d, candidates_s)
-            res.main_y = self.choose_bar_arrangement(res.As_target_y, candidates_d, candidates_s)
-            res.top_x = self.choose_bar_arrangement(res.As_target_x_neg, candidates_d, candidates_s) if res.As_target_x_neg else None
-            res.top_y = self.choose_bar_arrangement(res.As_target_y_neg, candidates_d, candidates_s) if res.As_target_y_neg else None
+            def _arr(target, fixed_s):
+                if fixed_s:   # designer's spacing: kept as entered, the checks below decide
+                    return self.arrangement_from_bar_and_spacing(main_bar_guess, int(fixed_s))
+                return self.choose_bar_arrangement(target, candidates_d, candidates_s)
+            bs, ts = self.input.bottom_spacing_mm, self.input.top_spacing_mm
+            res.main_x = _arr(res.As_target_x, bs)
+            res.main_y = _arr(res.As_target_y, bs)
+            res.top_x = _arr(res.As_target_x_neg, ts) if res.As_target_x_neg else None
+            res.top_y = _arr(res.As_target_y_neg, ts) if res.As_target_y_neg else None
 
             governing_dia = max(a.bar_dia_mm for a in (res.main_x, res.main_y, res.top_x, res.top_y) if a)
             if governing_dia == main_bar_guess:
@@ -755,12 +764,22 @@ class TwoWaySlabDesigner:
             res.deflection_status = "PASS" if res.l_over_d_actual <= res.l_over_d_lim_final else "FAIL"
             res.deflection_enhanced = True
 
-        def _ok(arr, need):
+        sp_notes = {}
+        for key, arr, fixed_s in (("bottom", res.main_x, self.input.bottom_spacing_mm),
+                                  ("top", res.top_x or res.top_y, self.input.top_spacing_mm)):
+            ok_s, note = spacing_rules.check(fixed_s, res.thickness_mm, arr.bar_dia_mm if arr else 0) if arr else (True, "")
+            if not ok_s:
+                sp_notes[key] = note
+                res.notes.append(f"{key.capitalize()} bars: {note}")
+
+        def _ok(arr, need, layer="bottom"):
+            if arr is not None and need > 0 and layer in sp_notes:
+                return False
             return need <= 0 or (arr is not None and arr.As_provided_mm2_per_m >= need - 1e-9)
-        res.bending_status_x = "PASS" if _ok(res.main_x, res.As_req_x_pos) and _ok(res.top_x, res.As_req_x_neg if res.MEd_x_neg_kN_m_per_m > 0 else 0) else "FAIL"
-        res.bending_status_y = "PASS" if _ok(res.main_y, res.As_req_y_pos) and _ok(res.top_y, res.As_req_y_neg if res.MEd_y_neg_kN_m_per_m > 0 else 0) else "FAIL"
-        res.min_steel_status_x = "PASS" if _ok(res.main_x, res.As_min) and _ok(res.top_x, res.As_target_x_neg) else "FAIL"
-        res.min_steel_status_y = "PASS" if _ok(res.main_y, res.As_min) and _ok(res.top_y, res.As_target_y_neg) else "FAIL"
+        res.bending_status_x = "PASS" if _ok(res.main_x, res.As_req_x_pos) and _ok(res.top_x, res.As_req_x_neg if res.MEd_x_neg_kN_m_per_m > 0 else 0, "top") else "FAIL"
+        res.bending_status_y = "PASS" if _ok(res.main_y, res.As_req_y_pos) and _ok(res.top_y, res.As_req_y_neg if res.MEd_y_neg_kN_m_per_m > 0 else 0, "top") else "FAIL"
+        res.min_steel_status_x = "PASS" if _ok(res.main_x, res.As_min) and _ok(res.top_x, res.As_target_x_neg, "top") else "FAIL"
+        res.min_steel_status_y = "PASS" if _ok(res.main_y, res.As_min) and _ok(res.top_y, res.As_target_y_neg, "top") else "FAIL"
         res.shear_status = "NOT_CHECKED_MVP"
 
         checks = [res.bending_status_x, res.bending_status_y, res.min_steel_status_x, res.min_steel_status_y, res.deflection_status]

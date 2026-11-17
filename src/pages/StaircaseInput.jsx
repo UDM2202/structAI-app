@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { FiTriangle, FiRefreshCw, FiLoader, FiInfo, FiAlertTriangle } from "react-icons/fi";
 import DesignProgressBar from "../components/ui/DesignProgressBar";
 import ResetButton from "../components/ui/ResetButton";
+import SpacingChoice from "../components/ui/SpacingChoice";
 import { applySettings } from "../utils/appSettings";
 import Dropdown from "../components/Dropdown";
 import { staircaseAPI } from "../services/api";
@@ -34,6 +35,9 @@ const DEFAULTS = {
   main_bar_mm: "12", main_spacing_mm: "200", autoBars: false,
   top_bar_mm: "12", top_spacing_mm: "",
   dist_bar_mm: "10", dist_spacing_mm: "250",
+  // spacings above used as entered (default = the worked example's Y12@200 / Y10@250);
+  // ticked -> the engine chooses every spacing
+  autoSpacing: false,
   designer_name: "", designer_qualifications: "", checked_by: "", checker_qualifications: "",
   stability_responsible: "", independent_check: "",
 };
@@ -74,10 +78,10 @@ export default function StaircaseInput() {
         thickness_mm: num(form.thickness_mm),
         finishes_kN_m2: num(form.finishes_kN_m2) || 0, qk_kN_m2: num(form.qk_kN_m2) || 0,
         fck: fckOf(form.concrete), fyk: num(form.fyk) || 500, cover_mm: num(form.cover_mm),
-        main_bar_mm: num(form.main_bar_mm), main_spacing_mm: optNum(form.main_spacing_mm),
+        main_bar_mm: num(form.main_bar_mm), main_spacing_mm: form.autoSpacing ? null : optNum(form.main_spacing_mm),
         auto_bars: !!form.autoBars,
-        top_bar_mm: num(form.top_bar_mm), top_spacing_mm: optNum(form.top_spacing_mm),
-        dist_bar_mm: num(form.dist_bar_mm), dist_spacing_mm: optNum(form.dist_spacing_mm),
+        top_bar_mm: num(form.top_bar_mm), top_spacing_mm: form.autoSpacing ? null : optNum(form.top_spacing_mm),
+        dist_bar_mm: num(form.dist_bar_mm), dist_spacing_mm: form.autoSpacing ? null : optNum(form.dist_spacing_mm),
         width_mm: num(form.width_mm), support_width_mm: num(form.support_width_mm),
         n_members: Math.max(1, parseInt(form.n_members, 10) || 1),
         design_basis: {
@@ -171,14 +175,15 @@ export default function StaircaseInput() {
                 <div><label className={LABEL}>Main bar (bottom)</label><Dropdown value={form.main_bar_mm} onChange={(v) => set({ main_bar_mm: v })} options={BARS} />
                   <label className="mt-2 flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={!!form.autoBars} onChange={(e) => set({ autoBars: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span>Let the engine choose the bar size</span></label>
                     <p className={`mt-1 text-[10px] ${SUB}`}>{form.autoBars ? "Each standard size is designed in turn; the passing one with the least steel is used and every option is listed in the report. The bar above is ignored." : "Only this bar is used. If it cannot carry the load, the design fails and says so."}</p></div>
-                <Num label="Main spacing (blank = auto)" unit="mm" value={form.main_spacing_mm} onChange={(v) => set({ main_spacing_mm: v })} />
+                {!form.autoSpacing ? <Num label="Main spacing" unit="mm" value={form.main_spacing_mm} onChange={(v) => set({ main_spacing_mm: v })} /> : <div />}
                 <div />
                 <div><label className={LABEL}>Top bar (at landing junction)</label><Dropdown value={form.top_bar_mm} onChange={(v) => set({ top_bar_mm: v })} options={BARS} /></div>
-                <Num label="Top spacing (blank = auto)" unit="mm" value={form.top_spacing_mm} onChange={(v) => set({ top_spacing_mm: v })} />
+                {!form.autoSpacing ? <Num label="Top spacing" unit="mm" value={form.top_spacing_mm} onChange={(v) => set({ top_spacing_mm: v })} /> : <div />}
                 <div />
                 <div><label className={LABEL}>Distribution bar</label><Dropdown value={form.dist_bar_mm} onChange={(v) => set({ dist_bar_mm: v })} options={BARS} /></div>
-                <Num label="Distribution spacing (blank = auto)" unit="mm" value={form.dist_spacing_mm} onChange={(v) => set({ dist_spacing_mm: v })} />
+                {!form.autoSpacing ? <Num label="Distribution spacing" unit="mm" value={form.dist_spacing_mm} onChange={(v) => set({ dist_spacing_mm: v })} /> : <div />}
                 <Num label="No. of identical staircases (schedule)" value={form.n_members} onChange={(v) => set({ n_members: v })} />
+                <SpacingChoice auto={!!form.autoSpacing} onAuto={(v) => set({ autoSpacing: v })} subClass={SUB} fields={[]} renderField={() => null} />
               </div>
               <p className={`mt-3 text-xs ${SUB}`}>
                 d = h − cover − φ/2 (cover as entered; cover for exposure and fire is not checked).

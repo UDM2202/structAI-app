@@ -10,6 +10,7 @@ import {
 import { slabAPI } from "../services/api";
 import DesignProgressBar from "../components/ui/DesignProgressBar";
 import ResetButton from "../components/ui/ResetButton";
+import SpacingChoice from "../components/ui/SpacingChoice";
 import { applySettings } from "../utils/appSettings";
 import { Crumbs } from "../components/results/DesignTopBar";
 
@@ -125,6 +126,9 @@ const DEFAULTS = {
   clearCover: "25", // mm — backend always adds a fixed +5mm detailing tolerance on top of this; not user-configurable
   mainBarDia: "12", // mm assumed main bar
   autoBars: false,
+  autoSpacing: true, // engine chooses the main-bar spacing; off -> bottomSpacing / topSpacing used as entered
+  bottomSpacing: "",
+  topSpacing: "",
   concreteGrade: "C30/37",
   steelGrade: "B500",
   unitWeightConcrete: "25",
@@ -314,6 +318,16 @@ const StructuralInput = () => {
                     <label className="mt-2 flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={!!formData.autoBars} onChange={(e) => set({ autoBars: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span>Let the engine choose the bar size</span></label>
                     <p className={`mt-1 text-[10px] ${SUB}`}>{formData.autoBars ? "Each standard size is designed in turn; the passing one with the least steel is used and every option is listed in the report. The bar above is ignored." : "Only this bar is used. If it cannot carry the load, the design fails and says so."}</p>
                   </div>
+                  <SpacingChoice
+                    auto={formData.autoSpacing !== false}
+                    onAuto={(v) => set({ autoSpacing: v })}
+                    subClass={SUB}
+                    fields={[
+                      { key: "b", label: twoWay ? "Bottom bar spacing (midspan, both directions)" : "Bottom bar spacing (span)", value: formData.bottomSpacing ?? "", onChange: (v) => set({ bottomSpacing: v }) },
+                      { key: "t", label: twoWay ? "Top bar spacing (continuous edges)" : "Top bar spacing (over supports)", value: formData.topSpacing ?? "", onChange: (v) => set({ topSpacing: v }) },
+                    ]}
+                    renderField={(f) => <Field label={f.label} unit="mm" value={f.value} onChange={f.onChange} step="25" />}
+                  />
                 </div>
               </Section>
 

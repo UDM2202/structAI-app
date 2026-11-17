@@ -7,6 +7,7 @@ import {
 } from "react-icons/fi";
 import DesignProgressBar from "../components/ui/DesignProgressBar";
 import ResetButton from "../components/ui/ResetButton";
+import SpacingChoice from "../components/ui/SpacingChoice";
 import { applySettings } from "../utils/appSettings";
 import { OCCUPANCY } from "../utils/loadLibrary";
 import { Crumbs } from "../components/results/DesignTopBar";
@@ -52,6 +53,9 @@ const DEFAULTS = {
   additionalLiveLoad: "0",
   mainBarDia: "12",
   autoBars: false,
+  autoSpacing: true, // engine chooses the main-bar spacing; off -> bottomSpacing / topSpacing used as entered
+  bottomSpacing: "",
+  topSpacing: "",
   designCode: "EC2",
   occupancy: "",
   exposureClass: "XC3",
@@ -233,6 +237,21 @@ export default function ContinuousSlabInput() {
                   <label className="mt-2 flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={!!form.autoBars} onChange={(e) => set({ autoBars: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span>Let the engine choose the bar size</span></label>
                     <p className={`mt-1 text-[10px] ${SUB}`}>{form.autoBars ? "Each standard size is designed in turn; the passing one with the least steel is used and every option is listed in the report. The bar above is ignored." : "Only this bar is used. If it cannot carry the load, the design fails and says so."}</p>
                 </div>
+                <SpacingChoice
+                  auto={form.autoSpacing !== false}
+                  onAuto={(v) => set({ autoSpacing: v })}
+                  subClass={SUB}
+                  fields={[
+                    { key: "b", label: "Bottom bar spacing (spans)", value: form.bottomSpacing ?? "", onChange: (v) => set({ bottomSpacing: v }) },
+                    { key: "t", label: "Top bar spacing (over supports)", value: form.topSpacing ?? "", onChange: (v) => set({ topSpacing: v }) },
+                  ]}
+                  renderField={(f) => (
+                    <>
+                      <label className={LABEL}>{f.label} <span className="text-[#94a3b8]">(mm)</span></label>
+                      <input type="number" step="25" value={f.value} onChange={(e) => f.onChange(e.target.value)} className={INPUT} />
+                    </>
+                  )}
+                />
                 <div>
                   <label className={LABEL}>Concrete grade</label>
                   <Dropdown value={form.concreteGrade} onChange={(v) => set({ concreteGrade: v })} options={CONCRETE_GRADES.map((g) => ({ value: g, label: g }))} />

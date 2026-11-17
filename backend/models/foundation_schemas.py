@@ -87,6 +87,9 @@ class PadFoundationRequest(BaseModel):
 
     cover_mm: float = Field(..., ge=0)
     bar_dia_mm: float = Field(..., gt=0)
+    # Bar spacing set by the designer (mm), used as entered; None = the engine
+    # chooses it. Checked against EC2 9.3.1.1(3) and 8.2 (engine/spacing_rules.py).
+    bar_spacing_mm: Optional[float] = Field(None, ge=50, le=400)   # both directions
 
     gamma_c: float = Field(1.5, gt=0)
     gamma_s: float = Field(1.15, gt=0)
@@ -352,6 +355,10 @@ class CombinedFootingRequest(BaseModel):
 
     cover_mm: float = Field(..., ge=0)
     bar_dia_mm: float = Field(..., gt=0)
+    # Bar spacing set by the designer (mm), used as entered; None = the engine
+    # chooses it. Checked against EC2 9.3.1.1(3) and 8.2 (engine/spacing_rules.py).
+    bottom_spacing_mm: Optional[float] = Field(None, ge=50, le=400)   # longitudinal bottom + transverse
+    top_spacing_mm: Optional[float] = Field(None, ge=50, le=400)      # longitudinal top
 
     gamma_c: float = Field(1.5, gt=0)
     gamma_s: float = Field(1.15, gt=0)

@@ -65,6 +65,10 @@ from typing import List, Dict, Optional
 import math
 
 from banded_symmetric_solver import BandedSymmetricMatrix, solve_banded_symmetric
+try:
+    from engine import spacing_rules
+except ImportError:
+    import spacing_rules
 
 FCTM_TABLE = {
     "C20/25": 2.2, "C25/30": 2.6, "C30/37": 2.9, "C35/45": 3.2,
@@ -90,6 +94,8 @@ class ContinuousInput:
     live_load: float = 0.0
     additional_live_load: float = 0.0
     gamma_concrete: float = 25.0
+    bottom_spacing_mm: Optional[float] = None   # designer's spacing, used as entered (None -> engine)
+    top_spacing_mm: Optional[float] = None
 
 
 @dataclass
@@ -293,7 +299,10 @@ def _design_As(M_kNm, b, d, fck, fyk, fctm):
     return max(As, As_min), As_min, k, z
 
 
-def _choose_bar(As_req, bar_diameters):
+def _choose_bar(As_req, bar_diameters, spacing=None):
+    if spacing:   # designer's spacing: used as entered, the check decides PASS/FAIL
+        dia = bar_diameters[0] if bar_diameters else 12
+        return BarChoice(dia, int(spacing), math.pi * dia ** 2 / 4.0 * 1000.0 / spacing)
     # Preserve caller order -- the frontend sends the user's selected main
     # bar FIRST. Sorting here would silently override that choice with
     # whatever the smallest available diameter is.
@@ -392,8 +401,9 @@ def design_continuous_slab(inp: ContinuousInput) -> ContinuousResult:
         spans = []
         for i in range(n_spans):
             As_req, As_min, k_span, z_span = _design_As(span_gov_M[i] / 1e6, b, d, fck, fyk, fctm)
-            bar = _choose_bar(As_req, inp.bar_diameters)
-            st = "PASS" if bar and bar.As_prov >= As_req else "FAIL"
+            bar = _choose_bar(As_req, inp.bar_diameters, inp.bottom_spacing_mm)
+            sp_ok, _ = spacing_rules.check(inp.bottom_spacing_mm, inp.thickness_mm, bar.bar_dia)
+            st = "PASS" if bar and bar.As_prov >= As_req and sp_ok else "FAIL"
             spans.append(SpanResult(i + 1, inp.span_lengths_m[i], max(span_gov_M[i] / 1e6, 0.0),
                                      As_req, As_min, bar, st, span_gov_pattern[i], k_span, z_span))
 
@@ -404,8 +414,9 @@ def design_continuous_slab(inp: ContinuousInput) -> ContinuousResult:
             shear_reduced_kN = max(shear_face_kN - w_ed * (d / 1000.0), 0.0)
             pos = "Start" if n == 0 else ("End" if n == n_spans else f"Interior {n}")
             As_req, As_min, k_sup, z_sup = _design_As(hog_kNm, b, d, fck, fyk, fctm)
-            bar = _choose_bar(As_req, inp.bar_diameters)
-            st = "PASS" if (hog_kNm == 0 or (bar and bar.As_prov >= As_req)) else "FAIL"
+            bar = _choose_bar(As_req, inp.bar_diameters, inp.top_spacing_mm)
+            sp_ok, _ = spacing_rules.check(inp.top_spacing_mm, inp.thickness_mm, bar.bar_dia)
+            st = "PASS" if (hog_kNm == 0 or (bar and bar.As_prov >= As_req and sp_ok)) else "FAIL"
             supports.append(SupportResult(n, pos, hog_kNm, shear_face_kN, shear_reduced_kN,
                                            As_req, As_min, bar, st, node_gov_pattern[n], k_sup, z_sup,
                                            shear_pattern=node_shear_pattern[n]))
@@ -489,6 +500,11 @@ def design_continuous_slab(inp: ContinuousInput) -> ContinuousResult:
         "Cover = clear cover input + 5 mm fixed detailing tolerance.",
         "Shear checked at the critical section d from the support face (EC2 6.2.1(8)), using the reduced shear.",
     ]
+    for layer, fixed_s, rows in (("Bottom", inp.bottom_spacing_mm, spans), ("Top", inp.top_spacing_mm, supports)):
+        bar0 = next((r.bar for r in rows if r.bar), None)
+        ok_s, note = spacing_rules.check(fixed_s, inp.thickness_mm, bar0.bar_dia if bar0 else 0)
+        if not ok_s:
+            notes.append(f"{layer} bars: {note}")
 
     I = b * inp.thickness_mm ** 3 / 12.0
     EI = _EI(inp.thickness_mm, b)

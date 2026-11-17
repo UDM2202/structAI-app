@@ -14,6 +14,12 @@ export const DEFINITION =
 // the prerendered HTML and the browser render match).
 export const LAST_UPDATED = "16 November 2026";
 
+// Search result title and snippet for "/" (the sign-in page). Kept within
+// ~60 / ~155 characters so search engines show them whole.
+export const HOME_TITLE = "Sphere Design Hub | Eurocode 2 Reinforced Concrete Design";
+export const HOME_DESCRIPTION =
+  "Design reinforced concrete beams, columns, slabs, footings and staircases to Eurocode 2, with clause-referenced calculations, drawings and bar schedules.";
+
 export const LOGIN_URL = "/login";
 export const SIGNUP_URL = "/signup";
 
