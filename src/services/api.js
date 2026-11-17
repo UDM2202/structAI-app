@@ -11,6 +11,15 @@ async function designFetch(url, options) {
   return res;
 }
 
+// Main-bar spacing box -> request value: null (engine chooses) unless the
+// "Let the engine choose the spacing" tick is off and a spacing is entered.
+// `auto` undefined (older drafts) counts as ticked.
+function spacingValue(auto, v) {
+  if (auto !== false) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 // FastAPI/Pydantic validation errors come back as
 //   { detail: [{ type, loc, msg, input, ctx }, ...] }
 // -- `detail` is an ARRAY of error objects, not a string. Every API function
@@ -96,6 +105,9 @@ export const slabAPI = {
       // the chosen bar only (no silent fallback); auto_bars lets the engine choose
       bar_diameters: [parseInt(formData.mainBarDia) || 12],
       auto_bars: !!formData.autoBars,
+      // main-bar spacing: null = the engine chooses; a number is used as entered
+      bottom_spacing_mm: spacingValue(formData.autoSpacing, formData.bottomSpacing),
+      top_spacing_mm: spacingValue(formData.autoSpacing, formData.topSpacing),
       use_ai: false,
       region: "UK", // cost-rate table only (cost is not shown)
       building_use: formData.buildingUse || "office",
@@ -336,6 +348,9 @@ export const continuousSlabAPI = {
       // so the engine always tried 10 mm first); auto_bars lets the engine choose
       bar_diameters: [parseInt(form.mainBarDia) || 12],
       auto_bars: !!form.autoBars,
+      // main-bar spacing: null = the engine chooses; a number is used as entered
+      bottom_spacing_mm: spacingValue(form.autoSpacing, form.bottomSpacing),
+      top_spacing_mm: spacingValue(form.autoSpacing, form.topSpacing),
       cover_tolerance: parseFloat(form.coverTolerance) || 5,
       // detailing / bar schedule: slab width across the spans (1000 = per metre strip)
       slab_width_mm: parseFloat(form.slabWidth) || 1000,

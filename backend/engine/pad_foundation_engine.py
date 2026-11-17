@@ -85,7 +85,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Dict, Optional
 
-from engine.combined_footing_engine import _fctm, _k_table_6_1
+from engine.combined_footing_engine import _fctm, _k_table_6_1, fixed_spacing_stop
+from engine import spacing_rules
 
 
 def bar_area(phi: float) -> float:
@@ -117,6 +118,7 @@ class PadFoundationInput:
 
     cover_mm: float = 75
     bar_dia_mm: float = 12
+    bar_spacing_mm: Optional[float] = None   # designer's spacing, both directions (None -> engine)
 
     gamma_c: float = 1.5
     gamma_s: float = 1.15
@@ -168,6 +170,7 @@ class FlexuralResult:
     As_provided: float
     status: str
     As_max: float = 0.0
+    spacing_note: str = ""      # why a designer's spacing fails (EC2 9.3.1.1(3) / 8.2)
 
 
 @dataclass
@@ -465,18 +468,23 @@ def _flexural_reinforcement(d: PadFoundationInput, M_kNm_per_m: float,
     As_design = max(As_req, As_min)
 
     area_one_bar = bar_area(d.bar_dia_mm)
-    spacing_raw = area_one_bar * 1000 / As_design
-    adopted_spacing = min(math.floor(spacing_raw / 25) * 25, 200)
-    if adopted_spacing < 75:
-        adopted_spacing = 75
+    if d.bar_spacing_mm:          # designer's spacing: used as entered
+        adopted_spacing = d.bar_spacing_mm
+    else:
+        spacing_raw = area_one_bar * 1000 / As_design
+        adopted_spacing = min(math.floor(spacing_raw / 25) * 25, 200)
+        if adopted_spacing < 75:
+            adopted_spacing = 75
     As_provided = area_one_bar * 1000 / adopted_spacing
+    sp_ok, sp_note = spacing_rules.check(d.bar_spacing_mm, d.footing_depth_mm, d.bar_dia_mm)
 
-    status = "OK" if As_design <= As_provided <= As_max else "NOT OK"
+    status = "OK" if (As_design <= As_provided <= As_max and sp_ok) else "NOT OK"
 
     return FlexuralResult(
         direction=direction, M_kNm_per_m=M_kNm_per_m, K=K, z_mm=z,
         As_req=As_req, As_min=As_min, As_design=As_design,
         spacing_mm=adopted_spacing, As_provided=As_provided, status=status, As_max=As_max,
+        spacing_note=sp_note,
     )
 
 
@@ -660,9 +668,10 @@ def size_pad_foundation(d: PadFoundationInput, max_depth_mm: float = 2000,
             L_mm = L_of(B_mm)
         # extra_ok: further checks that deepen the footing (detailing)
         ok = res.overall_status == "PASS" and (extra_ok is None or extra_ok(trial, res))
+        stop = "" if ok else fixed_spacing_stop((res.flex_x, res.flex_y), (d.bar_spacing_mm, d.bar_spacing_mm))
         steps.append({"h_mm": h, "w_kN_m2": w, "q_net": q_net, "N_sls": P, "A_req_m2": A_req,
                       "first_L_mm": first[0], "first_B_mm": first[1], "L_mm": L_mm, "B_mm": B_mm,
-                      "structural_ok": ok})
-        if ok or h + 50 > max_depth_mm:
+                      "structural_ok": ok, "stopped": stop})
+        if ok or stop or h + 50 > max_depth_mm:
             return trial, res, steps
         h += 50

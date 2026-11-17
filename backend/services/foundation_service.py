@@ -9,6 +9,7 @@ from models.foundation_schemas import (
 )
 from engine.pad_foundation_engine import PadFoundationInput, design_pad_foundation, size_pad_foundation
 from engine import foundation_detailing as fd
+from engine import spacing_rules
 
 
 def _design_basis_rows(db):
@@ -120,6 +121,7 @@ def _calculate_pad_foundation(request: PadFoundationRequest) -> PadFoundationRes
         allowable_bearing_kN_m2=request.allowable_bearing_kN_m2,
         cover_mm=request.cover_mm,
         bar_dia_mm=request.bar_dia_mm,
+        bar_spacing_mm=request.bar_spacing_mm,
         gamma_c=request.gamma_c,
         gamma_s=request.gamma_s,
         service_axial_kN=request.service_axial_kN,
@@ -338,7 +340,7 @@ def _build_report(request: PadFoundationRequest, res, steps=None) -> list:
                 rows.append(R("Eccentric SLS pressure", "widened in 100 mm steps until qmax <= q_allow and qmin >= 0",
                               f"{s['L_mm']:.0f} x {s['B_mm']:.0f} mm"))
             rows.append(R("Section checks", "flexure, one-way shear, punching, edge anchorage",
-                          "all OK" if s["structural_ok"] else "fail -> h + 50 mm"))
+                          "all OK" if s["structural_ok"] else (f"fail, sizing stopped: {s['stopped']}" if s.get("stopped") else "fail -> h + 50 mm")))
         rows.append(R("Adopted", f"L x B x h = {d.footing_length_mm:.0f} x {d.footing_width_mm:.0f} x "
                                  f"{d.footing_depth_mm:.0f} mm", res.overall_status))
         sec.append({"section": "2b. Footing Sizing", "rows": rows})
@@ -434,6 +436,7 @@ def _build_report(request: PadFoundationRequest, res, steps=None) -> list:
             R("Design steel", "As,design = max(As,req, As,min)", f"As,design = {flex.As_design:.2f} mm2/m"),
             R("Bar spacing", f"Adopt Y{d.bar_dia_mm:.0f} @ {flex.spacing_mm:.0f} mm c/c",
               f"As,provided = {flex.As_provided:.2f} mm2/m"),
+            *[R(*r) for r in spacing_rules.report_rows(d.bar_spacing_mm, d.footing_depth_mm, d.bar_dia_mm)],
             R("Check", "As,design <= As,provided <= As,max", flex.status),
         ]})
 
@@ -556,6 +559,8 @@ def _calculate_combined_footing(request: CombinedFootingRequest) -> CombinedFoot
         allowable_bearing_kN_m2=request.allowable_bearing_kN_m2,
         cover_mm=request.cover_mm,
         bar_dia_mm=request.bar_dia_mm,
+        bottom_spacing_mm=request.bottom_spacing_mm,
+        top_spacing_mm=request.top_spacing_mm,
         gamma_c=request.gamma_c,
         gamma_s=request.gamma_s,
         P1_sls_kN=request.column_1.service_axial_kN,
@@ -751,7 +756,7 @@ def _build_combined_report(request: CombinedFootingRequest, res, steps=None) -> 
                 rows.append(R("Eccentric SLS pressure", "widened in 100 mm steps until qmax <= q_allow and qmin >= 0",
                               f"B = {s['B_m']:.1f} m"))
             rows.append(R("Section checks", "flexure, one-way shear, punching, edge anchorage",
-                          "all OK" if s["structural_ok"] else "fail -> h + 50 mm"))
+                          "all OK" if s["structural_ok"] else (f"fail, sizing stopped: {s['stopped']}" if s.get("stopped") else "fail -> h + 50 mm")))
         rows.append(R("Adopted", f"L x B x h = {d.footing_length_m:.3f} m x {d.footing_width_m:.1f} m x "
                                  f"{d.footing_depth_mm:.0f} mm, left projection {d.left_projection_m:.3f} m",
                       res.overall_status))
@@ -846,6 +851,7 @@ def _build_combined_report(request: CombinedFootingRequest, res, steps=None) -> 
         R("Design steel", "As,design = max(As,req, As,min)", f"As,design = {res.long_flex.As_design:.2f} mm2/m"),
         R("Bar spacing", f"Adopt Y{d.bar_dia_mm:.0f} @ {res.long_flex.spacing_mm:.0f} mm c/c",
           f"As,provided = {res.long_flex.As_provided:.2f} mm2/m"),
+        *[R(*r) for r in spacing_rules.report_rows(d.bottom_spacing_mm, d.footing_depth_mm, d.bar_dia_mm)],
         R("Check", "As,design <= As,provided <= As,max and K <= 0.167", res.long_flex.status),
     ]})
 
@@ -858,6 +864,7 @@ def _build_combined_report(request: CombinedFootingRequest, res, steps=None) -> 
         R("Design steel", "As,design = max(As,req, As,min)", f"As,design = {res.long_top_flex.As_design:.2f} mm2/m"),
         R("Bar spacing", f"Adopt Y{d.bar_dia_mm:.0f} @ {res.long_top_flex.spacing_mm:.0f} mm c/c",
           f"As,provided = {res.long_top_flex.As_provided:.2f} mm2/m"),
+        *[R(*r) for r in spacing_rules.report_rows(d.top_spacing_mm, d.footing_depth_mm, d.bar_dia_mm)],
         R("Check", "As,design <= As,provided <= As,max and K <= 0.167", res.long_top_flex.status),
     ]
     if res.M_hog_kNm <= 0:
@@ -878,6 +885,7 @@ def _build_combined_report(request: CombinedFootingRequest, res, steps=None) -> 
         R("Design steel", "As,design = max(As,req, As,min)", f"As,design = {res.trans_flex.As_design:.2f} mm2/m"),
         R("Bar spacing", f"Adopt Y{d.bar_dia_mm:.0f} @ {res.trans_flex.spacing_mm:.0f} mm c/c",
           f"As,provided = {res.trans_flex.As_provided:.2f} mm2/m"),
+        *[R(*r) for r in spacing_rules.report_rows(d.bottom_spacing_mm, d.footing_depth_mm, d.bar_dia_mm)],
         R("Check", "As,design <= As,provided <= As,max", res.trans_flex.status),
     ]})
 

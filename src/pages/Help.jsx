@@ -35,6 +35,15 @@ const GUIDES = [
     ],
   },
   {
+    q: "\"Let the engine choose the spacing\"",
+    a: [
+      "On the slab, continuous slab, pad and combined footing and staircase pages. Ticked: the engine uses the widest standard spacing that carries the moment (slabs and staircase: up to 250 mm; footings: 75 to 200 mm in 25 mm steps).",
+      "Not ticked: the spacing you enter is used exactly as entered, bottom and top separately (pad: one spacing for both directions; combined footing: bottom = longitudinal bottom and transverse, top = longitudinal top; staircase: main, top and distribution). Leave a box blank to let the engine choose that one.",
+      "Your spacing fails the design, with the reason in the report, if it gives less steel than required (bending or minimum steel), if it is wider than min(2h, 250) mm (EC2 9.3.1.1(3); staircase distribution bars min(3h, 400)), or if the clear gap between bars is less than max(bar size, 25 mm) (EC2 8.2, 20 mm aggregate assumed). It can be combined with \"Let the engine choose the bar size\": each bar size is then tried at your spacing.",
+      "Footing auto-sizing stops deepening when your spacing gives less than the minimum steel: a deeper footing needs more minimum steel, so it cannot pass at that spacing.",
+    ],
+  },
+  {
     q: "\"Size the footing for me\" (foundations)",
     a: [
       "The plan area is taken from the service load and the allowable bearing pressure, less the weight of the footing and the soil on it, rounded up to 100 mm. The depth you enter is a starting depth; it is increased by 50 mm at a time until every check passes.",

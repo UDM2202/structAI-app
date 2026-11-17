@@ -6,6 +6,7 @@ import {
 } from "react-icons/fi";
 import DesignProgressBar from "../components/ui/DesignProgressBar";
 import ResetButton from "../components/ui/ResetButton";
+import SpacingChoice from "../components/ui/SpacingChoice";
 import { applySettings } from "../utils/appSettings";
 import Dropdown from "../components/Dropdown";
 import { foundationAPI } from "../services/api";
@@ -53,6 +54,9 @@ const DEFAULTS = {
   // materials
   concrete_grade_fck: "C25/30", steel_grade_fyk: "B500",
   cover_mm: "50", bar_dia_mm: "16", autoBars: false,
+  // main-bar spacing: engine chooses, or used as entered (pad: both directions;
+  // combined: bottom = longitudinal bottom + transverse, top = longitudinal top)
+  autoSpacing: true, bottom_spacing_mm: "", top_spacing_mm: "",
   // detailing / bar schedule (Structville 9.10, 10.2)
   n_members: "1", starter_bar_count: "4", starter_bar_dia_mm: "16", starter_projection_mm: "",
   link_dia_mm: "8", column_cover_mm: "35",
@@ -77,6 +81,16 @@ const DEFAULTS = {
   p2_axial_kN: "350", p2_mx: "0", p2_my: "0",
   // SLS loads for the bearing check; blank -> the ULS load is used (conservative)
   p1_service_kN: "360", p2_service_kN: "250",
+};
+
+// Main-bar spacing (null = the engine chooses). `autoSpacing` undefined in an
+// older draft counts as ticked.
+const spacingFields = (f, combined) => {
+  const auto = f.autoSpacing !== false;
+  const spacingValue = (a, v) => (a || !(parseInt(v, 10) > 0) ? null : parseInt(v, 10));
+  return combined
+    ? { bottom_spacing_mm: spacingValue(auto, f.bottom_spacing_mm), top_spacing_mm: spacingValue(auto, f.top_spacing_mm) }
+    : { bar_spacing_mm: spacingValue(auto, f.bottom_spacing_mm) };
 };
 
 // Detailing / bar schedule fields, same for pad and combined.
@@ -224,6 +238,7 @@ export default function FoundationInput() {
         ...ratioFields(form),
         ...groundFields(form),
         auto_bars: !!form.autoBars,
+        ...spacingFields(form, true),
           design_basis: designBasisPayload(),
         });
         setBusy(false);
@@ -276,6 +291,7 @@ export default function FoundationInput() {
         ...ratioFields(form),
         ...groundFields(form),
         auto_bars: !!form.autoBars,
+        ...spacingFields(form, false),
         design_basis: designBasisPayload(),
         // pass-through display context (not used by engine calc)
         _meta: { project: form.project, location: form.location,
@@ -429,6 +445,18 @@ export default function FoundationInput() {
                 <div><label className={LABEL}>Bar Dia (mm)</label><Dropdown value={form.bar_dia_mm} onChange={(v) => set({ bar_dia_mm: v })} options={BAR_DIAS} />
                   <label className="mt-2 flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={!!form.autoBars} onChange={(e) => set({ autoBars: e.target.checked })} className="h-4 w-4 accent-[#0A2F44]" /><span>Let the engine choose the bar size</span></label>
                     <p className={`mt-1 text-[10px] ${SUB}`}>{form.autoBars ? "Each standard size is designed in turn; the passing one with the least steel is used and every option is listed in the report. The bar above is ignored." : "Only this bar is used. If it cannot carry the load, the design fails and says so."}</p></div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <SpacingChoice
+                  auto={form.autoSpacing !== false}
+                  onAuto={(v) => set({ autoSpacing: v })}
+                  subClass={SUB}
+                  fields={isCombined
+                    ? [{ key: "b", label: "Bottom bar spacing (longitudinal + transverse)", value: form.bottom_spacing_mm ?? "", onChange: (v) => set({ bottom_spacing_mm: v }) },
+                       { key: "t", label: "Top bar spacing (longitudinal)", value: form.top_spacing_mm ?? "", onChange: (v) => set({ top_spacing_mm: v }) }]
+                    : [{ key: "b", label: "Bar spacing (both directions)", value: form.bottom_spacing_mm ?? "", onChange: (v) => set({ bottom_spacing_mm: v }) }]}
+                  renderField={(f) => <Num label={f.label} unit="mm" value={f.value} onChange={f.onChange} />}
+                />
               </div>
               <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Num label="Identical footings (schedule)" value={form.n_members} onChange={(v) => set({ n_members: v })} />

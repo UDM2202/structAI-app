@@ -204,7 +204,7 @@ def _build_report(request, res, checks, det):
           f"M_sag = {res['M_sag']:.3f}, M_B = {res['M_B']:.3f}, M_hog = {res['M_hog']:.3f} kNm"),
     ] + [R("Warning", w, "check support") for w in res["warnings"]]})
 
-    def flex_rows(f, label, face):
+    def flex_rows(f, label, face, fixed=None):
         rows = [
             R(f"{label}: design moment", f"{face}", f"M_Ed = {f['M']:.3f} kNm"),
             R("Effective depth", f"d = h - c - phi/2 = {h:.0f} - {request.cover_mm:.0f} - {f['bar']:.0f}/2", f"d = {f['d_mm']:.0f} mm"),
@@ -220,17 +220,19 @@ def _build_report(request, res, checks, det):
         rows += [
             R("EC2 9.2.1.1(1)", f"fctm = 0.3 fck^(2/3) = {0.3 * request.fck ** (2 / 3):.4f}; As,min = max(0.26 fctm/fyk b d, 0.0013 b d)",
               f"As,min = {f['As_min']:.1f} mm2/m"),
-            R("Provided", f"Y{f['bar']:.0f} @ {f['spacing']:.0f} mm c/c; s_max = min(2h, 250) = {res['s_max_main']:.0f} (EC2 9.3.1.1(3))",
+            R("Provided", f"Y{f['bar']:.0f} @ {f['spacing']:.0f} mm c/c ({'spacing set by the designer' if fixed else 'spacing chosen by the engine'}); "
+                          f"s_max = min(2h, 250) = {res['s_max_main']:.0f} (EC2 9.3.1.1(3)); clear gap s - phi >= {f['s_min'] - f['bar']:.0f} (EC2 8.2(2), dg 20)",
               f"As,prov = {f['As_prov']:.0f} mm2/m {f['status']}"),
         ]
         return rows
 
     sec.append({"title": "4. Flexural Design (EC2 6.1, 9.3.1)", "rows":
-                flex_rows(b, "Span (bottom)", f"max sagging, at x = {b['x']:.3f} m on the {b['member']}")
-                + (flex_rows(t, "Top steel at B", f"max hogging, at x = {t['x']:.3f} m (flight/landing junction)") if t else
+                flex_rows(b, "Span (bottom)", f"max sagging, at x = {b['x']:.3f} m on the {b['member']}", request.main_spacing_mm)
+                + (flex_rows(t, "Top steel at B", f"max hogging, at x = {t['x']:.3f} m (flight/landing junction)", request.top_spacing_mm) if t else
                    [R("Top steel", "no hogging moment anywhere", "not required")])
                 + [R("EC2 9.3.1.1(2)", f"distribution >= 20% of main = 0.2 x {b['As_prov']:.0f} = {dist['As_req']:.1f}; "
-                                       f"s <= min(3h, 400) = {dist['s_max']:.0f}",
+                                       f"s <= min(3h, 400) = {dist['s_max']:.0f}; clear gap s - phi >= {dist['s_min'] - dist['bar']:.0f} (EC2 8.2(2))"
+                                       f"{'; spacing set by the designer' if request.dist_spacing_mm else ''}",
                      f"Y{dist['bar']:.0f} @ {dist['spacing']:.0f} ({dist['As_prov']:.0f} mm2/m) {dist['status']}")]})
 
     sec.append({"title": "5. Deflection (EC2 7.4.2)", "rows": [

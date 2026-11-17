@@ -55,8 +55,10 @@ import math
 
 try:
     from engine.load_combination import uls_combination
+    from engine import spacing_rules
 except ImportError:
     from load_combination import uls_combination
+    import spacing_rules
 
 BAR_SPACINGS = [100, 125, 150, 175, 200, 225, 250]
 
@@ -96,6 +98,8 @@ class OneWayInput:
     leading_action: str = "auto"     # auto | imposed | wind (EN 1990 6.10)
     psi0_imposed: float = 0.7
     psi0_wind: float = 0.6
+    bottom_spacing_mm: Optional[float] = None   # None -> chosen by the engine
+    top_spacing_mm: Optional[float] = None
 
 
 @dataclass
@@ -160,7 +164,10 @@ def _fctm(fck: float) -> float:
     return 0.30 * fck ** (2 / 3) if fck <= 50 else 2.12 * math.log(1 + (fck + 8) / 10)
 
 
-def _choose_bar(As_req: float, bar_diameters: List[int]) -> BarChoice:
+def _choose_bar(As_req: float, bar_diameters: List[int], spacing: Optional[float] = None) -> BarChoice:
+    if spacing:   # designer's spacing: used as entered, the check decides PASS/FAIL
+        dia = bar_diameters[0] if bar_diameters else 12
+        return BarChoice(dia, int(spacing), math.pi * dia ** 2 / 4.0 * 1000.0 / spacing)
     # Preserve caller order -- the frontend sends the user's selected main bar
     # FIRST, followed by fallback diameters, e.g. [12, 10, 16, 20] if the user
     # chose 12mm. Do NOT sort this list: sorting silently overrides the
@@ -227,8 +234,8 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
     for _ in range(3):
         sf = _design_face(M_sag, b, d, fck, fyk, fctm)
         pf = _design_face(M_hog, b, d, fck, fyk, fctm)
-        sf.bar = _choose_bar(sf.As_req, inp.bar_diameters)
-        pf.bar = _choose_bar(pf.As_req, inp.bar_diameters)
+        sf.bar = _choose_bar(sf.As_req, inp.bar_diameters, inp.bottom_spacing_mm)
+        pf.bar = _choose_bar(pf.As_req, inp.bar_diameters, inp.top_spacing_mm)
         gov_dia = sf.bar.bar_dia   # span (bottom) bar governs the effective depth
         if gov_dia == bar_dia:
             break
@@ -284,8 +291,10 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
     v_rdc = max(C_Rdc * k_sh * (100 * rho_l * fck) ** (1 / 3), 0.035 * k_sh ** 1.5 * math.sqrt(fck))
     shear_status = "PASS" if v_ed <= v_rdc else "FAIL"
 
-    span_status = "PASS" if (sf.bar and sf.bar.As_prov >= sf.As_req) else "FAIL"
-    supp_status = "PASS" if (pf.M_kNm == 0 or (pf.bar and pf.bar.As_prov >= pf.As_req)) else "FAIL"
+    span_sp_ok, span_sp_note = spacing_rules.check(inp.bottom_spacing_mm, h, sf.bar.bar_dia if sf.bar else 0)
+    supp_sp_ok, supp_sp_note = spacing_rules.check(inp.top_spacing_mm, h, pf.bar.bar_dia if pf.bar else 0)
+    span_status = "PASS" if (sf.bar and sf.bar.As_prov >= sf.As_req and span_sp_ok) else "FAIL"
+    supp_status = "PASS" if (pf.M_kNm == 0 or (pf.bar and pf.bar.As_prov >= pf.As_req and supp_sp_ok)) else "FAIL"
     overall = "PASS" if all(s == "PASS" for s in
                              [span_status, supp_status, deflection_status, shear_status]) else "FAIL"
 
@@ -294,7 +303,7 @@ def design_one_way_slab(inp: OneWayInput) -> OneWayResult:
         "Effective depth derived from the actually-selected bar diameter (iterative), not a fixed assumption.",
         "Cover = clear cover input + 5 mm fixed detailing tolerance.",
         "Deflection basic ratio uses rho from As,required (EC2 7.4.2); modification factor uses As,required/As,provided.",
-    ]
+    ] + [f"Bottom bars: {n}" for n in [span_sp_note] if n] + [f"Top bars: {n}" for n in [supp_sp_note] if n and pf.M_kNm]
 
     return OneWayResult(
         span_face=sf, support_face=pf, d_mm=d, cover_mm=cover,

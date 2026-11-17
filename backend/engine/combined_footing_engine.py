@@ -51,6 +51,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
+from engine import spacing_rules
+
 
 def bar_area(phi_mm: float) -> float:
     return math.pi * phi_mm ** 2 / 4
@@ -96,6 +98,10 @@ class CombinedPadInput:
 
     cover_mm: float = 50.0
     bar_dia_mm: float = 12.0
+    # Designer's spacing, used as entered (None -> engine). Bottom: longitudinal
+    # bottom and transverse; top: longitudinal top.
+    bottom_spacing_mm: Optional[float] = None
+    top_spacing_mm: Optional[float] = None
 
     left_projection_m: float = 0.550
 
@@ -138,6 +144,7 @@ class FlexuralResult:
     As_provided: float
     status: str
     As_max: float = 0.0
+    spacing_note: str = ""      # why a designer's spacing fails (EC2 9.3.1.1(3) / 8.2)
 
 
 @dataclass
@@ -452,7 +459,7 @@ def _effective_depths(d: CombinedPadInput) -> Tuple[float, float]:
 
 
 def _flexural_design(d: CombinedPadInput, M_kNm: float, b_mm: float, d_eff_mm: float,
-                     label: str) -> FlexuralResult:
+                     label: str, fixed_spacing: Optional[float] = None) -> FlexuralResult:
     M_Nmm = abs(M_kNm) * 1_000_000
     K = M_Nmm / (b_mm * d_eff_mm ** 2 * d.fck) if (b_mm and d_eff_mm) else 0.0
 
@@ -471,17 +478,37 @@ def _flexural_design(d: CombinedPadInput, M_kNm: float, b_mm: float, d_eff_mm: f
     As_design = max(As_req, As_min)
 
     Abar = bar_area(d.bar_dia_mm)
-    spacing_raw = Abar * 1000 / As_design if As_design else 200
-    spacing_adopted = min(math.floor(spacing_raw / 25) * 25, 200)
-    if spacing_adopted < 75:
-        spacing_adopted = 75
+    if fixed_spacing:             # designer's spacing: used as entered
+        spacing_adopted = fixed_spacing
+    else:
+        spacing_raw = Abar * 1000 / As_design if As_design else 200
+        spacing_adopted = min(math.floor(spacing_raw / 25) * 25, 200)
+        if spacing_adopted < 75:
+            spacing_adopted = 75
     As_prov = Abar * 1000 / spacing_adopted
+    sp_ok, sp_note = spacing_rules.check(fixed_spacing, d.footing_depth_mm, d.bar_dia_mm)
 
     # K > K' = 0.167 (no redistribution) would need compression steel: deepen the footing.
-    status = "OK" if (As_design <= As_prov <= As_max and K <= 0.167) else "NOT OK"
+    status = "OK" if (As_design <= As_prov <= As_max and K <= 0.167 and sp_ok) else "NOT OK"
     return FlexuralResult(label=label, M_kNm=abs(M_kNm), K=K, z_mm=z, As_req=As_req, As_min=As_min,
                           As_design=As_design, spacing_mm=spacing_adopted, As_provided=As_prov, status=status,
-                          As_max=As_max)
+                          As_max=As_max, spacing_note=sp_note)
+
+
+def fixed_spacing_stop(flexes, fixed_spacings) -> str:
+    """Auto-sizing deepens the footing until every check passes. A designer's
+    spacing that gives less than As,min (which grows with d), or breaks the
+    spacing rules, cannot be cured by a deeper footing: returns why, so the
+    sizing stops there instead of running to the depth limit. "" otherwise."""
+    for f, s in zip(flexes, fixed_spacings):
+        if not s:
+            continue
+        if f.spacing_note:
+            return f"designer's spacing: {f.spacing_note}"
+        if f.As_provided < f.As_min - 1e-6:
+            return (f"designer's spacing gives As,prov {f.As_provided:.0f} < As,min {f.As_min:.0f} mm2/m, "
+                    f"which a deeper footing only increases")
+    return ""
 
 
 def _transverse_moment_design(d: CombinedPadInput, qmax) -> Tuple[float, float]:
@@ -616,10 +643,10 @@ def design_combined_footing(d: CombinedPadInput) -> CombinedFootingResult:
     d_long, d_trans = _effective_depths(d)
 
     b_long = d.footing_width_m * 1000
-    long_flex = _flexural_design(d, an["M_sag"], b_long, d_long, "longitudinal, bottom (sagging)")
-    long_top_flex = _flexural_design(d, an["M_hog"], b_long, d_long, "longitudinal, top (hogging)")
+    long_flex = _flexural_design(d, an["M_sag"], b_long, d_long, "longitudinal, bottom (sagging)", d.bottom_spacing_mm)
+    long_top_flex = _flexural_design(d, an["M_hog"], b_long, d_long, "longitudinal, top (hogging)", d.top_spacing_mm)
     M_trans, projection_y = _transverse_moment_design(d, qmax)
-    trans_flex = _flexural_design(d, M_trans, 1000, d_trans, "transverse direction per metre width")
+    trans_flex = _flexural_design(d, M_trans, 1000, d_trans, "transverse direction per metre width", d.bottom_spacing_mm)
 
     rho_bot = long_flex.As_provided / (1000 * d_long)
     rho_top = long_top_flex.As_provided / (1000 * d_long)
@@ -707,10 +734,12 @@ def size_combined_footing(d: CombinedPadInput, max_depth_mm: float = 2000,
             B = round(B + 0.1, 1)
         # extra_ok: further checks that deepen the footing (detailing)
         ok = res.overall_status == "PASS" and (extra_ok is None or extra_ok(trial, res))
+        stop = "" if ok else fixed_spacing_stop((res.long_flex, res.long_top_flex, res.trans_flex),
+                                                (d.bottom_spacing_mm, d.top_spacing_mm, d.bottom_spacing_mm))
         steps.append({"h_mm": h, "w_kN_m2": w, "q_net": q_net, "N_sls": P1s + P2s, "A_req_m2": A_req,
                       "x_bar_m": x_bar, "p1_m": p1, "p2_m": p2, "L_m": L,
                       "first_B_m": B_first, "B_m": trial.footing_width_m,
-                      "structural_ok": ok})
-        if ok or h + 50 > max_depth_mm:
+                      "structural_ok": ok, "stopped": stop})
+        if ok or stop or h + 50 > max_depth_mm:
             return trial, res, steps
         h += 50
