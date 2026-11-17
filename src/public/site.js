@@ -1,7 +1,7 @@
 // Public site settings. SITE_URL is the one place the canonical address is
 // set (canonical links now; sitemap, Open Graph and JSON-LD in phase 2).
 // Override with VITE_SITE_URL at build time (e.g. for a preview deployment).
-export const SITE_URL = (import.meta.env?.VITE_SITE_URL || "https://spheredesignhub.com").replace(/\/+$/, "");
+export const SITE_URL = (import.meta.env?.VITE_SITE_URL || "https://www.spheredesignhub.com").replace(/\/+$/, "");
 
 export const PRODUCT = "Sphere Design Hub";
 
