@@ -5,7 +5,9 @@
 //   dist/robots.txt, dist/sitemap.xml   ("/" + the public pages)
 //   dist/<slug>.html           each public page (served at /<slug> by cleanUrls)
 //   dist/404.html              real 404 page for unknown URLs
-//   dist/app.html              empty app shell, noindex (app routes rewrite here)
+//   dist/app.html              empty app shell, noindex. Served at /app (cleanUrls), so
+//                              vercel.json rewrites app routes to "/app", NOT "/app.html"
+//                              (with cleanUrls a rewrite to "/app.html" is a 404).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,14 +25,19 @@ const { render, PUBLIC_ROUTES, NOT_FOUND, SITE_URL, PRODUCT, HOME_TITLE, HOME_DE
   const app = fs.readFileSync(path.join(root, "src", "App.jsx"), "utf8");
   const rewrites = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8")).rewrites || [];
   const toRe = (src) => new RegExp("^" + src.replace(/:(\w+)\*/g, ".*").replace(/:(\w+)/g, "[^/]+") + "$");
-  const res = rewrites.filter((r) => r.destination === "/app.html").map((r) => toRe(r.source));
+  const wrong = rewrites.filter((r) => /\.html$/.test(r.destination));
+  if (wrong.length) {
+    console.error(`vercel.json rewrites to an .html file (404 with cleanUrls; use "/app"):\n  ${wrong.map((r) => r.source).join("\n  ")}`);
+    process.exit(1);
+  }
+  const res = rewrites.filter((r) => r.destination === "/app").map((r) => toRe(r.source));
   const publicPaths = new Set(PUBLIC_ROUTES.map((r) => r.path));
   const missing = [...app.matchAll(/path="([^"]+)"/g)].map((m) => m[1])
     .filter((p) => !publicPaths.has(p) && p !== "*" && p !== "/")   // "/" is dist/index.html, the app shell
     .map((p) => p.replace(/:\w+/g, "x1"))
     .filter((p) => !res.some((re) => re.test(p)));
   if (missing.length) {
-    console.error(`vercel.json does not rewrite these app routes to /app.html:\n  ${missing.join("\n  ")}`);
+    console.error(`vercel.json does not rewrite these app routes to /app:\n  ${missing.join("\n  ")}`);
     process.exit(1);
   }
 }
