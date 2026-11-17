@@ -10,3 +10,6 @@ CLAUDE.md
 STRUCTVILLE TEXTBOOK_111532.pdf
 build/
 dist-ssr/
+
+# SDH about kit (source material for /about; its assets are copied into public/ and src/public/about)
+sdh-about-kit/

@@ -34,7 +34,7 @@ const BEAM_TYPES = [
   {
     value: "continuous",
     label: "Continuous Beam",
-    desc: "Multi-span continuous beam with pattern loading and support moments",
+    desc: "Multi-span continuous beam with support moments, pinned or fixed ends",
     icon: "continuous",
   },
 ];

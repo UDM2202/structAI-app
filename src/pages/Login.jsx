@@ -40,10 +40,12 @@ const Login = () => {
     const result = await login(data, data.rememberMe)
 
     if (result.success) {
+      // One animation, then the dashboard: the overlay (LoadingProvider, above
+      // every route) plays while the dashboard mounts underneath, so when it
+      // ends the dashboard is already there. Navigating after a timer of the
+      // same length raced the overlay and briefly showed this page again.
       triggerFirstLoginLoading()
-      setTimeout(() => {
-        navigate('/dashboard')
-      }, 2800)
+      navigate('/dashboard', { replace: true })
     } else {
       setServerError(result.error)
       setIsSubmitting(false)
@@ -265,6 +267,14 @@ const Login = () => {
               Sign up
             </Link>
           </p>
+          {/* Plain link (not <Link>): /about is a prerendered public page outside the app */}
+          <a
+            href="/about"
+            className="mt-3 inline-block text-sm hover:underline transition-colors duration-300"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            About Sphere Design Hub
+          </a>
         </div>
       </div>
     </div>

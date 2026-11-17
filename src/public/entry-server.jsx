@@ -5,9 +5,9 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import PublicApp from "./PublicApp";
 import { PUBLIC_ROUTES, NOT_FOUND } from "./routes";
-import { SITE_URL } from "./site";
+import { SITE_URL, PRODUCT, HOME_TITLE, HOME_DESCRIPTION, LAST_UPDATED } from "./site";
 
-export { PUBLIC_ROUTES, NOT_FOUND, SITE_URL };
+export { PUBLIC_ROUTES, NOT_FOUND, SITE_URL, PRODUCT, HOME_TITLE, HOME_DESCRIPTION, LAST_UPDATED };
 
 export function render(path) {
   return renderToString(<PublicApp pathname={path} />);

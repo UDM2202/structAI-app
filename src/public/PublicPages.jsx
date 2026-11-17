@@ -1,141 +1,81 @@
-// Public, prerendered pages (home, one page per calculator, methodology, 404).
-// Rendered to static HTML at build time (scripts/prerender.mjs) and hydrated
-// in the browser by src/public/PublicApp.jsx. Rules for this file:
+// Public, prerendered pages (one page per calculator, methodology, 404; the
+// home page is kept unpublished). Rendered to static HTML at build time
+// (scripts/prerender.mjs) and hydrated in the browser by src/public/PublicApp.jsx.
+// Same look as the About page (SiteChrome + src/public/about/about.css).
+// Rules for this file:
 //   - render must be pure (no window / localStorage / dates), so the HTML from
 //     the build and the browser render are identical;
 //   - links are plain <a href> so crawlers and visitors get real URLs.
 import React from "react";
-import { PRODUCT, DEFINITION, LAST_UPDATED, LOGIN_URL, SIGNUP_URL, DISCLAIMER } from "./site";
-import { MODULES, moduleBySlug } from "./modules";
+import { PRODUCT, DEFINITION, LOGIN_URL, SIGNUP_URL, DISCLAIMER } from "./site";
+import { MODULES, moduleBySlug, moduleLabel } from "./modules";
 import { ELEMENTS } from "../content/elements";
+import SiteChrome, { SectionHead, Crumbs } from "./SiteChrome";
 
 const elementByKey = Object.fromEntries(ELEMENTS.map((e) => [e.key, e]));
+const nn = (i) => String(i + 1).padStart(2, "0");
 
-const NAVY = "#0A2F44";
-const A = "font-medium text-[#0A2F44] underline-offset-2 hover:underline";
-
-function Layout({ children, crumbs }) {
+// Ruled, numbered list (drawing-register style).
+function RuledList({ items, prefix = "" }) {
   return (
-    <div className="min-h-screen bg-white text-[#0F172A]">
-      <header className="border-b border-[#e2e8f0] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
-          <a href="/" className="flex items-center gap-2" aria-label={`${PRODUCT} home`}>
-            <span className="flex h-8 w-8 items-center justify-center rounded-md text-[11px] font-bold text-white" style={{ background: NAVY }}>SDH</span>
-            <span className="text-sm font-semibold">{PRODUCT}</span>
-          </a>
-          <nav aria-label="Main" className="flex items-center gap-4 text-sm">
-            <a href="#calculators" className="hidden text-[#334155] hover:text-[#0A2F44] sm:inline">Calculators</a>
-            <a href="/methodology" className="hidden text-[#334155] hover:text-[#0A2F44] sm:inline">Methodology</a>
-            <a href={LOGIN_URL} className="rounded-md px-3 py-1.5 font-medium text-white" style={{ background: NAVY }}>Log in</a>
-          </nav>
-        </div>
-      </header>
-      {crumbs && (
-        <nav aria-label="Breadcrumb" className="mx-auto max-w-6xl px-4 pt-4 text-xs text-[#64748b]">
-          <ol className="flex flex-wrap gap-1">
-            {crumbs.map(([label, href], i) => (
-              <li key={label} className="flex gap-1">
-                {i > 0 && <span aria-hidden>/</span>}
-                {href ? <a href={href} className="hover:underline">{label}</a> : <span aria-current="page">{label}</span>}
-              </li>
-            ))}
-          </ol>
-        </nav>
-      )}
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
-      <footer className="border-t border-[#e2e8f0] bg-[#f8fafc]">
-        <div className="mx-auto grid max-w-6xl gap-6 px-4 py-8 text-sm sm:grid-cols-3">
-          <div>
-            <p className="font-semibold">{PRODUCT}</p>
-            <p className="mt-1 text-xs text-[#64748b]">Eurocode 2 structural design tool.</p>
-          </div>
-          <div id="calculators">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#64748b]">Calculators</p>
-            <ul className="mt-2 space-y-1">
-              {MODULES.map((m) => <li key={m.slug}><a href={`/${m.slug}`} className="text-[#334155] hover:underline">{m.name}</a></li>)}
-            </ul>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#64748b]">Sphere Design Hub</p>
-            <ul className="mt-2 space-y-1">
-              <li><a href="/methodology" className="text-[#334155] hover:underline">Methodology</a></li>
-              <li><a href={LOGIN_URL} className="text-[#334155] hover:underline">Log in</a></li>
-              <li><a href={SIGNUP_URL} className="text-[#334155] hover:underline">Create an account</a></li>
-            </ul>
-          </div>
-        </div>
-        <p className="mx-auto max-w-6xl px-4 pb-6 text-xs text-[#64748b]">{DISCLAIMER} Last updated {LAST_UPDATED}.</p>
-      </footer>
-    </div>
+    <ol className="ab-list">
+      {items.map((t, i) => (
+        <li key={t}><span className="ab-list__n">{prefix}{nn(i)}</span><span>{t}</span></li>
+      ))}
+    </ol>
   );
 }
 
-function List({ items }) {
-  return <ul className="mt-3 list-disc space-y-1.5 pl-5 text-[15px] leading-relaxed text-[#334155]">{items.map((t) => <li key={t}>{t}</li>)}</ul>;
-}
-
-function Section({ title, children }) {
+function Hero({ eyebrow, title, lead, children, aside }) {
   return (
-    <section className="mt-8">
-      <h2 className="text-lg font-semibold text-[#0F172A]">{title}</h2>
-      {children}
+    <section className={`ab-wrap ab-hero ab-hero--page${aside ? "" : " ab-hero--single"}`}>
+      <div className="ab-hero__text">
+        <p className="ab-eyebrow">{eyebrow}</p>
+        <h1 className="ab-h1 ab-h1--page">{title}</h1>
+        {lead && <p className="ab-lead">{lead}</p>}
+        {children}
+      </div>
+      {aside}
     </section>
   );
 }
 
-function LoginCta({ name }) {
+function AccountCta({ title }) {
   return (
-    <section className="mt-10 rounded-xl border border-[#cbd5e1] bg-[#f8fafc] p-6">
-      <h2 className="text-lg font-semibold">Use the {name.toLowerCase()} calculator</h2>
-      <p className="mt-1 text-sm text-[#475569]">The calculators need an account. Your designs, reports and projects are kept in your account.</p>
-      <div className="mt-4 flex flex-wrap gap-3">
-        <a href={LOGIN_URL} className="rounded-md px-4 py-2 text-sm font-medium text-white" style={{ background: NAVY }}>Log in to use this calculator</a>
-        <a href={SIGNUP_URL} className="rounded-md border border-[#0A2F44] px-4 py-2 text-sm font-medium text-[#0A2F44]">Create an account</a>
+    <section className="ab-cta">
+      <div className="ab-wrap ab-cta__in">
+        <h2 className="ab-h1 ab-h1--page ab-cta__h">{title}</h2>
+        <p className="ab-lead">The calculators need an account. Your designs, reports and projects are kept in your account.</p>
+        <div className="ab-actions">
+          <a href={LOGIN_URL} className="ab-btn ab-btn--solid">Sign in to use it</a>
+          <a href={SIGNUP_URL} className="ab-btn">Create an account</a>
+        </div>
       </div>
     </section>
   );
 }
 
 /* ------------------------------------------------------------------ home */
+// Not published ("/" is the app); kept for a later landing page.
 export function HomePage() {
   return (
-    <Layout>
-      <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{PRODUCT}: Eurocode 2 structural design tool</h1>
-      <p className="mt-4 max-w-3xl text-lg leading-relaxed text-[#334155]">{DEFINITION}</p>
-      <div className="mt-6 flex flex-wrap gap-3">
-        <a href={LOGIN_URL} className="rounded-md px-4 py-2 text-sm font-medium text-white" style={{ background: NAVY }}>Log in</a>
-        <a href={SIGNUP_URL} className="rounded-md border border-[#0A2F44] px-4 py-2 text-sm font-medium text-[#0A2F44]">Create an account</a>
-      </div>
-
-      <Section title="What every design includes">
-        <List items={[
-          "A calculation report in numbered sections, each step with its EN 1992-1-1 (Eurocode 2) clause reference.",
-          "A pass or fail for every check and the utilisation of each, with the governing check named.",
-          "Reinforcement drawings and a bar schedule with shape codes, cut lengths and weights.",
-          "A PDF of the full report with a cover page naming the designer and checker.",
-          "Designs saved to projects, with a checked / issued status for each calculation.",
-        ]} />
-      </Section>
-
-      <section id="calculators" className="mt-10">
-        <h2 className="text-lg font-semibold">Calculators</h2>
-        <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {MODULES.map((m) => (
-            <li key={m.slug} className="rounded-xl border border-[#e2e8f0] p-5 shadow-sm">
-              <h3 className="font-semibold"><a href={`/${m.slug}`} className={A}>{m.h1}</a></h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#475569]">{m.intro}</p>
-            </li>
+    <SiteChrome>
+      <Hero eyebrow="Eurocode 2 design" title={`${PRODUCT}: Eurocode 2 structural design tool`} lead={DEFINITION}>
+        <div className="ab-actions">
+          <a href={LOGIN_URL} className="ab-btn ab-btn--solid">Sign in</a>
+          <a href={SIGNUP_URL} className="ab-btn">Create an account</a>
+        </div>
+      </Hero>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="01" eyebrow="Calculators" title="What it designs" />
+        <ol className="ab-modules">
+          {MODULES.map((m, i) => (
+            <li key={m.slug}><span className="ab-modules__n">{nn(i)}</span><a href={`/${m.slug}`}>{m.h1}</a></li>
           ))}
-        </ul>
+        </ol>
       </section>
-
-      <Section title="How the results are checked">
-        <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-[#334155]">
-          Each calculator states what it checks and what it leaves to the engineer. The checks and the simplifications are listed on
-          every calculator page and in every report. Read <a href="/methodology" className={A}>how the calculations are verified</a>.
-        </p>
-      </Section>
-    </Layout>
+      <div className="ab-spacer" />
+    </SiteChrome>
   );
 }
 
@@ -143,93 +83,122 @@ export function HomePage() {
 export function ModulePage({ slug }) {
   const m = moduleBySlug[slug];
   const el = elementByKey[m.element];
+  const index = MODULES.findIndex((x) => x.slug === slug);
+  const sheet = (
+    <aside className="ab-sheet" aria-label="What you get">
+      <p className="ab-sheet__bar"><span>Sheet {nn(index)}</span><span>What you get</span></p>
+      <RuledList items={m.outputs} />
+      <p className="ab-sheet__foot">
+        <span>{el.checks.length} checks</span><span>{el.limits.length} stated limits</span><span>EN 1992-1-1</span>
+      </p>
+    </aside>
+  );
   return (
-    <Layout crumbs={[["Calculators", "#calculators"], [m.name, null]]}>
-      <article className="max-w-3xl">
-        <h1 className="text-3xl font-bold tracking-tight">{m.h1}</h1>
-        <p className="mt-4 text-lg leading-relaxed text-[#334155]">{m.intro}</p>
-        <p className="mt-3 text-[15px] leading-relaxed text-[#475569]">{DEFINITION}</p>
+    <SiteChrome>
+      <div className="ab-wrap"><Crumbs items={[["Calculators", "#calculators"], [m.name, null]]} /></div>
+      <Hero eyebrow={`Calculator ${nn(index)} / ${moduleLabel(m)}`} title={m.h1} lead={m.intro} aside={sheet}>
+        <p className="ab-def">{DEFINITION}</p>
+        <div className="ab-actions">
+          <a href={LOGIN_URL} className="ab-btn ab-btn--solid">Use this calculator</a>
+          <a href="#checks" className="ab-btn">What it checks</a>
+        </div>
+      </Hero>
 
-        <Section title="What it checks"><List items={el.checks} /></Section>
-        <Section title="What you enter"><List items={m.inputs} /></Section>
-        <Section title="What you get"><List items={m.outputs} /></Section>
-        <Section title="Limits and assumptions">
-          <p className="mt-2 text-[15px] text-[#475569]">What this calculator does not check, or simplifies. Check these by hand where they matter.</p>
-          <List items={el.limits} />
-        </Section>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="01" eyebrow="Design checks" title="What it checks" id="checks" />
+        <RuledList items={el.checks} />
+      </section>
 
-        <LoginCta name={m.name} />
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="02" eyebrow="Inputs" title="What you enter" />
+        <RuledList items={m.inputs} />
+      </section>
 
-        <Section title="Related calculators">
-          <ul className="mt-3 space-y-1.5 text-[15px]">
-            {m.related.map((s) => <li key={s}><a href={`/${s}`} className={A}>{moduleBySlug[s].h1}</a></li>)}
-            <li><a href="/methodology" className={A}>How the calculations are verified</a></li>
-          </ul>
-        </Section>
-        <p className="mt-8 text-xs text-[#64748b]">{DISCLAIMER}</p>
-      </article>
-    </Layout>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="03" eyebrow="Limits and assumptions" title="What it leaves to you" />
+        <p className="ab-note">What this calculator does not check, or simplifies. Check these by hand where they matter.</p>
+        <RuledList items={el.limits} prefix="L" />
+      </section>
+
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="04" eyebrow="Related" title="Related calculators" />
+        <ol className="ab-modules">
+          {m.related.map((s, i) => (
+            <li key={s}><span className="ab-modules__n">{nn(i)}</span><a href={`/${s}`}>{moduleBySlug[s].h1}</a></li>
+          ))}
+          <li><span className="ab-modules__n">{nn(m.related.length)}</span><a href="/methodology">How the calculations are verified</a></li>
+        </ol>
+      </section>
+
+      <AccountCta title={`Use the ${m.name.toLowerCase()} calculator.`} />
+    </SiteChrome>
   );
 }
 
 /* ---------------------------------------------------------- methodology */
 export function MethodologyPage() {
+  const elements = MODULES.filter((m, i, a) => a.findIndex((x) => x.element === m.element) === i);
   return (
-    <Layout crumbs={[["Methodology", null]]}>
-      <article className="max-w-3xl">
-        <h1 className="text-3xl font-bold tracking-tight">How Sphere Design Hub calculations are verified</h1>
-        <p className="mt-4 text-lg leading-relaxed text-[#334155]">
-          Every calculator in {PRODUCT} follows EN 1992-1-1 (Eurocode 2) and writes out each step of the design with its clause
-          reference, so the engineer can check the working, not only the answer.
-        </p>
+    <SiteChrome>
+      <div className="ab-wrap"><Crumbs items={[["Methodology", null]]} /></div>
+      <Hero
+        eyebrow="Methodology"
+        title="How Sphere Design Hub calculations are verified"
+        lead={`Every calculator in ${PRODUCT} follows EN 1992-1-1 (Eurocode 2) and writes out each step of the design with its clause reference, so the engineer can check the working, not only the answer.`}
+      />
 
-        <Section title="How the engines are checked">
-          <List items={[
-            "Changes to a calculator are tested by sending real design requests to the running engine and comparing the results with independent hand calculations.",
-            "Where a result can be worked out in closed form (for example wL²/8 for a simply supported span, or the three-moment equation for continuous spans) the engine's numbers are compared with it directly.",
-            "Frame and continuous analyses are cross-checked with an independent solver.",
-            "Results are also compared with published worked examples. Where the software deliberately differs from an example, the difference is recorded rather than hidden.",
-          ]} />
-        </Section>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="01" eyebrow="Testing" title="How the engines are checked" />
+        <RuledList items={[
+          "Changes to a calculator are tested by sending real design requests to the running engine and comparing the results with independent hand calculations.",
+          "Where a result can be worked out in closed form (for example wL²/8 for a simply supported span, or the three-moment equation for continuous spans) the engine's numbers are compared with it directly.",
+          "Frame and continuous analyses are cross-checked with an independent solver.",
+          "Results are also compared with published worked examples. Where the software deliberately differs from an example, the difference is recorded rather than hidden.",
+        ]} />
+      </section>
 
-        <Section title="What the reports tell you">
-          <List items={[
-            "The slab, beam, column and staircase reports list the nationally determined parameters the engine uses at the start of the report.",
-            "Every check shows its demand, its resistance, the utilisation and the clause it comes from.",
-            "Simplifications made by the engine are stated in the report and on the calculator pages, under limits and assumptions.",
-          ]} />
-        </Section>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="02" eyebrow="Reports" title="What the reports tell you" />
+        <RuledList items={[
+          "The slab, beam, column and staircase reports list the nationally determined parameters the engine uses at the start of the report.",
+          "Every check shows its demand, its resistance, the utilisation and the clause it comes from.",
+          "Simplifications made by the engine are stated in the report and on the calculator pages, under limits and assumptions.",
+        ]} />
+      </section>
 
-        <Section title="Known simplifications">
-          <p className="mt-2 text-[15px] text-[#475569]">Each calculator page lists its own limits. In summary:</p>
-          <ul className="mt-3 space-y-4">
-            {MODULES.filter((m, i, a) => a.findIndex((x) => x.element === m.element) === i).map((m) => (
-              <li key={m.slug}>
-                <h3 className="font-semibold"><a href={`/${m.slug}`} className={A}>{elementByKey[m.element].name}</a></h3>
-                <List items={elementByKey[m.element].limits} />
-              </li>
-            ))}
-          </ul>
-        </Section>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="03" eyebrow="Known simplifications" title="Where each calculator simplifies" />
+        <p className="ab-note">Each calculator page lists its own limits. In summary:</p>
+        <dl className="ab-simpl">
+          {elements.map((m) => (
+            <div key={m.slug}>
+              <dt><a href={`/${m.slug}`}>{elementByKey[m.element].name}</a></dt>
+              <dd><RuledList items={elementByKey[m.element].limits} prefix="L" /></dd>
+            </div>
+          ))}
+        </dl>
+      </section>
 
-        <Section title="Responsibility">
-          <p className="mt-3 text-[15px] leading-relaxed text-[#334155]">{DISCLAIMER}</p>
-        </Section>
-      </article>
-    </Layout>
+      <section className="ab-wrap ab-sec">
+        <SectionHead n="04" eyebrow="Responsibility" title="Who is responsible for the design" />
+        <div className="ab-prose"><p>{DISCLAIMER}</p></div>
+      </section>
+      <div className="ab-spacer" />
+    </SiteChrome>
   );
 }
 
 /* ------------------------------------------------------------------- 404 */
 export function NotFoundPage() {
   return (
-    <Layout>
-      <h1 className="text-3xl font-bold tracking-tight">Page not found</h1>
-      <p className="mt-4 text-[15px] text-[#334155]">There is no page at this address.</p>
-      <ul className="mt-4 space-y-1.5 text-[15px]">
-        <li><a href="#calculators" className={A}>All calculators</a></li>
-        <li><a href={LOGIN_URL} className={A}>Log in</a></li>
-      </ul>
-    </Layout>
+    <SiteChrome>
+      <Hero eyebrow="Error 404" title="Page not found" lead="There is no page at this address.">
+        <div className="ab-actions">
+          <a href="#calculators" className="ab-btn ab-btn--solid">All calculators</a>
+          <a href={LOGIN_URL} className="ab-btn">Sign in</a>
+        </div>
+      </Hero>
+      <div className="ab-spacer" />
+    </SiteChrome>
   );
 }

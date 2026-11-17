@@ -1,0 +1,198 @@
+/*
+  Beam figure styles. Self contained: every colour is a custom property on
+  .beam-figure, so the figure can be re-themed by overriding these on the
+  element or a parent (for example to match a Tailwind theme).
+*/
+.beam-figure {
+  --bf-surface: #f6f8fc;
+  --bf-ink: #171e3a;
+  --bf-ink-2: #454c63;
+  --bf-ink-3: #6b7186;
+  --bf-rule: #171e3a24;
+  --bf-rule-strong: #171e3a;
+  --bf-accent: #0562c7;
+  --bf-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --bf-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  margin: 0;
+  background: var(--bf-surface);
+  border: 1px solid var(--bf-rule-strong);
+  color: var(--bf-ink);
+  font-family: var(--bf-sans);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* :not(.light): a page that set light mode explicitly stays light */
+  :root:not(.light) .beam-figure {
+    --bf-surface: #121b36;
+    --bf-ink: #e9eefa;
+    --bf-ink-2: #b4bcd0;
+    --bf-ink-3: #8690a8;
+    --bf-rule: #e9eefa26;
+    --bf-rule-strong: #e9eefa;
+    --bf-accent: #5ea6f2;
+  }
+}
+/* Class based dark mode, for apps that toggle a .dark class (Tailwind, next-themes) */
+.dark .beam-figure {
+  --bf-surface: #121b36;
+  --bf-ink: #e9eefa;
+  --bf-ink-2: #b4bcd0;
+  --bf-ink-3: #8690a8;
+  --bf-rule: #e9eefa26;
+  --bf-rule-strong: #e9eefa;
+  --bf-accent: #5ea6f2;
+}
+
+.beam-figure__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--bf-rule);
+  font-family: var(--bf-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bf-ink-3);
+}
+
+.beam-figure__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+  cursor: ew-resize;
+}
+.beam-figure__svg text {
+  font-family: var(--bf-mono);
+  font-size: 10px;
+  fill: var(--bf-ink-3);
+}
+.bf-grid path {
+  stroke: var(--bf-rule);
+  stroke-dasharray: 2 4;
+  fill: none;
+}
+.bf-member {
+  stroke: var(--bf-ink);
+  stroke-width: 5;
+  fill: none;
+}
+.bf-supports path {
+  fill: none;
+  stroke: var(--bf-ink);
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+.bf-load path {
+  fill: none;
+  stroke: var(--bf-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.beam-figure__svg .bf-load text {
+  fill: var(--bf-accent);
+  font-weight: 500;
+}
+.bf-base {
+  stroke: var(--bf-ink);
+  stroke-width: 1;
+  fill: none;
+}
+.bf-area {
+  fill: color-mix(in srgb, var(--bf-accent) 16%, transparent);
+  stroke: var(--bf-accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.bf-area--alt {
+  fill: color-mix(in srgb, var(--bf-ink) 9%, transparent);
+  stroke: var(--bf-ink);
+}
+.beam-figure__svg .bf-title {
+  letter-spacing: 0.08em;
+}
+.beam-figure__svg .bf-val {
+  fill: var(--bf-ink);
+  font-weight: 500;
+}
+
+.beam-figure__control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 4.2rem;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--bf-rule);
+  font-family: var(--bf-mono);
+  font-size: 0.74rem;
+  color: var(--bf-ink-2);
+}
+.beam-figure__control output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--bf-ink);
+}
+.beam-figure__control input[type='range'] {
+  width: 100%;
+  height: 1.5rem;
+  margin: 0;
+  background: none;
+  accent-color: var(--bf-accent);
+  cursor: ew-resize;
+}
+
+.beam-figure__readout {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--bf-rule);
+}
+.beam-figure__readout > div {
+  padding: 0.6rem 0.55rem 0.7rem 0.9rem;
+  border-left: 1px solid var(--bf-rule);
+}
+.beam-figure__readout > div:first-child {
+  border-left: 0;
+}
+.beam-figure__readout dt {
+  font-family: var(--bf-mono);
+  font-size: 0.7rem;
+  color: var(--bf-ink-3);
+}
+.beam-figure__readout dd {
+  margin: 0;
+  font-family: var(--bf-mono);
+  font-size: clamp(0.72rem, 1.9vw, 0.86rem);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.beam-figure figcaption {
+  padding: 0.75rem 0.9rem 0.9rem;
+  border-top: 1px solid var(--bf-rule);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--bf-ink-2);
+}
+
+/* Narrow screens: larger lettering in the drawing, readout in two rows */
+@media (max-width: 40rem) {
+  .beam-figure__svg text {
+    font-size: 14px;
+  }
+}
+@media (max-width: 30rem) {
+  .beam-figure__readout {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .beam-figure__readout > div:nth-child(4) {
+    border-left: 0;
+  }
+  .beam-figure__readout > div:nth-child(n + 4) {
+    border-top: 1px solid var(--bf-rule);
+  }
+}

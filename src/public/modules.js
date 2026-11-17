@@ -207,4 +207,7 @@ export const MODULES = [
   },
 ];
 
+// Short name for links: "Eurocode 2 Beam Design Calculator" -> "Beam".
+export const moduleLabel = (m) => m.h1.replace(/ (Design )?Calculator.*$/i, "").replace(/^Eurocode 2 /i, "");
+
 export const moduleBySlug = Object.fromEntries(MODULES.map((m) => [m.slug, m]));
