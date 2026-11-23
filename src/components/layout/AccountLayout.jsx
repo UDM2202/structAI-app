@@ -16,6 +16,8 @@ import {
   FiShield,
   FiSave,
   FiUpload,
+  FiUsers,
+  FiCpu,
 } from 'react-icons/fi'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTheme } from '../../contexts/ThemeContext'
@@ -62,9 +64,11 @@ const AccountLayout = ({ title, subtitle, children }) => {
     { name: 'Dashboard', icon: FiGrid, path: '/dashboard' },
     { name: 'Organization', icon: FiShield, path: '/organisations', match: /^\/(organisations|workspace\/(?!personal|all)[^/]+(\/(members|team|settings))?$|workspace\/create)/ },
     { name: 'New Design', icon: FiEdit3, path: '/quick-design' },
+    { name: 'Co-designer', icon: FiCpu, path: '/co-designer' },
     { name: 'New Project', icon: FiPlus, path: `/workspace/${PERSONAL_WS}/projects/new` },
     { name: 'Projects', icon: FiFolder, path: `/workspace/${ALL_WS}/projects` },
     { name: 'Reports', icon: FiFileText, path: '/reports' },
+    { name: 'Community', icon: FiUsers, path: '/community', match: /^\/community(\/|$)/ },
     { name: 'External Design', icon: FiUpload, path: '/external-design' },
     { name: 'Help', icon: FiHelpCircle, path: '/help' },
     { name: 'Saved Designs', icon: FiSave, path: '/saved-designs' },

@@ -5,7 +5,7 @@ import {
   FiGrid, FiLayers, FiBarChart2, FiColumns, FiSquare,
   FiTriangle, FiWind, FiDroplet, FiSettings, FiHelpCircle,
   FiSun, FiMoon, FiUser, FiLogOut, FiMenu, FiChevronLeft, FiChevronDown,
-  FiArrowLeft, FiBell, FiFolder, FiZap
+  FiArrowLeft, FiBell, FiFolder, FiZap, FiCpu
 } from 'react-icons/fi';
 
 // Breadcrumb stages that are pages of their own; the first stage ("Slab
@@ -18,6 +18,7 @@ const CRUMB_PATHS = {
   'Projects': '/workspace/all/projects',
 };
 import UserMenu from '../ui/UserMenu';
+import CoDesignerPanel from '../codesigner/CoDesignerPanel';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useDesignMeta } from '../../contexts/DesignMetaContext';
 import { quickDesignFor, currentProjectDesign, projectHubPath, DESIGN_MODE_EVENT } from '../../utils/designMode';
@@ -29,6 +30,7 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode, analysisM
   const location = useLocation();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [coDesignerOpen, setCoDesignerOpen] = useState(false);
   const [openMenus, setOpenMenus] = useState({ slab: true });
 
   // Explicit props (if a route ever passes them) win; otherwise fall back
@@ -310,6 +312,13 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode, analysisM
                 )}
               </div>
               <div className="flex items-center space-x-2">
+                {/* Co-designer: opens over the page, so the design mode is kept */}
+                <button type="button" onClick={() => setCoDesignerOpen(true)} title="Co-designer" aria-label="Open the Co-designer"
+                  aria-expanded={coDesignerOpen} data-codesigner-toggle
+                  className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-[#0A2F44] hover:bg-[#e6f0f5] dark:text-[#66a4c2] dark:hover:bg-[#1e3a4a] transition-colors cursor-pointer">
+                  <FiCpu className="text-base" />
+                  <span className="hidden sm:inline font-medium">Co-designer</span>
+                </button>
                 <button onClick={toggleDarkMode} className="p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#374151] transition-colors cursor-pointer">
                   {isDarkMode ? <FiSun className="text-sm text-yellow-500" /> : <FiMoon className="text-sm text-[#0A2F44]" />}
                 </button>
@@ -318,6 +327,7 @@ const MainLayout = ({ children, currentModule, breadcrumb, designCode, analysisM
             </div>
           </div>
         </div>
+        {coDesignerOpen && <CoDesignerPanel onClose={() => setCoDesignerOpen(false)} />}
 
         {/* CONTEXT STRIP */}
         <div className="bg-[#f9fafb] dark:bg-[#374151] border-b border-[#e5e7eb] dark:border-[#374151] sticky top-[57px] z-10">

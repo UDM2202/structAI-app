@@ -3,7 +3,7 @@
 // (Old pages/SavedDesigns.jsx kept on disk, unrouted.)
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { FiSearch, FiExternalLink, FiTrash2, FiFileText } from 'react-icons/fi'
+import { FiSearch, FiExternalLink, FiTrash2, FiFileText, FiShare2 } from 'react-icons/fi'
 import AccountLayout from '../../components/layout/AccountLayout'
 import Dropdown from '../../components/Dropdown'
 import { useAuth } from '../../contexts/AuthContext'
@@ -82,6 +82,7 @@ export default function SavedDesignsPage() {
                         <td className="px-4 py-2.5">
                           <div className="flex justify-end gap-1.5">
                             <Btn size="sm" onClick={() => navigate(designRoute(d, d.element), { state: designState(d) })}><FiExternalLink /> Open</Btn>
+                            {mine(d) && <Btn size="sm" title="Publish to the Community" onClick={() => navigate(`/community/new?kind=design&design=${encodeURIComponent(`${d.element}:${d.id}`)}`)}><FiShare2 /> Share</Btn>}
                             {mine(d) && <Btn size="sm" variant="dangerOutline" aria-label="Delete design" onClick={() => setDeleting(d)}><FiTrash2 /></Btn>}
                           </div>
                         </td>

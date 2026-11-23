@@ -1,19 +1,18 @@
 import React, { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
-import { FiArrowLeft, FiLock, FiEye, FiEyeOff } from 'react-icons/fi'
-import { useTheme } from '../contexts/ThemeContext'
+import { FiArrowLeft, FiLock, FiEye, FiEyeOff, FiMail, FiHash } from 'react-icons/fi'
 import { useAuth } from '../contexts/AuthContext'
 import { resetPasswordSchema } from '../utils/validation'
 
 const ResetPassword = () => {
-  const { isDarkMode } = useTheme()
   const { resetPassword } = useAuth()
   const navigate = useNavigate()
-  const { token } = useParams()
+  // email handed over by the forgot-password page
+  const location = useLocation()
   const [showPassword, setShowPassword] = useState(false)
-  ;[showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [serverError, setServerError] = useState('')
 
@@ -23,13 +22,14 @@ const ResetPassword = () => {
     formState: { errors },
   } = useForm({
     resolver: yupResolver(resetPasswordSchema),
+    defaultValues: { email: location.state?.email || '', code: '' },
   })
 
   const onSubmit = async (data) => {
     setIsSubmitting(true)
     setServerError('')
 
-    const result = await resetPassword(token, data.password)
+    const result = await resetPassword(data.email, data.code, data.password)
 
     if (result.success) {
       // Redirect to login with success message
@@ -74,7 +74,7 @@ const ResetPassword = () => {
             Reset your password
           </h1>
           <p className="mt-2" style={{ color: 'var(--text-secondary)' }}>
-            Enter your new password below
+            Enter the 6-digit code we emailed you and choose a new password
           </p>
         </div>
 
@@ -85,6 +85,48 @@ const ResetPassword = () => {
         )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="relative">
+            <FiMail
+              className="absolute left-3 top-1/2 transform -translate-y-1/2"
+              style={{ color: 'var(--text-muted)' }}
+            />
+            <input
+              type="email"
+              autoComplete="email"
+              {...register('email')}
+              placeholder="Email address"
+              aria-label="Email address"
+              className="w-full pl-10 pr-4 py-3 rounded-lg transition-colors duration-300"
+              style={{
+                backgroundColor: 'var(--bg-primary)',
+                border: `1px solid ${errors.email ? '#ef4444' : 'var(--border-color)'}`,
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+          {errors.email && <p className="text-sm text-red-500 mt-1">{errors.email.message}</p>}
+          <div className="relative">
+            <FiHash
+              className="absolute left-3 top-1/2 transform -translate-y-1/2"
+              style={{ color: 'var(--text-muted)' }}
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              {...register('code')}
+              placeholder="6-digit code"
+              aria-label="6-digit code"
+              className="w-full pl-10 pr-4 py-3 rounded-lg transition-colors duration-300"
+              style={{
+                backgroundColor: 'var(--bg-primary)',
+                border: `1px solid ${errors.code ? '#ef4444' : 'var(--border-color)'}`,
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+          {errors.code && <p className="text-sm text-red-500 mt-1">{errors.code.message}</p>}
+
           {/* New Password */}
           <div className="relative">
             <FiLock

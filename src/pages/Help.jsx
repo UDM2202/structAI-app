@@ -20,6 +20,16 @@ const VERSION = "1.0.0";
 /* ---- how to use the inputs that most often raise questions ---- */
 const GUIDES = [
   {
+    q: "Community: asking, answering and sharing designs",
+    a: [
+      "Community (sidebar) is shared by everyone signed in to Sphere Design Hub, across organisations. Ask a question, start a discussion, or share one of your saved designs; others can upvote, answer and follow you.",
+      "Share a design from Saved Designs (Share) or Community > Share a design. Its full report and inputs are published, so remove client or site names from the design name first. Others can open the report or copy it into their own Quick Design list; the copy is theirs and does not change yours.",
+      "Answers are peer opinions, not checked designs: the engineer of record stays responsible. On your question, Accept the answer that solved it.",
+      "Report anything spammy, abusive, unsafe or confidential. Moderators can hide it (the author sees the reason) or suspend an account (it can still read, but not post, reply or vote).",
+      "Your community profile (name, job title, company, photo) is public to signed-in users; edit it from your profile page in the Community. It starts from your account profile.",
+    ],
+  },
+  {
     q: "Live load, imposed load and wind: which load is the slab designed for?",
     a: [
       "Imposed load is the Eurocode name for live load, so Q in the formulas is the Live Load you entered. Wind (W) is a downward pressure, for a roof slab; leave it at 0 for an internal floor.",

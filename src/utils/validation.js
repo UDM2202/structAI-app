@@ -4,10 +4,11 @@ import * as yup from 'yup';
 const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
 
 export const loginSchema = yup.object({
+  // email or username (the server accepts either)
   email: yup
     .string()
-    .email('Please enter a valid email address')
-    .required('Email is required'),
+    .trim()
+    .required('Email or username is required'),
   password: yup
     .string()
     .required('Password is required'),
@@ -24,6 +25,13 @@ export const registerSchema = yup.object({
     .string()
     .email('Please enter a valid email address')
     .required('Email is required'),
+  username: yup
+    .string()
+    .trim()
+    .min(3, 'Username must be at least 3 characters')
+    .max(30, 'Username must be 30 characters or fewer')
+    .matches(/^[A-Za-z0-9_.-]+$/, 'Letters, numbers, dots, dashes and underscores only')
+    .required('Username is required'),
   profession: yup
     .string()
     .required('Please select your profession'),
@@ -52,6 +60,15 @@ export const forgotPasswordSchema = yup.object({
 });
 
 export const resetPasswordSchema = yup.object({
+  email: yup
+    .string()
+    .email('Please enter a valid email address')
+    .required('Email is required'),
+  code: yup
+    .string()
+    .trim()
+    .matches(/^\d{6}$/, 'Enter the 6-digit code from the email')
+    .required('Enter the 6-digit code from the email'),
   password: yup
     .string()
     .min(8, 'Password must be at least 8 characters')

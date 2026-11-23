@@ -31,6 +31,13 @@ import ShortcutLayer from './components/ShortcutLayer';
 import ProjectsPage from './pages/project/ProjectsPage';
 // pages/SavedDesigns.jsx and pages/ExternalDesign.jsx (old) kept on disk, unrouted.
 import SavedDesignsPage from './pages/saved/SavedDesignsPage';
+import VerifyEmail from './pages/VerifyEmail';
+import CommunityHome from './pages/community/CommunityHome';
+import PostPage from './pages/community/PostPage';
+import ComposePost from './pages/community/ComposePost';
+import CommunityProfilePage from './pages/community/ProfilePage';
+import ModerationPage from './pages/community/ModerationPage';
+import CoDesignerPage from './pages/codesigner/CoDesignerPage';
 import ExternalDesignPage from './pages/external/ExternalDesignPage';
 import SDHAgentDownload from './pages/SDHAgentDownload';
 import MainLayout from './components/layout/MainLayout';
@@ -69,7 +76,9 @@ function App() {
                     <Route path="/login" element={<Login />} />
                     <Route path="/signup" element={<SignUp />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
+                    <Route path="/reset-password" element={<ResetPassword />} />
                     <Route path="/reset-password/:token" element={<ResetPassword />} />
+                    <Route path="/verify-email" element={<VerifyEmail />} />
 
                     {/* Dashboard - NO MainLayout */}
                     <Route path="/dashboard" element={
@@ -79,6 +88,44 @@ function App() {
                     } />
 
                     {/* Workspace Routes - NO MainLayout */}
+                    {/* Co-designer (accounts server, /api/co-designer/) */}
+                    <Route path="/co-designer" element={
+                      <ProtectedRoute>
+                        <CoDesignerPage />
+                      </ProtectedRoute>
+                    } />
+                    {/* Community (accounts server, /api/community/) */}
+                    <Route path="/community" element={
+                      <ProtectedRoute>
+                        <CommunityHome />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/community/new" element={
+                      <ProtectedRoute>
+                        <ComposePost />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/community/posts/:id" element={
+                      <ProtectedRoute>
+                        <PostPage />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/community/posts/:id/edit" element={
+                      <ProtectedRoute>
+                        <ComposePost />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/community/u/:username" element={
+                      <ProtectedRoute>
+                        <CommunityProfilePage />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/community/moderation" element={
+                      <ProtectedRoute>
+                        <ModerationPage />
+                      </ProtectedRoute>
+                    } />
+
                     <Route path="/reports" element={
                       <ProtectedRoute>
                         <ReportsPage />

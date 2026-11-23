@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import { FiArrowLeft, FiMail, FiCheckCircle, FiSun, FiMoon } from 'react-icons/fi'
@@ -9,11 +9,12 @@ import { forgotPasswordSchema } from '../utils/validation'
 
 const ForgotPassword = () => {
   const [emailSent, setEmailSent] = useState(false)
-  const [submittedEmail, setSubmittedEmail] = useState('')
+  const [submittedEmail] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [serverError, setServerError] = useState('')
   const { isDarkMode, toggleDarkMode } = useTheme()
   const { forgotPassword } = useAuth()
+  const navigate = useNavigate()
 
   const {
     register,
@@ -30,8 +31,9 @@ const ForgotPassword = () => {
     const result = await forgotPassword(data.email)
 
     if (result.success) {
-      setSubmittedEmail(data.email)
-      setEmailSent(true)
+      // the code is entered on the reset page
+      navigate('/reset-password', { state: { email: data.email } })
+      return
     } else {
       setServerError(result.error)
     }
@@ -91,7 +93,7 @@ const ForgotPassword = () => {
           <p className="mt-2" style={{ color: 'var(--text-secondary)' }}>
             {emailSent
               ? 'Check your email for reset instructions'
-              : "Enter your email and we'll send you a reset link"}
+              : "Enter your email and we'll send you a 6-digit reset code"}
           </p>
         </div>
 
@@ -155,7 +157,7 @@ const ForgotPassword = () => {
               className="w-full text-white font-semibold py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: '#0A2F44' }}
             >
-              {isSubmitting ? 'Sending...' : 'Send Reset Link'}
+              {isSubmitting ? 'Sending...' : 'Send Reset Code'}
             </button>
           </form>
         )}

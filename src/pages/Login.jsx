@@ -1,10 +1,9 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import { FiMail, FiLock, FiSun, FiMoon } from 'react-icons/fi'
 import { FcGoogle } from 'react-icons/fc'
-import { FaLinkedin } from 'react-icons/fa'
 import { useTheme } from '../contexts/ThemeContext'
 import { useLoading } from '../contexts/LoadingContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -13,11 +12,17 @@ import { loginSchema } from '../utils/validation'
 const Login = () => {
   const { isDarkMode, toggleDarkMode } = useTheme()
   const { triggerFirstLoginLoading } = useLoading()
-  const { login } = useAuth()
+  const { login, verifyTwoFactor, loginWithGoogle } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [serverError, setServerError] = useState('')
+  // { token, remember } while the authenticator code is asked for
+  const [twoFactor, setTwoFactor] = useState(null)
+  const [code, setCode] = useState('')
+  const [googleWaiting, setGoogleWaiting] = useState(false)
+  const googleCancelled = useRef(false)
+  const cancelGoogle = () => { googleCancelled.current = true }
 
   // Check for success message from reset password
   const successMessage = location.state?.message
@@ -39,6 +44,16 @@ const Login = () => {
 
     const result = await login(data, data.rememberMe)
 
+    if (result.verify) {
+      // not verified yet: the server has just emailed a new code
+      navigate('/verify-email', { state: { email: result.verify, sent: true } })
+      return
+    }
+    if (result.twoFactor) {
+      setTwoFactor({ token: result.twoFactor, remember: data.rememberMe })
+      setIsSubmitting(false)
+      return
+    }
     if (result.success) {
       // One animation, then the dashboard: the overlay (LoadingProvider, above
       // every route) plays while the dashboard mounts underneath, so when it
@@ -52,14 +67,35 @@ const Login = () => {
     }
   }
 
-  const handleGoogleLogin = () => {
-    // Redirect to Google OAuth
-    window.location.href = `${import.meta.env.VITE_API_URL}/auth/google`
+  const onSubmitCode = async (e) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+    setServerError('')
+    const result = await verifyTwoFactor(twoFactor.token, code, twoFactor.remember)
+    if (result.success) {
+      triggerFirstLoginLoading()
+      navigate('/dashboard', { replace: true })
+    } else {
+      setServerError(result.error)
+      setIsSubmitting(false)
+    }
   }
 
-  const handleLinkedInLogin = () => {
-    // Redirect to LinkedIn OAuth
-    window.location.href = `${import.meta.env.VITE_API_URL}/auth/linkedin`
+  const handleGoogleLogin = async () => {
+    setServerError('')
+    googleCancelled.current = false
+    setGoogleWaiting(true)
+    const remember = !!document.querySelector('input[name="rememberMe"]')?.checked
+    const result = await loginWithGoogle(remember, () => googleCancelled.current)
+    setGoogleWaiting(false)
+    if (result.success) {
+      triggerFirstLoginLoading()
+      navigate('/dashboard', { replace: true })
+    } else if (result.twoFactor) {
+      setTwoFactor({ token: result.twoFactor, remember })
+    } else if (!result.cancelled) {
+      setServerError(result.error)
+    }
   }
 
   return (
@@ -123,8 +159,40 @@ const Login = () => {
           </div>
         )}
 
+        {twoFactor && (
+          <form onSubmit={onSubmitCode} className="space-y-4">
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              Two-step verification is on for this account. Enter the 6-digit code from your
+              authenticator app, or one of your recovery codes.
+            </p>
+            <input
+              autoFocus
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Authentication code"
+              aria-label="Authentication code"
+              className="w-full px-4 py-3 rounded-lg tracking-widest text-center font-mono"
+              style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+            />
+            <button
+              type="submit"
+              disabled={isSubmitting || code.trim().length < 6}
+              className="w-full text-white font-semibold py-3 px-4 rounded-lg hover:opacity-90 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#0A2F44' }}
+            >
+              {isSubmitting ? 'Checking...' : 'Verify and sign in'}
+            </button>
+            <button type="button" onClick={() => { setTwoFactor(null); setCode(''); setServerError('') }}
+              className="w-full text-sm hover:underline" style={{ color: 'var(--accent)' }}>
+              Back to sign in
+            </button>
+          </form>
+        )}
+
         {/* Login Form */}
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" hidden={!!twoFactor}>
           {/* Email Field */}
           <div className="relative">
             <FiMail
@@ -132,9 +200,11 @@ const Login = () => {
               style={{ color: 'var(--text-muted)' }}
             />
             <input
-              type="email"
+              type="text"
+              autoComplete="username"
               {...register('email')}
-              placeholder="Email address"
+              placeholder="Email or username"
+              aria-label="Email or username"
               className="w-full pl-10 pr-4 py-3 rounded-lg transition-colors duration-300"
               style={{
                 backgroundColor: 'var(--bg-primary)',
@@ -222,36 +292,28 @@ const Login = () => {
             </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            {/* Google */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              className="flex items-center justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80 cursor-pointer"
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                border: `1px solid var(--border-color)`,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <FcGoogle className="text-xl" />
-              <span>Google</span>
-            </button>
-
-            {/* LinkedIn */}
-            <button
-              type="button"
-              onClick={handleLinkedInLogin}
-              className="flex items-center cursor-pointer justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80"
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                border: `1px solid var(--border-color)`,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <FaLinkedin className="text-xl" style={{ color: '#0A66C2' }} />
-              <span>LinkedIn</span>
-            </button>
+          <div className="mt-6">
+            {googleWaiting ? (
+              <div className="flex items-center justify-between rounded-lg px-4 py-3 text-sm"
+                style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                <span role="status">Waiting for Google… finish in the pop-up window.</span>
+                <button type="button" onClick={cancelGoogle} className="font-medium hover:underline" style={{ color: 'var(--accent)' }}>Cancel</button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="flex w-full items-center justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--bg-primary)',
+                  border: `1px solid var(--border-color)`,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <FcGoogle className="text-xl" />
+                <span>Continue with Google</span>
+              </button>
+            )}
           </div>
         </div>
 

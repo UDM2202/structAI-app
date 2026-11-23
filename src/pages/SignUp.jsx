@@ -16,9 +16,9 @@ import {
   FiAlertCircle,
   FiChevronDown,
   FiCheck,
+  FiAtSign,
 } from 'react-icons/fi'
 import { FcGoogle } from 'react-icons/fc'
-import { FaLinkedin } from 'react-icons/fa'
 import { useTheme } from '../contexts/ThemeContext'
 import { useAuth } from '../contexts/AuthContext'
 import { registerSchema } from '../utils/validation'
@@ -127,13 +127,16 @@ const CustomDropdown = ({ value, onChange, options, placeholder, error }) => {
 
 const SignUp = () => {
   const { isDarkMode, toggleDarkMode } = useTheme()
-  const { register: registerUser, createPersonalOrganization } = useAuth()
+  const { register: registerUser, loginWithGoogle } = useAuth()
   const navigate = useNavigate()
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [serverError, setServerError] = useState('')
   const [profession, setProfession] = useState('')
+  const [googleWaiting, setGoogleWaiting] = useState(false)
+  const googleCancelled = useRef(false)
+  const cancelGoogle = () => { googleCancelled.current = true }
 
   const {
     register,
@@ -141,6 +144,7 @@ const SignUp = () => {
     formState: { errors },
     setValue,
     trigger,
+    setError,
   } = useForm({
     resolver: yupResolver(registerSchema),
     defaultValues: {
@@ -159,33 +163,33 @@ const SignUp = () => {
     setIsSubmitting(true)
     setServerError('')
 
-    const { confirmPassword, termsAccepted, ...userData } = data
+    const { confirmPassword: _confirm, termsAccepted: _terms, ...userData } = data
 
     const result = await registerUser(userData)
 
     if (result.success) {
-      const personalOrgResult = await createPersonalOrganization(result.user.id, result.user.name)
-
-      if (personalOrgResult.success) {
-        navigate('/dashboard')
-      } else {
-        setServerError(
-          'Account created but personal workspace setup failed. Please contact support.'
-        )
-        setIsSubmitting(false)
-      }
+      // the server emailed a 6-digit code; the account works once verified
+      navigate('/verify-email', { state: { email: result.verify, sent: true } })
     } else {
+      // show the server's per-field messages under the fields
+      for (const [field, message] of Object.entries(result.fields || {})) {
+        if (['email', 'username', 'password'].includes(field)) setError(field, { message })
+      }
       setServerError(result.error || 'Registration failed. Please try again.')
       setIsSubmitting(false)
     }
   }
 
-  const handleGoogleLogin = () => {
-    window.location.href = `${import.meta.env.VITE_API_URL}/auth/google`
-  }
-
-  const handleLinkedInLogin = () => {
-    window.location.href = `${import.meta.env.VITE_API_URL}/auth/linkedin`
+  // Google creates the account on first use (email already verified by Google).
+  const handleGoogleLogin = async () => {
+    setServerError('')
+    googleCancelled.current = false
+    setGoogleWaiting(true)
+    const result = await loginWithGoogle(true, () => googleCancelled.current)
+    setGoogleWaiting(false)
+    if (result.success) navigate('/dashboard', { replace: true })
+    else if (result.twoFactor) navigate('/login', { state: { message: 'Two-step verification is on for this account: sign in with Google here to enter your code.' } })
+    else if (!result.cancelled) setServerError(result.error)
   }
 
   return (
@@ -315,6 +319,28 @@ const SignUp = () => {
             />
           </div>
           {errors.email && <p className="text-sm text-red-500 mt-1">{errors.email.message}</p>}
+
+          {/* Username Field (public name in the Community) */}
+          <div className="relative">
+            <FiAtSign
+              className="absolute left-3 top-1/2 transform -translate-y-1/2"
+              style={{ color: 'var(--text-muted)' }}
+            />
+            <input
+              type="text"
+              autoComplete="username"
+              {...register('username')}
+              placeholder="Username (shown in the Community)"
+              aria-label="Username"
+              className="w-full pl-10 pr-4 py-3 rounded-lg transition-colors duration-300"
+              style={{
+                backgroundColor: 'var(--bg-primary)',
+                border: `1px solid ${errors.username ? '#ef4444' : 'var(--border-color)'}`,
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+          {errors.username && <p className="text-sm text-red-500 mt-1">{errors.username.message}</p>}
 
           {/* Profession Field - Aesthetic Custom Dropdown */}
           <div className="relative">
@@ -447,36 +473,28 @@ const SignUp = () => {
             </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            {/* Google */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              className="flex items-center cursor-pointer justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80"
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                border: `1px solid var(--border-color)`,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <FcGoogle className="text-xl" />
-              <span>Google</span>
-            </button>
-
-            {/* LinkedIn */}
-            <button
-              type="button"
-              onClick={handleLinkedInLogin}
-              className="flex items-center cursor-pointer justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80"
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                border: `1px solid var(--border-color)`,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <FaLinkedin className="text-xl" style={{ color: '#0A66C2' }} />
-              <span>LinkedIn</span>
-            </button>
+          <div className="mt-6">
+            {googleWaiting ? (
+              <div className="flex items-center justify-between rounded-lg px-4 py-3 text-sm"
+                style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                <span role="status">Waiting for Google… finish in the pop-up window.</span>
+                <button type="button" onClick={cancelGoogle} className="font-medium hover:underline" style={{ color: 'var(--accent)' }}>Cancel</button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="flex w-full items-center justify-center space-x-2 py-3 px-4 rounded-lg transition-colors duration-300 hover:opacity-80 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--bg-primary)',
+                  border: `1px solid var(--border-color)`,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <FcGoogle className="text-xl" />
+                <span>Continue with Google</span>
+              </button>
+            )}
           </div>
         </div>
 

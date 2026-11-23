@@ -3,11 +3,11 @@
   "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/(login|signup|forgot-password|dashboard|reports|organisations|structural-input|slab-results|continuous-slab|continuous-slab-results|beam|continuous-beam|beam-results|continuous-beam-results|column-input|column-results|foundation-input|foundation-results|combined-input|combined-results|staircase-design|staircase-results|settings|profile|load-cases|materials|help|new-design|quick-design|saved-designs|external-design|sdh-agent)",
+      "source": "/(login|signup|forgot-password|dashboard|reports|organisations|structural-input|slab-results|continuous-slab|continuous-slab-results|beam|continuous-beam|beam-results|continuous-beam-results|column-input|column-results|foundation-input|foundation-results|combined-input|combined-results|staircase-design|staircase-results|settings|profile|load-cases|materials|help|new-design|quick-design|saved-designs|external-design|sdh-agent|verify-email|reset-password|community|co-designer)",
       "destination": "/app"
     },
     {
-      "source": "/(reset-password|workspace|new-design)/(.*)",
+      "source": "/(reset-password|workspace|new-design|community)/(.*)",
       "destination": "/app"
     },
     {
